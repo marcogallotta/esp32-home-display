@@ -46,7 +46,7 @@ public:
     HttpResponse httpGet(const std::string& url, const std::string& pem) override {
         HttpResponse resp;
 
-        if (!networkReady()) {
+        if (!networkReady(5000)) {
             resp.error = "WiFi not connected";
             return resp;
         }

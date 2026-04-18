@@ -10,7 +10,7 @@
 
 namespace platform {
 
-bool initTime(const Config& config) {
+bool initTime(const Config& config, unsigned long timeoutMs) {
     // No initialization needed on desktop
     return true;
 }
