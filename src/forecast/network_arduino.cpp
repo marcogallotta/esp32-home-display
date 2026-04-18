@@ -77,6 +77,8 @@ public:
 };
 
 Platform& platform(const WifiConfig& wifiConfig) {
+    // Lazily constructs the single app-lifetime platform instance.
+    // wifiConfig is used only on the first call.
     static ArduinoPlatform instance(wifiConfig);
     return instance;
 }
