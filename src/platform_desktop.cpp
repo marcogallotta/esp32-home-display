@@ -10,8 +10,9 @@
 
 namespace platform {
 
-void initTime(const Config& config) {
+bool initTime(const Config& config) {
     // No initialization needed on desktop
+    return true;
 }
 
 void delayMs(int ms) {

@@ -9,32 +9,44 @@
 
 namespace {
 
-void connectWifi(const WifiConfig& wifiConfig) {
+bool connectWifi(const WifiConfig& wifiConfig, unsigned long timeoutMs = 15000) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifiConfig.ssid.c_str(), wifiConfig.password.c_str());
 
+    const uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED) {
-        // TODO: debug output and retry
+        if (millis() - start >= timeoutMs) {
+            return false;
+        }
         delay(500);
     }
+
+    return true;
 }
 
 } // namespace
 
 namespace platform {
 
-void initTime(const Config& config) {
-    connectWifi(config.wifi);
+bool initTime(const Config& config, unsigned long timeoutMs) {
+    const uint32_t start = millis();
+
+    if (!connectWifi(config.wifi, timeoutMs)) {
+        return false;
+    }
 
     configTime(0, 0, "pool.ntp.org");
     setenv("TZ", config.location.timezoneLong.c_str(), 1);
     tzset();
 
-    time_t now = time(nullptr);
-    while (now < 100000) { // TODO: make non-blocking
-        delay(500);
-        now = time(nullptr);
+    struct tm timeinfo{};
+    while (!getLocalTime(&timeinfo, 500)) { // Retry every 500ms until we get the time
+        if (millis() - start >= timeoutMs) {
+            return false;
+        }
     }
+
+    return true;
 }
 
 void delayMs(int ms) {

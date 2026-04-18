@@ -7,7 +7,7 @@
 namespace platform {
 
 // Initialize time subsystem (e.g. sync with NTP server on embedded platforms)
-void initTime(const Config& Config);
+bool initTime(const Config& Config);
 
 // Sleep/delay in milliseconds
 void delayMs(int ms);

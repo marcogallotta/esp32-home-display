@@ -36,12 +36,12 @@ void run() {
     }
 #endif
 
-    platform::initTime(config);
     int oldDay = -1;
     salah::Schedule today, tomorrow;
     forecast::ForecastData lastForecastData;
     bool hasLastForecastData = false;
     TimingState timing;
+    bool hasValidTime = false;
 
     UiState currentUiState;
     UiState previousUiState;
@@ -63,9 +63,21 @@ void run() {
         currentUiState.sensors.assign(sensorCount, SensorRowState{});
 
         if (isSalahDue(now, timing)) {
-            const std::tm localTime = *std::localtime(&now);
-            updateSalahState(config, localTime, oldDay, today, tomorrow, currentUiState);
-            markSalahUpdated(now, timing);
+            if (!hasValidTime) {
+                hasValidTime = platform::initTime(config);
+                if (!hasValidTime) {
+                    platform::printLine("Time sync failed");
+                    markSalahUpdated(now, timing);
+                } else {
+                    oldDay = -1;
+                }
+            }
+
+            if (hasValidTime) {
+                const std::tm localTime = *std::localtime(&now);
+                updateSalahState(config, localTime, oldDay, today, tomorrow, currentUiState);
+                markSalahUpdated(now, timing);
+            }
         }
 
         if (areSensorsDue(now, timing)) {
