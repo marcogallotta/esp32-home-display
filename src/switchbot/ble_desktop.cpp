@@ -17,8 +17,6 @@
 namespace switchbot {
 namespace {
 
-std::map<std::string, std::string> pathToAddr;
-
 constexpr const char* kBluezService = "org.bluez";
 constexpr const char* kObjectManagerPath = "/";
 constexpr const char* kAdapterPath = "/org/bluez/hci0";
@@ -87,6 +85,7 @@ struct Scanner::Impl {
     SwitchbotConfig config_;
     mutable std::mutex mutex;
     SensorMap sensors;
+    std::map<std::string, std::string> pathToAddr;
 
     std::unique_ptr<sdbus::IConnection> connection;
     std::unique_ptr<sdbus::IProxy> adapterProxy;
@@ -154,7 +153,7 @@ struct Scanner::Impl {
                 continue;
             }
 
-            pathToAddr[static_cast<std::string>(path)] = *addr;
+            this->pathToAddr[static_cast<std::string>(path)] = *addr;
             handleDeviceProps(*addr, it->second);
         }
     }
@@ -183,8 +182,8 @@ struct Scanner::Impl {
                     return;
                 }
 
-                auto it = pathToAddr.find(path);
-                if (it == pathToAddr.end()) {
+                auto it = this->pathToAddr.find(path);
+                if (it == this->pathToAddr.end()) {
                     return;
                 }
 
@@ -219,7 +218,7 @@ struct Scanner::Impl {
                     return;
                 }
 
-                pathToAddr[static_cast<std::string>(path)] = *addr;
+                this->pathToAddr[static_cast<std::string>(path)] = *addr;
                 handleDeviceProps(*addr, it->second);
             },
             sdbus::return_slot);
