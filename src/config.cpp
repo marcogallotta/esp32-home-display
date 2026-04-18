@@ -5,6 +5,8 @@
 #include <string>
 
 bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
+    // Using a fixed-size for simplicity. You might need to adjust this based on your 
+    // expected config size and available memory.
     StaticJsonDocument<4096> json;
     const DeserializationError err = deserializeJson(json, text.c_str(), text.size());
     if (err) {

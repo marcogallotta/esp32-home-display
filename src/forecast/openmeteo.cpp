@@ -31,6 +31,7 @@ std::string openmeteoUrl(const LocationConfig& location) {
 }
 
 bool parseForecastJson(const std::string& json, ForecastData& out) {
+    // Using a fixed-size for simplicity.
     StaticJsonDocument<2048> doc;
 
     DeserializationError err = deserializeJson(doc, json);
