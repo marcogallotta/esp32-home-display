@@ -14,7 +14,8 @@ struct LocationConfig {
     float longitude;
     // Timezone name, e.g. "Europe/Paris". Used for OpenMeteo API.
     std::string timezone;
-    // TZ environment variable format, e.g. "CET-1CEST,M3.5.0/2,M10.5.0/3"
+    // TZ environment variable format, e.g. "CET-1CEST,M3.5.0/2,M10.5.0/3".
+    // Used to initialise local time. Currently this only affects Salah time calculations.
     std::string timezoneLong;
 };
 
