@@ -26,6 +26,4 @@ std::optional<MeterReading> decodeMeter(
     const SwitchbotConfig& config
 );
 
-std::vector<std::uint8_t> hexToBytes(const std::string& hex);
-
 }  // namespace switchbot

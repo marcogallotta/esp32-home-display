@@ -64,17 +64,4 @@ std::optional<MeterReading> decodeMeter(
     };
 }
 
-std::vector<std::uint8_t> hexToBytes(const std::string& hex) {
-    std::vector<std::uint8_t> out;
-    out.reserve(hex.size() / 2);
-
-    for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
-        const std::string byteStr = hex.substr(i, 2);
-        const auto byte = static_cast<std::uint8_t>(std::stoul(byteStr, nullptr, 16));
-        out.push_back(byte);
-    }
-
-    return out;
-}
-
 }  // namespace switchbot
