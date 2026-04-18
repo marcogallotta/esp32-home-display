@@ -4,8 +4,6 @@
 
 #include <array>
 #include <ctime>
-#include <stdexcept>
-#include <tuple>
 
 #include <PrayerTimes.h>
 
@@ -38,46 +36,45 @@ enum class Weekday {
     Sunday
 };
 
-Month monthFromOneBased(int month) {
+bool monthFromOneBased(int month, Month& out) {
     if (month < 1 || month > 12) {
-        throw std::invalid_argument("month must be in range 1..12");
+        return false;
     }
 
-    return static_cast<Month>(month - 1);
+    out = static_cast<Month>(month - 1);
+    return true;
 }
 
 bool isLeapYear(int year) {
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-int daysInMonth(Month month, int year) {
+bool daysInMonth(Month month, int year, int& out) {
     static constexpr std::array<int, 12> kDaysInMonth = {
         31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
 
     const int monthIndex = static_cast<int>(month);
     if (monthIndex < 0 || monthIndex >= static_cast<int>(kDaysInMonth.size())) {
-        throw std::invalid_argument("invalid month");
+        return false;
     }
 
+    out = kDaysInMonth[monthIndex];
     if (month == Month::February && isLeapYear(year)) {
-        return 29;
+        out = 29;
     }
 
-    return kDaysInMonth[monthIndex];
+    return true;
 }
 
-// Returns weekday for Gregorian calendar date.
-// Uses Sakamoto's algorithm.
-// Output is normalized to Monday=0, ..., Sunday=6.
-Weekday dayOfWeek(int day, Month month, int year) {
+bool dayOfWeek(int day, Month month, int year, Weekday& out) {
     static constexpr std::array<int, 12> t = {
         0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4
     };
 
     const int monthIndex = static_cast<int>(month);
     if (monthIndex < 0 || monthIndex >= static_cast<int>(t.size())) {
-        throw std::invalid_argument("invalid month");
+        return false;
     }
 
     int adjustedYear = year;
@@ -88,53 +85,71 @@ Weekday dayOfWeek(int day, Month month, int year) {
     const int sundayBased =
         (adjustedYear + adjustedYear / 4 - adjustedYear / 100 + adjustedYear / 400 +
          t[monthIndex] + day) % 7;
-    // Sakamoto: 0=Sunday, 1=Monday, ..., 6=Saturday
-    // Convert to Monday=0, ..., Sunday=6.
     const int mondayBased = (sundayBased + 6) % 7;
 
-    return static_cast<Weekday>(mondayBased);
+    out = static_cast<Weekday>(mondayBased);
+    return true;
 }
 
-int lastSundayOfMonth(Month month, int year) {
-    const int lastDay = daysInMonth(month, year);
-    const Weekday weekday = dayOfWeek(lastDay, month, year);
+bool lastSundayOfMonth(Month month, int year, int& out) {
+    int lastDay = 0;
+    if (!daysInMonth(month, year, lastDay)) {
+        return false;
+    }
 
-    return lastDay - ((static_cast<int>(weekday) + 1) % 7);
+    Weekday weekday;
+    if (!dayOfWeek(lastDay, month, year, weekday)) {
+        return false;
+    }
+
+    out = lastDay - ((static_cast<int>(weekday) + 1) % 7);
+    return true;
 }
 
-// EU DST rule used by this project only:
-// - starts on the last Sunday of March
-// - ends on the last Sunday of October
-//
-// Date granularity only:
-// - whole start day counts as DST
-// - whole end day counts as non-DST
-bool isEuDstDate(int day, Month month, int year) {
+bool isEuDstDate(int day, Month month, int year, bool& out) {
     const int monthIndex = static_cast<int>(month);
 
     if (monthIndex < static_cast<int>(Month::March) ||
         monthIndex > static_cast<int>(Month::October)) {
-        return false;
+        out = false;
+        return true;
     }
 
     if (monthIndex > static_cast<int>(Month::March) &&
         monthIndex < static_cast<int>(Month::October)) {
+        out = true;
         return true;
     }
 
+    int lastSunday = 0;
     if (month == Month::March) {
-        return day >= lastSundayOfMonth(Month::March, year);
+        if (!lastSundayOfMonth(Month::March, year, lastSunday)) {
+            return false;
+        }
+        out = day >= lastSunday;
+        return true;
     }
 
-    return day < lastSundayOfMonth(Month::October, year);
+    if (!lastSundayOfMonth(Month::October, year, lastSunday)) {
+        return false;
+    }
+    out = day < lastSunday;
+    return true;
 }
 
-int computeDstMinutes(int day, Month month, int year, bool dstEu) {
+bool computeDstMinutes(int day, Month month, int year, bool dstEu, int& out) {
     if (!dstEu) {
-        return 0;
+        out = 0;
+        return true;
     }
 
-    return isEuDstDate(day, month, year) ? 60 : 0;
+    bool isDst = false;
+    if (!isEuDstDate(day, month, year, isDst)) {
+        return false;
+    }
+
+    out = isDst ? 60 : 0;
+    return true;
 }
 
 int toMinutes(float value) {
@@ -168,42 +183,87 @@ Schedule toSchedule(const PrayerTimesResult& result, const Config& config) {
     };
 }
 
+bool isValidDate(int day, int month, int year) {
+    if (year < 1) {
+        return false;
+    }
+
+    Month monthEnum;
+    if (!monthFromOneBased(month, monthEnum)) {
+        return false;
+    }
+
+    int maxDay = 0;
+    if (!daysInMonth(monthEnum, year, maxDay)) {
+        return false;
+    }
+
+    return day >= 1 && day <= maxDay;
+}
+
 } // namespace
 
-Schedule buildSchedule(int day, int month, int year, const Config& config) {
-    const Month monthEnum = monthFromOneBased(month);
+bool buildSchedule(int day, int month, int year, const Config& config, Schedule& out) {
+    if (!isValidDate(day, month, year)) {
+        return false;
+    }
 
-    PrayerTimes pt(config.location.latitude, config.location.longitude, config.salah.timezoneOffsetMinutes);
+    Month monthEnum;
+    if (!monthFromOneBased(month, monthEnum)) {
+        return false;
+    }
+
+    PrayerTimes pt(
+        config.location.latitude,
+        config.location.longitude,
+        config.salah.timezoneOffsetMinutes
+    );
     pt.setCalculationMethod(CalculationMethods::KARACHI);
     pt.setAsrMethod(config.salah.hanafiAsr ? HANAFI : SHAFII);
 
-    const int dstMinutes = computeDstMinutes(day, monthEnum, year, config.salah.dstRule == "eu");
-    const PrayerTimesResult result = pt.calculateWithOffset(day, month, year, dstMinutes);
+    const bool useEuDst = (config.salah.dstRule == "eu");
+    int dstMinutes = 0;
+    if (!computeDstMinutes(day, monthEnum, year, useEuDst, dstMinutes)) {
+        return false;
+    }
 
-    return toSchedule(result, config);
+    const PrayerTimesResult result = pt.calculateWithOffset(day, month, year, dstMinutes);
+    out = toSchedule(result, config);
+    return true;
 }
 
-std::tuple<Schedule, Schedule> computeSchedules(std::tm time, const Config &config) {
-    const Schedule today =
-        buildSchedule(
+bool computeSchedules(std::tm time, const Config& config, Schedule& today, Schedule& tomorrow) {
+    Schedule todayOut;
+    if (!buildSchedule(
             time.tm_mday,
             time.tm_mon + 1,
             time.tm_year + 1900,
-            config
-        );
-    
+            config,
+            todayOut
+        )) {
+        return false;
+    }
+
     std::tm tomorrowTime = time;
     tomorrowTime.tm_mday += 1;
-    std::mktime(&tomorrowTime);
-    const Schedule tomorrow =
-        buildSchedule(
+    if (std::mktime(&tomorrowTime) == static_cast<std::time_t>(-1)) {
+        return false;
+    }
+
+    Schedule tomorrowOut;
+    if (!buildSchedule(
             tomorrowTime.tm_mday,
             tomorrowTime.tm_mon + 1,
             tomorrowTime.tm_year + 1900,
-            config
-        );
-    
-    return {today, tomorrow};
+            config,
+            tomorrowOut
+        )) {
+        return false;
+    }
+
+    today = todayOut;
+    tomorrow = tomorrowOut;
+    return true;
 }
 
 const char* toString(Phase phase) {

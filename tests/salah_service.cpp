@@ -19,7 +19,7 @@ Config makeParisConfig(const std::string& dstRule) {
     config.location.timezone = "Europe/Paris";
     config.location.timezoneLong = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 
-    config.salah.timezoneOffsetMinutes = 60;   // CET base offset
+    config.salah.timezoneOffsetMinutes = 60;
     config.salah.dstRule = dstRule;
     config.salah.asrMakruhMinutes = 20;
     config.salah.hanafiAsr = true;
@@ -72,6 +72,13 @@ Schedule buildDirectSchedule(int day, int month, int year, int dstMinutes, const
     };
 }
 
+Schedule buildServiceScheduleOrFail(int day, int month, int year, const Config& config) {
+    Schedule out{};
+    const bool ok = salah::buildSchedule(day, month, year, config, out);
+    assertTrue(ok, "buildSchedule should succeed");
+    return out;
+}
+
 void assertScheduleEqual(const Schedule& actual, const Schedule& expected, const char* context) {
     assertEqual(actual.fajr, expected.fajr, std::string(context) + ": fajr mismatch");
     assertEqual(actual.sunrise, expected.sunrise, std::string(context) + ": sunrise mismatch");
@@ -97,34 +104,34 @@ void assertStrictlyOrdered(const Schedule& s, const char* context) {
 
 void testBasicSummerScheduleIsOrdered() {
     const Config config = makeParisConfig("eu");
-    const Schedule s = salah::buildSchedule(4, 4, 2026, config);
+    const Schedule s = buildServiceScheduleOrFail(4, 4, 2026, config);
     assertStrictlyOrdered(s, "summer schedule");
 }
 
 void testBasicWinterScheduleIsOrdered() {
     const Config config = makeParisConfig("eu");
-    const Schedule s = salah::buildSchedule(15, 1, 2026, config);
+    const Schedule s = buildServiceScheduleOrFail(15, 1, 2026, config);
     assertStrictlyOrdered(s, "winter schedule");
 }
 
 void testServiceMatchesDirectWhenDstOffInWinter() {
     const Config config = makeParisConfig("eu");
-    const Schedule actual = salah::buildSchedule(15, 1, 2026, config);
+    const Schedule actual = buildServiceScheduleOrFail(15, 1, 2026, config);
     const Schedule expected = buildDirectSchedule(15, 1, 2026, 0, config);
     assertScheduleEqual(actual, expected, "winter direct comparison");
 }
 
 void testServiceMatchesDirectWhenDstOnInSummer() {
     const Config config = makeParisConfig("eu");
-    const Schedule actual = salah::buildSchedule(4, 4, 2026, config);
+    const Schedule actual = buildServiceScheduleOrFail(4, 4, 2026, config);
     const Schedule expected = buildDirectSchedule(4, 4, 2026, 60, config);
     assertScheduleEqual(actual, expected, "summer direct comparison");
 }
 
 void testDstStartsOnLastSundayOfMarch() {
     const Config config = makeParisConfig("eu");
-    const Schedule before = salah::buildSchedule(28, 3, 2026, config);
-    const Schedule start = salah::buildSchedule(29, 3, 2026, config);
+    const Schedule before = buildServiceScheduleOrFail(28, 3, 2026, config);
+    const Schedule start = buildServiceScheduleOrFail(29, 3, 2026, config);
 
     const int zuhrDelta = start.zuhr - before.zuhr;
     const int fajrDelta = start.fajr - before.fajr;
@@ -135,8 +142,8 @@ void testDstStartsOnLastSundayOfMarch() {
 
 void testDstEndsOnLastSundayOfOctober() {
     const Config config = makeParisConfig("eu");
-    const Schedule before = salah::buildSchedule(24, 10, 2026, config);
-    const Schedule end = salah::buildSchedule(25, 10, 2026, config);
+    const Schedule before = buildServiceScheduleOrFail(24, 10, 2026, config);
+    const Schedule end = buildServiceScheduleOrFail(25, 10, 2026, config);
 
     const int zuhrDelta = end.zuhr - before.zuhr;
     const int fajrDelta = end.fajr - before.fajr;
@@ -147,40 +154,35 @@ void testDstEndsOnLastSundayOfOctober() {
 
 void testNoDstConfigDoesNotApplyDstAtMarchBoundary() {
     const Config config = makeParisConfig("none");
-    const Schedule actual = salah::buildSchedule(29, 3, 2026, config);
+    const Schedule actual = buildServiceScheduleOrFail(29, 3, 2026, config);
     const Schedule expected = buildDirectSchedule(29, 3, 2026, 0, config);
     assertScheduleEqual(actual, expected, "no DST config on March boundary");
 }
 
 void testNoDstConfigDoesNotApplyDstAtOctoberBoundary() {
     const Config config = makeParisConfig("none");
-    const Schedule actual = salah::buildSchedule(25, 10, 2026, config);
+    const Schedule actual = buildServiceScheduleOrFail(25, 10, 2026, config);
     const Schedule expected = buildDirectSchedule(25, 10, 2026, 0, config);
     assertScheduleEqual(actual, expected, "no DST config on October boundary");
 }
 
 void testLeapYearDateBuilds() {
     const Config config = makeParisConfig("eu");
-    const Schedule s = salah::buildSchedule(29, 2, 2028, config);
+    const Schedule s = buildServiceScheduleOrFail(29, 2, 2028, config);
     assertStrictlyOrdered(s, "leap year schedule");
 }
 
-void testInvalidMonthThrows() {
+void testInvalidMonthFails() {
     const Config config = makeParisConfig("eu");
 
-    bool threw = false;
-    try {
-        (void)salah::buildSchedule(1, 0, 2026, config);
-    } catch (...) {
-        threw = true;
-    }
-
-    assertTrue(threw, "invalid month should throw");
+    Schedule out{};
+    const bool ok = salah::buildSchedule(1, 0, 2026, config, out);
+    assertTrue(!ok, "invalid month should fail");
 }
 
 void testAnotherRepresentativeDateMatchesDirect() {
     const Config config = makeParisConfig("eu");
-    const Schedule actual = salah::buildSchedule(1, 11, 2026, config);
+    const Schedule actual = buildServiceScheduleOrFail(1, 11, 2026, config);
     const Schedule expected = buildDirectSchedule(1, 11, 2026, 0, config);
     assertScheduleEqual(actual, expected, "post-DST direct comparison");
 }
@@ -197,6 +199,6 @@ void runServiceTests() {
     testNoDstConfigDoesNotApplyDstAtMarchBoundary();
     testNoDstConfigDoesNotApplyDstAtOctoberBoundary();
     testLeapYearDateBuilds();
-    testInvalidMonthThrows();
+    testInvalidMonthFails();
     testAnotherRepresentativeDateMatchesDirect();
 }

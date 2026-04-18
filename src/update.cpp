@@ -18,27 +18,28 @@ void updateSalahState(
     salah::Schedule& tomorrow,
     UiState& uiState
 ) {
-    try {
-        if (localTime.tm_mday != oldDay) {
-            oldDay = localTime.tm_mday;
-            std::tie(today, tomorrow) = salah::computeSchedules(localTime, config);
+    if (localTime.tm_mday != oldDay) {
+        salah::Schedule newToday;
+        salah::Schedule newTomorrow;
+        if (!salah::computeSchedules(localTime, config, newToday, newTomorrow)) {
+            platform::printLine("Error computing salah schedules");
+            return;
         }
-
-        uiState.salah =
-            salah::computeState(today, tomorrow, salah::minutesSinceMidnight(localTime));
-        uiState.hasSalah = true;
-
-        platform::printLine(std::string("Current: ") + toString(uiState.salah.current));
-        platform::printLine(std::string("Next: ") + toString(uiState.salah.next));
-        platform::printLine(
-            "Remaining: " + std::to_string(uiState.salah.minutesRemaining) + " min"
-        );
-        platform::printLine("");
-    } catch (const std::exception& e) {
-        platform::printLine(std::string("Salah module error: ") + e.what());
-    } catch (...) {
-        platform::printLine("Salah module error: unknown");
+        today = newToday;
+        tomorrow = newTomorrow;
+        oldDay = localTime.tm_mday;
     }
+
+    uiState.salah =
+        salah::computeState(today, tomorrow, salah::minutesSinceMidnight(localTime));
+    uiState.hasSalah = true;
+
+    platform::printLine(std::string("Current: ") + toString(uiState.salah.current));
+    platform::printLine(std::string("Next: ") + toString(uiState.salah.next));
+    platform::printLine(
+        "Remaining: " + std::to_string(uiState.salah.minutesRemaining) + " min"
+    );
+    platform::printLine("");
 }
 
 void updateSensorState(
