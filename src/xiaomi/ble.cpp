@@ -17,6 +17,7 @@ struct Scanner::Impl {
     XiaomiConfig config_;
     mutable std::mutex mutex;
     SensorMap sensors;
+    UpdateCallback callback_;
 
     void applyObject(SensorReading& reading, const DecodedObject& decoded) {
         switch (decoded.kind) {
@@ -46,35 +47,65 @@ struct Scanner::Impl {
         }
 
         bool matched = false;
+        bool changed = false;
+        UpdateCallback cb;
 
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            SensorReading& reading = sensors[event.address];
+            reading.name = sensor->name;
+            reading.shortName = sensor->shortName;
+            reading.rssi = event.rssi;
+            reading.lastSeenEpochS = static_cast<std::int64_t>(std::time(nullptr));
+
+            for (const auto& [uuid, payload] : event.serviceData) {
+                if (!isXiaomiServiceDataUuid(uuid)) {
+                    continue;
+                }
+
+                const auto decoded = decodeObject(payload);
+                if (!decoded.has_value()) {
+                    continue;
+                }
+
+                matched = true;
+
+                const SensorReading before = reading;
+                applyObject(reading, *decoded);
+
+                if (reading.hasTemperature != before.hasTemperature ||
+                    reading.temperatureC != before.temperatureC ||
+                    reading.hasLux != before.hasLux ||
+                    reading.lux != before.lux ||
+                    reading.hasMoisture != before.hasMoisture ||
+                    reading.moisturePct != before.moisturePct ||
+                    reading.hasConductivity != before.hasConductivity ||
+                    reading.conductivityUsCm != before.conductivityUsCm) {
+                    changed = true;
+                }
+            }
+
+            if (!matched &&
+                !reading.hasTemperature &&
+                !reading.hasLux &&
+                !reading.hasMoisture &&
+                !reading.hasConductivity) {
+                sensors.erase(event.address);
+            }
+
+            if (changed) {
+                cb = callback_;
+            }
+        }
+
+        if (cb) {
+            cb();
+        }
+    }
+
+    void setUpdateCallback(UpdateCallback callback) {
         std::lock_guard<std::mutex> lock(mutex);
-        SensorReading& reading = sensors[event.address];
-        reading.name = sensor->name;
-        reading.shortName = sensor->shortName;
-        reading.rssi = event.rssi;
-        reading.lastSeenEpochS = static_cast<std::int64_t>(std::time(nullptr));
-
-        for (const auto& [uuid, payload] : event.serviceData) {
-            if (!isXiaomiServiceDataUuid(uuid)) {
-                continue;
-            }
-
-            const auto decoded = decodeObject(payload);
-            if (!decoded.has_value()) {
-                continue;
-            }
-
-            applyObject(reading, *decoded);
-            matched = true;
-        }
-
-        if (!matched &&
-            !reading.hasTemperature &&
-            !reading.hasLux &&
-            !reading.hasMoisture &&
-            !reading.hasConductivity) {
-            sensors.erase(event.address);
-        }
+        callback_ = std::move(callback);
     }
 
     SensorMap snapshot() const {
@@ -95,6 +126,10 @@ void Scanner::poll() {}
 
 void Scanner::handleAdvertisement(const ble::AdvertisementEvent& event) {
     impl_->handleAdvertisement(event);
+}
+
+void Scanner::setUpdateCallback(UpdateCallback callback) {
+    impl_->setUpdateCallback(std::move(callback));
 }
 
 SensorMap Scanner::snapshot() const {

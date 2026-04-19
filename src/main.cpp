@@ -63,6 +63,11 @@ void run() {
         switchbotUpdatePending.store(true);
     });
 
+    std::atomic<bool> xiaomiUpdatePending{false};
+    xiaomiScanner.setUpdateCallback([&]() {
+        xiaomiUpdatePending.store(true);
+    });
+
     ble::Scanner bleScanner([&](const ble::AdvertisementEvent& event) {
         scanner.handleAdvertisement(event);
         xiaomiScanner.handleAdvertisement(event);
@@ -104,7 +109,7 @@ void run() {
             markSensorsUpdated(now, timing);
         }
 
-        if (areXiaomiDue(now, timing)) {
+        if (xiaomiUpdatePending.exchange(false) || areXiaomiDue(now, timing)) {
             currentUiState.xiaomiSensors.assign(xiaomiSensorCount, XiaomiRowState{});
             updateXiaomiState(config, now, xiaomiScanner, currentUiState);
             markXiaomiUpdated(now, config, timing);
