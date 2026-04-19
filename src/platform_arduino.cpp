@@ -49,6 +49,11 @@ bool initTime(const Config& config, unsigned long timeoutMs) {
     return true;
 }
 
+bool hasValidTime() {
+    struct tm timeinfo{};
+    return getLocalTime(&timeinfo, 0);
+}
+
 void delayMs(int ms) {
     delay(ms);
 }

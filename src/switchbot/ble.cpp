@@ -1,6 +1,8 @@
 #include "ble.h"
 #include "protocol.h"
 
+#include "../platform.h"
+
 #include <cstdint>
 #include <ctime>
 #include <map>
@@ -39,12 +41,15 @@ struct Scanner::Impl {
             return;
         }
 
+        const std::int64_t lastSeenEpochS =
+            platform::hasValidTime() ? static_cast<std::int64_t>(std::time(nullptr)) : 0;
+
         SensorReading out{
             reading->name,
             reading->shortName,
             reading->temperature_c,
             reading->humidity,
-            static_cast<std::int64_t>(std::time(nullptr)),
+            lastSeenEpochS,
             rssi,
         };
 

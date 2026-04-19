@@ -11,7 +11,13 @@
 namespace platform {
 
 bool initTime(const Config& config, unsigned long timeoutMs) {
+    (void)config;
+    (void)timeoutMs;
     // No initialization needed on desktop
+    return true;
+}
+
+bool hasValidTime() {
     return true;
 }
 

@@ -1,6 +1,8 @@
 #include "ble.h"
 #include "protocol.h"
 
+#include "../platform.h"
+
 #include <ctime>
 #include <memory>
 #include <mutex>
@@ -56,7 +58,8 @@ struct Scanner::Impl {
             reading.name = sensor->name;
             reading.shortName = sensor->shortName;
             reading.rssi = event.rssi;
-            reading.lastSeenEpochS = static_cast<std::int64_t>(std::time(nullptr));
+            reading.lastSeenEpochS =
+                platform::hasValidTime() ? static_cast<std::int64_t>(std::time(nullptr)) : 0;
 
             for (const auto& [uuid, payload] : event.serviceData) {
                 if (!isXiaomiServiceDataUuid(uuid)) {
