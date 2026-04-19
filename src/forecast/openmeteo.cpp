@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <iomanip>
 #include <sstream>
@@ -64,7 +65,14 @@ bool parseForecastJson(const std::string& json, ForecastData& out) {
         return false;
     }
 
-    const int n = std::min<int>(4, time.size());
+    const int n = std::min<int>({
+        4,
+        static_cast<int>(time.size()),
+        static_cast<int>(weatherCode.size()),
+        static_cast<int>(tempMax.size()),
+        static_cast<int>(tempMin.size()),
+        static_cast<int>(rainProbMax.size())
+    });
     out.count = n;
 
     for (int i = 0; i < n; ++i) {
