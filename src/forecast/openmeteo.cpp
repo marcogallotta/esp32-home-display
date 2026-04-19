@@ -1,4 +1,6 @@
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 
 #include <ArduinoJson.h>
 
@@ -21,10 +23,17 @@ std::string urlEncode(const std::string& s) {
     return out;
 }
 
+std::string formatFloat(float value) {
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << std::fixed << std::setprecision(6) << value;
+    return oss.str();
+}
+
 std::string openmeteoUrl(const LocationConfig& location) {
     return "https://api.open-meteo.com/v1/forecast?" \
-        "latitude=" + std::to_string(location.latitude) + "&" \
-        "longitude=" + std::to_string(location.longitude) + "&" \
+        "latitude=" + formatFloat(location.latitude) + "&" \
+        "longitude=" + formatFloat(location.longitude) + "&" \
         "daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum&" \
         "timezone=" + urlEncode(location.timezone) + "&" \
         "forecast_days=4";
