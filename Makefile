@@ -38,7 +38,9 @@ COMMON_SRC := \
 	src/switchbot/protocol.cpp \
 	src/switchbot/ble_desktop.cpp \
 	src/ui/display.cpp \
-	src/ui/state.cpp
+	src/ui/state.cpp \
+	src/xiaomi/protocol.cpp \
+	src/xiaomi/ble_desktop.cpp
 
 MAIN_SRC := \
 	src/main.cpp \
@@ -113,6 +115,10 @@ esp32-monitor:
 # --- OBJECT BUILD ---
 
 $(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS_20) -c $< -o $@
+
+$(OBJ_DIR)/src/xiaomi/ble_desktop.o: src/xiaomi/ble_desktop.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS_20) -c $< -o $@
 
