@@ -80,6 +80,7 @@ void run() {
     switchbot::Scanner scanner(config.switchbot);
     xiaomi::Scanner xiaomiScanner(config.xiaomi);
 
+    // Note that these callbacks are asyn, and don't run on the main thread
     std::atomic<bool> switchbotUpdatePending{false};
     scanner.setUpdateCallback([&]() {
         switchbotUpdatePending.store(true);

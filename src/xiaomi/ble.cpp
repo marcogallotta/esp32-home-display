@@ -42,6 +42,7 @@ struct Scanner::Impl {
         }
     }
 
+    // Note this is a callback that runs async, outside the main thread.
     void handleAdvertisement(const ble::AdvertisementEvent& event) {
         const XiaomiSensorConfig* sensor = findSensorConfig(config_, event.address);
         if (sensor == nullptr) {

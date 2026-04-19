@@ -16,6 +16,7 @@ struct AdvertisementEvent {
     std::map<std::string, std::vector<std::uint8_t>> serviceData;
 };
 
+// Note that callbacks are run async, not on the main thread.
 class Scanner {
 public:
     using Callback = std::function<void(const AdvertisementEvent&)>;

@@ -65,6 +65,7 @@ struct Scanner::Impl {
         }
     }
 
+    // Note this is a callback that runs async, outside the main thread.
     void handleAdvertisement(const ble::AdvertisementEvent& event) {
         const auto it = event.manufacturerData.find(kSwitchbotManufacturerId);
         if (it == event.manufacturerData.end()) {
