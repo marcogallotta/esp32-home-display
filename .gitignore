@@ -7,4 +7,4 @@ flash_spiffs.bin
 mkspiffs
 otadata.bin
 partition_table.bin
-tools/scan.py
+tools/switchbot_scan.py
