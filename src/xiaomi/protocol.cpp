@@ -7,6 +7,8 @@ namespace xiaomi {
 
 namespace {
 constexpr const char* kFe95Uuid = "0000fe95-0000-1000-8000-00805f9b34fb";
+constexpr const char* kFe95PrefixedUuid = "0xfe95";
+constexpr const char* kFe95ShortUuid = "fe95";
 }
 
 bool isXiaomiServiceDataUuid(const std::string& uuid) {
@@ -17,7 +19,9 @@ bool isXiaomiServiceDataUuid(const std::string& uuid) {
         normalized.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    return normalized == kFe95Uuid;
+    return normalized == kFe95Uuid ||
+           normalized == kFe95ShortUuid ||
+           normalized == kFe95PrefixedUuid;
 }
 
 std::optional<DecodedObject> decodeObject(const std::vector<std::uint8_t>& payload) {
