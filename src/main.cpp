@@ -20,6 +20,28 @@ namespace {
 #ifdef ARDUINO
 constexpr int kMaxVisibleSensorRows = 4;
 #endif
+
+bool hasAnyXiaomiReading(const UiState& uiState) {
+    for (const auto& row : uiState.xiaomiSensors) {
+        if (row.hasReading) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool allXiaomiRowsComplete(const UiState& uiState) {
+    for (const auto& row : uiState.xiaomiSensors) {
+        if (!row.hasReading) {
+            return false;
+        }
+        if (!row.hasTemperature || !row.hasLux || !row.hasMoisture || !row.hasConductivity) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 void run() {
@@ -112,7 +134,13 @@ void run() {
         if (xiaomiUpdatePending.exchange(false) || areXiaomiDue(now, timing)) {
             currentUiState.xiaomiSensors.assign(xiaomiSensorCount, XiaomiRowState{});
             updateXiaomiState(config, now, xiaomiScanner, currentUiState);
-            markXiaomiUpdated(now, config, timing);
+
+            if (allXiaomiRowsComplete(currentUiState)) {
+                markXiaomiUpdated(now, config, timing);
+            } else {
+                // TODO: change this retry from 1 minute to 5 minutes after debugging.
+                timing.nextXiaomiDueEpochS = now + 60;
+            }
         }
 
         if (isForecastDue(now, timing)) {
