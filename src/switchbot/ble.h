@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -23,6 +24,8 @@ using SensorMap = std::map<std::string, SensorReading>;
 
 class Scanner {
 public:
+    using UpdateCallback = std::function<void()>;
+
     explicit Scanner(const SwitchbotConfig& config);
     ~Scanner();
 
@@ -31,6 +34,8 @@ public:
     void poll();
 
     void handleAdvertisement(const ble::AdvertisementEvent& event);
+    void setUpdateCallback(UpdateCallback callback);
+
     SensorMap snapshot() const;
 
 private:

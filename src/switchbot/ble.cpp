@@ -23,6 +23,7 @@ struct Scanner::Impl {
     SwitchbotConfig config_;
     mutable std::mutex mutex;
     SensorMap sensors;
+    UpdateCallback callback_;
 
     void upsertReading(
         const std::string& addr,
@@ -47,8 +48,16 @@ struct Scanner::Impl {
             rssi,
         };
 
-        std::lock_guard<std::mutex> lock(mutex);
-        sensors[addr] = std::move(out);
+        UpdateCallback cb;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            sensors[addr] = std::move(out);
+            cb = callback_;
+        }
+
+        if (cb) {
+            cb();
+        }
     }
 
     void handleAdvertisement(const ble::AdvertisementEvent& event) {
@@ -58,6 +67,11 @@ struct Scanner::Impl {
         }
 
         upsertReading(event.address, event.rssi, it->second);
+    }
+
+    void setUpdateCallback(UpdateCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex);
+        callback_ = std::move(callback);
     }
 
     SensorMap snapshot() const {
@@ -78,6 +92,10 @@ void Scanner::poll() {}
 
 void Scanner::handleAdvertisement(const ble::AdvertisementEvent& event) {
     impl_->handleAdvertisement(event);
+}
+
+void Scanner::setUpdateCallback(UpdateCallback callback) {
+    impl_->setUpdateCallback(std::move(callback));
 }
 
 SensorMap Scanner::snapshot() const {

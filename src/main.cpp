@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <ctime>
 #include <cstdint>
 #include <string>
@@ -57,6 +58,11 @@ void run() {
     switchbot::Scanner scanner(config.switchbot);
     xiaomi::Scanner xiaomiScanner(config.xiaomi);
 
+    std::atomic<bool> switchbotUpdatePending{false};
+    scanner.setUpdateCallback([&]() {
+        switchbotUpdatePending.store(true);
+    });
+
     ble::Scanner bleScanner([&](const ble::AdvertisementEvent& event) {
         scanner.handleAdvertisement(event);
         xiaomiScanner.handleAdvertisement(event);
@@ -92,7 +98,7 @@ void run() {
             }
         }
 
-        if (areSensorsDue(now, timing)) {
+        if (switchbotUpdatePending.exchange(false) || areSensorsDue(now, timing)) {
             currentUiState.sensors.assign(sensorCount, SensorRowState{});
             updateSensorState(config, now, scanner, currentUiState);
             markSensorsUpdated(now, timing);
