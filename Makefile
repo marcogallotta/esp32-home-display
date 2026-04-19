@@ -25,6 +25,7 @@ TEST_TARGET := $(BUILD_DIR)/tests
 
 COMMON_SRC := \
 	lib/PrayerTimes/src/PrayerTimes.cpp \
+	src/ble/desktop.cpp \
 	src/config.cpp \
 	src/config_desktop.cpp \
 	src/timing.cpp \
@@ -110,6 +111,10 @@ esp32-monitor:
 	$(ARDUINO_CLI) monitor -p $(PORT) -c baudrate=115200
 
 # --- OBJECT BUILD ---
+
+$(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS_20) -c $< -o $@
 
 $(OBJ_DIR)/src/switchbot/ble_desktop.o: src/switchbot/ble_desktop.cpp
 	@mkdir -p $(dir $@)

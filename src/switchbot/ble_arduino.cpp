@@ -1,108 +1,41 @@
 #ifdef ARDUINO
 
-#include "switchbot/ble.h"
+#include "../ble/scanner.h"
+#include "ble.h"
+#include "protocol.h"
 
-#include <Arduino.h>
-#include <NimBLEDevice.h>
-
-#include <algorithm>
-#include <atomic>
-#include <cctype>
 #include <cstdint>
 #include <ctime>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace switchbot {
 
 namespace {
 constexpr std::uint16_t kSwitchbotManufacturerId = 2409;
-constexpr uint32_t kScanTimeMs = 30 * 1000;
 }
 
 struct Scanner::Impl {
     explicit Impl(const SwitchbotConfig& config)
-        : config_(config) {
+        : config_(config),
+          scanner_([this](const ble::AdvertisementEvent& event) {
+              handleAdvertisement(event);
+          }) {
     }
-
-    class ScanCallbacks : public NimBLEScanCallbacks {
-    public:
-        explicit ScanCallbacks(Impl& impl)
-            : impl_(impl) {
-        }
-
-        void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override {
-            if (advertisedDevice == nullptr) {
-                return;
-            }
-
-            if (!advertisedDevice->haveManufacturerData()) {
-                return;
-            }
-
-            const std::string manufacturerData = advertisedDevice->getManufacturerData();
-            if (manufacturerData.size() < 2) {
-                return;
-            }
-
-            const std::uint8_t b0 = static_cast<std::uint8_t>(manufacturerData[0]);
-            const std::uint8_t b1 = static_cast<std::uint8_t>(manufacturerData[1]);
-            const std::uint16_t manufacturerId = static_cast<std::uint16_t>(b0 | (b1 << 8));
-            if (manufacturerId != kSwitchbotManufacturerId) {
-                return;
-            }
-
-            std::string addr = advertisedDevice->getAddress().toString();
-            std::transform(
-                addr.begin(),
-                addr.end(),
-                addr.begin(),
-                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-
-            impl_.upsertReading(
-                addr,
-                advertisedDevice->getRSSI(),
-                reinterpret_cast<const std::uint8_t*>(manufacturerData.data() + 2),
-                manufacturerData.size() - 2);
-        }
-
-        void onScanEnd(const NimBLEScanResults& results, int reason) override {
-            (void)results;
-            (void)reason;
-
-            if (impl_.running.load()) {
-                impl_.restartRequested.store(true);
-            }
-        }
-
-    private:
-        Impl& impl_;
-    };
 
     SwitchbotConfig config_;
     mutable std::mutex mutex;
     SensorMap sensors;
-
-    NimBLEScan* scan{nullptr};
-    std::atomic<bool> running{false};
-    std::atomic<bool> restartRequested{false};
-    bool nimbleInitialised{false};
-    std::unique_ptr<ScanCallbacks> callbacks;
+    ble::Scanner scanner_;
 
     void upsertReading(
         const std::string& addr,
         int rssi,
-        const std::uint8_t* payloadData,
-        std::size_t payloadSize
+        const std::vector<std::uint8_t>& payload
     ) {
-        if (payloadData == nullptr || payloadSize == 0) {
-            return;
-        }
-
-        std::vector<std::uint8_t> payload(payloadData, payloadData + payloadSize);
         if (!isMeterPayload(payload)) {
             return;
         }
@@ -125,62 +58,25 @@ struct Scanner::Impl {
         sensors[addr] = std::move(out);
     }
 
-    void start() {
-        if (running.load()) {
+    void handleAdvertisement(const ble::AdvertisementEvent& event) {
+        const auto it = event.manufacturerData.find(kSwitchbotManufacturerId);
+        if (it == event.manufacturerData.end()) {
             return;
         }
 
-        if (!nimbleInitialised) {
-            NimBLEDevice::init("");
-            nimbleInitialised = true;
-        }
+        upsertReading(event.address, event.rssi, it->second);
+    }
 
-        scan = NimBLEDevice::getScan();
-        if (!callbacks) {
-            callbacks = std::make_unique<ScanCallbacks>(*this);
-        }
-
-        restartRequested.store(false);
-        running.store(true);
-
-        scan->setScanCallbacks(callbacks.get(), false);
-        scan->setActiveScan(false);
-        scan->setMaxResults(0);
-        scan->start(kScanTimeMs, false, true);
+    void start() {
+        scanner_.start();
     }
 
     void stop() {
-        if (!running.load()) {
-            return;
-        }
-
-        running.store(false);
-        restartRequested.store(false);
-
-        if (scan != nullptr) {
-            scan->stop();
-        }
+        scanner_.stop();
     }
 
     void poll() {
-        if (!running.load()) {
-            return;
-        }
-
-        if (!restartRequested.load()) {
-            return;
-        }
-
-        if (scan == nullptr) {
-            return;
-        }
-
-        if (scan->isScanning()) {
-            return;
-        }
-
-        restartRequested.store(false);
-        scan->start(kScanTimeMs, false, true);
+        scanner_.poll();
     }
 
     SensorMap snapshot() const {
