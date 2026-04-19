@@ -36,11 +36,11 @@ COMMON_SRC := \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/switchbot/protocol.cpp \
-	src/switchbot/ble_desktop.cpp \
+	src/switchbot/ble.cpp \
 	src/ui/display.cpp \
 	src/ui/state.cpp \
 	src/xiaomi/protocol.cpp \
-	src/xiaomi/ble_desktop.cpp
+	src/xiaomi/ble.cpp
 
 MAIN_SRC := \
 	src/main.cpp \

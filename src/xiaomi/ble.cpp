@@ -1,6 +1,3 @@
-#ifndef ARDUINO
-
-#include "../ble/scanner.h"
 #include "ble.h"
 #include "protocol.h"
 
@@ -14,37 +11,27 @@ namespace xiaomi {
 
 struct Scanner::Impl {
     explicit Impl(const XiaomiConfig& config)
-        : config_(config),
-          scanner_([this](const ble::AdvertisementEvent& event) {
-              handleAdvertisement(event);
-          }) {
+        : config_(config) {
     }
 
     XiaomiConfig config_;
     mutable std::mutex mutex;
     SensorMap sensors;
-    ble::Scanner scanner_;
 
-    void applyObject(
-        SensorReading& reading,
-        const DecodedObject& decoded
-    ) {
+    void applyObject(SensorReading& reading, const DecodedObject& decoded) {
         switch (decoded.kind) {
             case DecodedObject::Kind::Temperature:
                 reading.hasTemperature = true;
                 reading.temperatureC = decoded.temperatureC;
                 break;
-
             case DecodedObject::Kind::Lux:
                 reading.hasLux = true;
                 reading.lux = decoded.lux;
                 break;
-
             case DecodedObject::Kind::Moisture:
                 reading.hasMoisture = true;
                 reading.moisturePct = decoded.moisturePct;
                 break;
-
             case DecodedObject::Kind::Conductivity:
                 reading.hasConductivity = true;
                 reading.conductivityUsCm = decoded.conductivityUsCm;
@@ -81,22 +68,13 @@ struct Scanner::Impl {
             matched = true;
         }
 
-        if (!matched && !reading.hasTemperature && !reading.hasLux &&
-            !reading.hasMoisture && !reading.hasConductivity) {
+        if (!matched &&
+            !reading.hasTemperature &&
+            !reading.hasLux &&
+            !reading.hasMoisture &&
+            !reading.hasConductivity) {
             sensors.erase(event.address);
         }
-    }
-
-    void start() {
-        scanner_.start();
-    }
-
-    void stop() {
-        scanner_.stop();
-    }
-
-    void poll() {
-        scanner_.poll();
     }
 
     SensorMap snapshot() const {
@@ -109,20 +87,14 @@ Scanner::Scanner(const XiaomiConfig& config)
     : impl_(std::make_unique<Impl>(config)) {
 }
 
-Scanner::~Scanner() {
-    stop();
-}
+Scanner::~Scanner() = default;
 
-void Scanner::start() {
-    impl_->start();
-}
+void Scanner::start() {}
+void Scanner::stop() {}
+void Scanner::poll() {}
 
-void Scanner::stop() {
-    impl_->stop();
-}
-
-void Scanner::poll() {
-    impl_->poll();
+void Scanner::handleAdvertisement(const ble::AdvertisementEvent& event) {
+    impl_->handleAdvertisement(event);
 }
 
 SensorMap Scanner::snapshot() const {
@@ -130,5 +102,3 @@ SensorMap Scanner::snapshot() const {
 }
 
 } // namespace xiaomi
-
-#endif

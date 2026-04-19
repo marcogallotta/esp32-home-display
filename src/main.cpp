@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 
+#include "ble/scanner.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
 #include "platform.h"
@@ -54,10 +55,13 @@ void run() {
     bool hasPreviousUiState = false;
 
     switchbot::Scanner scanner(config.switchbot);
-    scanner.start();
-
     xiaomi::Scanner xiaomiScanner(config.xiaomi);
-    xiaomiScanner.start();
+
+    ble::Scanner bleScanner([&](const ble::AdvertisementEvent& event) {
+        scanner.handleAdvertisement(event);
+        xiaomiScanner.handleAdvertisement(event);
+    });
+    bleScanner.start();
 
 #ifdef ARDUINO
     initDisplay();
@@ -67,8 +71,7 @@ void run() {
         const std::time_t now = std::time(nullptr);
 
         previousUiState = currentUiState;
-        currentUiState.sensors.assign(sensorCount, SensorRowState{});
-        currentUiState.xiaomiSensors.assign(xiaomiSensorCount, XiaomiRowState{});
+        bleScanner.poll();
 
         if (isSalahDue(now, timing)) {
             if (!hasValidTime) {
@@ -82,18 +85,21 @@ void run() {
             }
 
             if (hasValidTime) {
-                const std::tm localTime = *std::localtime(&now);
+                const std::time_t now2 = std::time(nullptr);
+                const std::tm localTime = *std::localtime(&now2);
                 updateSalahState(config, localTime, oldDay, today, tomorrow, currentUiState);
-                markSalahUpdated(now, timing);
+                markSalahUpdated(now2, timing);
             }
         }
 
         if (areSensorsDue(now, timing)) {
+            currentUiState.sensors.assign(sensorCount, SensorRowState{});
             updateSensorState(config, now, scanner, currentUiState);
             markSensorsUpdated(now, timing);
         }
 
         if (areXiaomiDue(now, timing)) {
+            currentUiState.xiaomiSensors.assign(xiaomiSensorCount, XiaomiRowState{});
             updateXiaomiState(config, now, xiaomiScanner, currentUiState);
             markXiaomiUpdated(now, config, timing);
         }

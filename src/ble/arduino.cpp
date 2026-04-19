@@ -1,5 +1,6 @@
 #ifdef ARDUINO
 
+#include "platform.h"
 #include "scanner.h"
 
 #include <NimBLEDevice.h>

@@ -1,7 +1,3 @@
-#ifndef ARDUINO
-
-#include "../ble/scanner.h"
-#include "../config.h"
 #include "ble.h"
 #include "protocol.h"
 
@@ -10,7 +6,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,16 +17,12 @@ constexpr std::uint16_t kSwitchbotManufacturerId = 2409;
 
 struct Scanner::Impl {
     explicit Impl(const SwitchbotConfig& config)
-        : config_(config),
-          scanner_([this](const ble::AdvertisementEvent& event) {
-              handleAdvertisement(event);
-          }) {
+        : config_(config) {
     }
 
     SwitchbotConfig config_;
     mutable std::mutex mutex;
     SensorMap sensors;
-    ble::Scanner scanner_;
 
     void upsertReading(
         const std::string& addr,
@@ -69,18 +60,6 @@ struct Scanner::Impl {
         upsertReading(event.address, event.rssi, it->second);
     }
 
-    void start() {
-        scanner_.start();
-    }
-
-    void stop() {
-        scanner_.stop();
-    }
-
-    void poll() {
-        scanner_.poll();
-    }
-
     SensorMap snapshot() const {
         std::lock_guard<std::mutex> lock(mutex);
         return sensors;
@@ -91,20 +70,14 @@ Scanner::Scanner(const SwitchbotConfig& config)
     : impl_(std::make_unique<Impl>(config)) {
 }
 
-Scanner::~Scanner() {
-    stop();
-}
+Scanner::~Scanner() = default;
 
-void Scanner::start() {
-    impl_->start();
-}
+void Scanner::start() {}
+void Scanner::stop() {}
+void Scanner::poll() {}
 
-void Scanner::stop() {
-    impl_->stop();
-}
-
-void Scanner::poll() {
-    impl_->poll();
+void Scanner::handleAdvertisement(const ble::AdvertisementEvent& event) {
+    impl_->handleAdvertisement(event);
 }
 
 SensorMap Scanner::snapshot() const {
@@ -112,5 +85,3 @@ SensorMap Scanner::snapshot() const {
 }
 
 } // namespace switchbot
-
-#endif

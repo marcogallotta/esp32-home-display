@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "../ble/scanner.h"
 #include "protocol.h"
 
 namespace xiaomi {
@@ -40,6 +41,7 @@ public:
     void stop();
     void poll();
 
+    void handleAdvertisement(const ble::AdvertisementEvent& event);
     SensorMap snapshot() const;
 
 private:
