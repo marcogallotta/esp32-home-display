@@ -8,3 +8,4 @@ mkspiffs
 otadata.bin
 partition_table.bin
 tools/switchbot_scan.py
+tools/token_extractor
