@@ -24,5 +24,11 @@
     "wifi": {
         "ssid": "YOUR_WIFI_SSID",
         "password": "YOUR_WIFI_PASSWORD"
+    },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": [
+            { "mac": "AA:BB:CC:DD:EE:FF", "name": "Plant 1", "short_name": "P1" }
+        ]
     }
 }

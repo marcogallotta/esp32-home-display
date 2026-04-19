@@ -45,12 +45,24 @@ struct WifiConfig {
     std::string password;
 };
 
+struct XiaomiSensorConfig {
+    std::string mac;
+    std::string name;
+    std::string shortName;
+};
+
+struct XiaomiConfig {
+    int updateIntervalMinutes;
+    std::vector<XiaomiSensorConfig> sensors;
+};
+
 struct Config {
     ForecastConfig forecast;
     LocationConfig location;
     SalahConfig salah;
     SwitchbotConfig switchbot;
     WifiConfig wifi;
+    XiaomiConfig xiaomi;
 };
 
 bool loadConfig(Config& config);

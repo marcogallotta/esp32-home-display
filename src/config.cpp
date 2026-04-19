@@ -134,6 +134,45 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         config.switchbot.sensors.push_back(sensor);
     }
 
+    const JsonObject xiaomi = json["xiaomi"];
+    if (xiaomi.isNull()) {
+        return fail("xiaomi is not an object");
+    }
+    if (!xiaomi["update_interval_minutes"].is<int>()) {
+        return fail("xiaomi.update_interval_minutes is not an int");
+    }
+
+    const int xiaomiUpdateIntervalMinutes = xiaomi["update_interval_minutes"].as<int>();
+    if (xiaomiUpdateIntervalMinutes <= 0) {
+        return fail("xiaomi.update_interval_minutes must be > 0");
+    }
+
+    const JsonArray xiaomiSensors = xiaomi["sensors"];
+    if (xiaomiSensors.isNull()) {
+        return fail("xiaomi.sensors is not an array");
+    }
+
+    config.xiaomi.sensors.clear();
+
+    for (JsonObject s : xiaomiSensors) {
+        if (!s["mac"].is<const char*>()) {
+            return fail("xiaomi.sensors[].mac is not a string");
+        }
+        if (!s["name"].is<const char*>()) {
+            return fail("xiaomi.sensors[].name is not a string");
+        }
+        if (!s["short_name"].is<const char*>()) {
+            return fail("xiaomi.sensors[].short_name is not a string");
+        }
+
+        XiaomiSensorConfig sensor;
+        sensor.mac = s["mac"].as<const char*>();
+        sensor.name = s["name"].as<const char*>();
+        sensor.shortName = s["short_name"].as<const char*>();
+
+        config.xiaomi.sensors.push_back(sensor);
+    }
+
     const JsonObject wifi = json["wifi"];
     if (wifi.isNull()) {
         return fail("wifi is not an object");
@@ -160,6 +199,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.salah.dstRule = dstRuleStr;
     config.salah.asrMakruhMinutes = asrMakruhMinutes;
     config.salah.hanafiAsr = hanafiAsr;
+
+    config.xiaomi.updateIntervalMinutes = xiaomiUpdateIntervalMinutes;
 
     config.wifi.ssid = ssid;
     config.wifi.password = password;

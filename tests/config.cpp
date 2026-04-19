@@ -37,6 +37,21 @@ std::string validConfigJson() {
             }
         ]
     },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": [
+            {
+                "mac": "AA:AA:AA:AA:AA:AA",
+                "name": "Plant 1",
+                "short_name": "P1"
+            },
+            {
+                "mac": "BB:BB:BB:BB:BB:BB",
+                "name": "Plant 2",
+                "short_name": "P2"
+            }
+        ]
+    },
     "wifi": {
         "ssid": "TestWifi",
         "password": "Secret123"
@@ -84,6 +99,17 @@ void testParseValidConfig() {
     assertEqual(config.switchbot.sensors[0].shortName, std::string("LR"),
                 "first sensor short name should match");
 
+    assertEqual(config.xiaomi.updateIntervalMinutes, 60,
+                "xiaomi interval should match");
+    assertEqual(config.xiaomi.sensors.size(), std::size_t(2),
+                "xiaomi sensor count should match");
+    assertEqual(config.xiaomi.sensors[0].mac, std::string("AA:AA:AA:AA:AA:AA"),
+                "first xiaomi sensor mac should match");
+    assertEqual(config.xiaomi.sensors[0].name, std::string("Plant 1"),
+                "first xiaomi sensor name should match");
+    assertEqual(config.xiaomi.sensors[0].shortName, std::string("P1"),
+                "first xiaomi sensor short name should match");
+
     assertEqual(config.wifi.ssid, std::string("TestWifi"),
                 "ssid should match");
     assertEqual(config.wifi.password, std::string("Secret123"),
@@ -106,6 +132,10 @@ void testMissingForecastFails() {
         "hanafi_asr": true
     },
     "switchbot": {
+        "sensors": []
+    },
+    "xiaomi": {
+        "update_interval_minutes": 60,
         "sensors": []
     },
     "wifi": {
@@ -142,6 +172,10 @@ void testInvalidForecastIntervalFails() {
     "switchbot": {
         "sensors": []
     },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": []
+    },
     "wifi": {
         "ssid": "TestWifi",
         "password": "Secret123"
@@ -174,6 +208,10 @@ void testInvalidLatitudeFails() {
         "hanafi_asr": true
     },
     "switchbot": {
+        "sensors": []
+    },
+    "xiaomi": {
+        "update_interval_minutes": 60,
         "sensors": []
     },
     "wifi": {
@@ -210,6 +248,10 @@ void testUnsupportedDstRuleFails() {
     "switchbot": {
         "sensors": []
     },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": []
+    },
     "wifi": {
         "ssid": "TestWifi",
         "password": "Secret123"
@@ -244,6 +286,10 @@ void testNegativeAsrMakruhFails() {
     "switchbot": {
         "sensors": []
     },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": []
+    },
     "wifi": {
         "ssid": "TestWifi",
         "password": "Secret123"
@@ -276,6 +322,10 @@ void testMissingSwitchbotSensorsFails() {
         "hanafi_asr": true
     },
     "switchbot": {},
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": []
+    },
     "wifi": {
         "ssid": "TestWifi",
         "password": "Secret123"
@@ -316,6 +366,10 @@ void testWrongSensorFieldTypesFail() {
             }
         ]
     },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": []
+    },
     "wifi": {
         "ssid": "TestWifi",
         "password": "Secret123"
@@ -349,6 +403,10 @@ void testMissingWifiFails() {
     },
     "switchbot": {
         "sensors": []
+    },
+    "xiaomi": {
+        "update_interval_minutes": 60,
+        "sensors": []
     }
 }
 )json";
@@ -373,6 +431,40 @@ void testInvalidJsonFails() {
     assertTrue(!ok, "invalid json should fail");
 }
 
+void testMissingXiaomiFails() {
+    const std::string text = R"json(
+{
+    "forecast": {
+        "openmeteo_pem": "pem",
+        "update_interval_minutes": 30
+    },
+    "location": {
+        "latitude": 41.9,
+        "longitude": 12.5,
+        "timezone": "Europe/Rome",
+        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
+    },
+    "salah": {
+        "timezone_offset_minutes": 60,
+        "dst_rule": "eu",
+        "asr_makruh_minutes": 120,
+        "hanafi_asr": true
+    },
+    "switchbot": {
+        "sensors": []
+    },
+    "wifi": {
+        "ssid": "TestWifi",
+        "password": "Secret123"
+    }
+}
+)json";
+
+    Config config;
+    const bool ok = parseConfigText(text, config, false);
+    assertTrue(!ok, "missing xiaomi should fail");
+}
+
 } // namespace
 
 void runConfigTests() {
@@ -386,4 +478,5 @@ void runConfigTests() {
     testWrongSensorFieldTypesFail();
     testMissingWifiFails();
     testInvalidJsonFails();
+    testMissingXiaomiFails();
 }
