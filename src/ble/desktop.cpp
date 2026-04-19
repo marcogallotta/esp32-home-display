@@ -2,6 +2,8 @@
 
 #include "scanner.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -51,6 +53,20 @@ std::optional<std::int16_t> getInt16Property(const VariantMap& props, const char
     }
 }
 
+std::string normalizeUuidString(std::string uuid) {
+    std::transform(
+        uuid.begin(),
+        uuid.end(),
+        uuid.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (uuid.size() == 4) {
+        return "0000" + uuid + "-0000-1000-8000-00805f9b34fb";
+    }
+
+    return uuid;
+}
+
 std::optional<std::map<std::uint16_t, std::vector<std::uint8_t>>> getManufacturerData(
     const VariantMap& props
 ) {
@@ -64,6 +80,26 @@ std::optional<std::map<std::uint16_t, std::vector<std::uint8_t>>> getManufacture
         std::map<std::uint16_t, std::vector<std::uint8_t>> out;
         for (const auto& [id, value] : raw) {
             out[id] = value.get<std::vector<std::uint8_t>>();
+        }
+        return out;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::map<std::string, std::vector<std::uint8_t>>> getServiceData(
+    const VariantMap& props
+) {
+    auto it = props.find("ServiceData");
+    if (it == props.end()) {
+        return std::nullopt;
+    }
+
+    try {
+        auto raw = it->second.get<std::map<std::string, sdbus::Variant>>();
+        std::map<std::string, std::vector<std::uint8_t>> out;
+        for (const auto& [uuid, value] : raw) {
+            out[normalizeUuidString(uuid)] = value.get<std::vector<std::uint8_t>>();
         }
         return out;
     } catch (...) {
@@ -95,14 +131,23 @@ struct Scanner::Impl {
         }
 
         const auto manufacturerData = getManufacturerData(props);
-        if (!manufacturerData.has_value() || manufacturerData->empty()) {
+        const auto serviceData = getServiceData(props);
+
+        if ((!manufacturerData.has_value() || manufacturerData->empty()) &&
+            (!serviceData.has_value() || serviceData->empty())) {
             return;
         }
 
         AdvertisementEvent event;
         event.address = addr;
         event.rssi = static_cast<int>(getInt16Property(props, "RSSI").value_or(0));
-        event.manufacturerData = *manufacturerData;
+
+        if (manufacturerData.has_value()) {
+            event.manufacturerData = *manufacturerData;
+        }
+        if (serviceData.has_value()) {
+            event.serviceData = *serviceData;
+        }
 
         callback_(event);
     }

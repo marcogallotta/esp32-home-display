@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <utility>
@@ -17,7 +18,27 @@ namespace ble {
 
 namespace {
 constexpr uint32_t kScanTimeMs = 30 * 1000;
+
+std::string normalizeUuidString(std::string uuid) {
+    std::transform(
+        uuid.begin(),
+        uuid.end(),
+        uuid.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (uuid.size() == 4) {
+        char buf[37];
+        std::snprintf(
+            buf,
+            sizeof(buf),
+            "0000%s-0000-1000-8000-00805f9b34fb",
+            uuid.c_str());
+        return std::string(buf);
+    }
+
+    return uuid;
 }
+} // namespace
 
 struct Scanner::Impl {
     explicit Impl(Callback callback)
@@ -35,18 +56,7 @@ struct Scanner::Impl {
                 return;
             }
 
-            if (!advertisedDevice->haveManufacturerData()) {
-                return;
-            }
-
-            const std::string manufacturerData = advertisedDevice->getManufacturerData();
-            if (manufacturerData.size() < 2) {
-                return;
-            }
-
-            const std::uint8_t b0 = static_cast<std::uint8_t>(manufacturerData[0]);
-            const std::uint8_t b1 = static_cast<std::uint8_t>(manufacturerData[1]);
-            const std::uint16_t manufacturerId = static_cast<std::uint16_t>(b0 | (b1 << 8));
+            AdvertisementEvent event;
 
             std::string addr = advertisedDevice->getAddress().toString();
             std::transform(
@@ -55,13 +65,38 @@ struct Scanner::Impl {
                 addr.begin(),
                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
-            AdvertisementEvent event;
             event.address = std::move(addr);
             event.rssi = advertisedDevice->getRSSI();
-            event.manufacturerData[manufacturerId] = std::vector<std::uint8_t>(
-                reinterpret_cast<const std::uint8_t*>(manufacturerData.data() + 2),
-                reinterpret_cast<const std::uint8_t*>(manufacturerData.data() + manufacturerData.size())
-            );
+
+            if (advertisedDevice->haveManufacturerData()) {
+                const std::string manufacturerData = advertisedDevice->getManufacturerData();
+                if (manufacturerData.size() >= 2) {
+                    const std::uint8_t b0 = static_cast<std::uint8_t>(manufacturerData[0]);
+                    const std::uint8_t b1 = static_cast<std::uint8_t>(manufacturerData[1]);
+                    const std::uint16_t manufacturerId =
+                        static_cast<std::uint16_t>(b0 | (b1 << 8));
+
+                    event.manufacturerData[manufacturerId] = std::vector<std::uint8_t>(
+                        reinterpret_cast<const std::uint8_t*>(manufacturerData.data() + 2),
+                        reinterpret_cast<const std::uint8_t*>(manufacturerData.data() + manufacturerData.size())
+                    );
+                }
+            }
+
+            for (int i = 0; i < advertisedDevice->getServiceDataCount(); ++i) {
+                const NimBLEUUID serviceUuid = advertisedDevice->getServiceDataUUID(i);
+                const std::string payload = advertisedDevice->getServiceData(i);
+
+                event.serviceData[normalizeUuidString(serviceUuid.toString())] =
+                    std::vector<std::uint8_t>(
+                        reinterpret_cast<const std::uint8_t*>(payload.data()),
+                        reinterpret_cast<const std::uint8_t*>(payload.data() + payload.size())
+                    );
+            }
+
+            if (event.manufacturerData.empty() && event.serviceData.empty()) {
+                return;
+            }
 
             impl_.emitEvent(event);
         }
