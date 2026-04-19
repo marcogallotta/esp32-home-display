@@ -149,6 +149,7 @@ struct Scanner::Impl {
         scan->setScanCallbacks(callbacks.get(), false);
         scan->setActiveScan(false);
         scan->setMaxResults(0);
+        scan->setDuplicateFilter(false);
         scan->start(kScanTimeMs, false, true);
     }
 
