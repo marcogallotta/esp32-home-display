@@ -43,7 +43,7 @@ void run() {
     forecast::ForecastData lastForecastData;
     bool hasLastForecastData = false;
     TimingState timing;
-    bool hasValidTime = false;
+    bool hasValidTime = platform::initTime(config);
 
     UiState currentUiState;
     UiState previousUiState;
