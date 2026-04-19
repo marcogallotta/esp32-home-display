@@ -103,6 +103,94 @@ void updateSensorState(
     platform::printLine("");
 }
 
+void updateXiaomiState(
+    const Config& config,
+    const std::time_t now,
+    xiaomi::Scanner& scanner,
+    UiState& uiState
+) {
+    scanner.poll();
+    const auto sensors = scanner.snapshot();
+
+    for (std::size_t i = 0; i < uiState.xiaomiSensors.size(); ++i) {
+        const auto& sensorConfig = config.xiaomi.sensors[i];
+        XiaomiRowState& row = uiState.xiaomiSensors[i];
+        row.name = sensorConfig.name;
+        row.shortName = sensorConfig.shortName.empty() ? '?' : sensorConfig.shortName[0];
+
+        const auto it = sensors.find(sensorConfig.mac);
+        if (it == sensors.end()) {
+            continue;
+        }
+
+        const auto& reading = it->second;
+        row.hasReading = true;
+        row.name = reading.name;
+        row.shortName = reading.shortName.empty() ? '?' : reading.shortName[0];
+        row.hasTemperature = reading.hasTemperature;
+        row.temperatureC = reading.temperatureC;
+        row.hasLux = reading.hasLux;
+        row.lux = reading.lux;
+        row.hasMoisture = reading.hasMoisture;
+        row.moisturePct = reading.moisturePct;
+        row.hasConductivity = reading.hasConductivity;
+        row.conductivityUsCm = reading.conductivityUsCm;
+        row.lastSeenEpochS = reading.lastSeenEpochS;
+        row.rssi = reading.rssi;
+    }
+
+    platform::printLine("Xiaomi:");
+    for (std::size_t i = 0; i < uiState.xiaomiSensors.size(); ++i) {
+        const auto& sensorConfig = config.xiaomi.sensors[i];
+        const XiaomiRowState& row = uiState.xiaomiSensors[i];
+
+        if (!row.hasReading) {
+#ifdef ARDUINO
+            platform::printLine(sensorConfig.shortName + ": no reading yet");
+#else
+            platform::printLine(sensorConfig.name + ": no reading yet");
+#endif
+            continue;
+        }
+
+#ifdef ARDUINO
+        const std::string label(1, row.shortName);
+#else
+        const std::string label = row.name;
+#endif
+
+        std::string line = label + ": ";
+        bool first = true;
+
+        auto appendPart = [&](const std::string& part) {
+            if (!first) {
+                line += ", ";
+            }
+            line += part;
+            first = false;
+        };
+
+        if (row.hasTemperature) {
+            appendPart(std::to_string(row.temperatureC) + "C");
+        }
+        if (row.hasMoisture) {
+            appendPart(std::to_string(static_cast<int>(row.moisturePct)) + "%");
+        }
+        if (row.hasLux) {
+            appendPart("lux=" + std::to_string(row.lux));
+        }
+        if (row.hasConductivity) {
+            appendPart("cond=" + std::to_string(row.conductivityUsCm));
+        }
+
+        appendPart(std::to_string((now - row.lastSeenEpochS) / 60) + "m");
+        appendPart("rssi=" + std::to_string(row.rssi));
+
+        platform::printLine(line);
+    }
+    platform::printLine("");
+}
+
 bool updateForecastState(const Config& config, UiState& uiState) {
     auto& p = forecast::platform(config.wifi);
     const std::string url = forecast::openmeteoUrl(config.location);

@@ -12,6 +12,7 @@
 #include "ui/display.h"
 #include "ui/state.h"
 #include "update.h"
+#include "xiaomi/ble.h"
 
 namespace {
 #ifdef ARDUINO
@@ -28,6 +29,7 @@ void run() {
     const Config config = tmpConfig;
 
     const std::size_t sensorCount = config.switchbot.sensors.size();
+    const std::size_t xiaomiSensorCount = config.xiaomi.sensors.size();
 
 #ifdef ARDUINO
     if (sensorCount > kMaxVisibleSensorRows) {
@@ -47,10 +49,15 @@ void run() {
     UiState previousUiState;
     currentUiState.sensors.resize(sensorCount);
     previousUiState.sensors.resize(sensorCount);
+    currentUiState.xiaomiSensors.resize(xiaomiSensorCount);
+    previousUiState.xiaomiSensors.resize(xiaomiSensorCount);
     bool hasPreviousUiState = false;
 
     switchbot::Scanner scanner(config.switchbot);
     scanner.start();
+
+    xiaomi::Scanner xiaomiScanner(config.xiaomi);
+    xiaomiScanner.start();
 
 #ifdef ARDUINO
     initDisplay();
@@ -61,6 +68,7 @@ void run() {
 
         previousUiState = currentUiState;
         currentUiState.sensors.assign(sensorCount, SensorRowState{});
+        currentUiState.xiaomiSensors.assign(xiaomiSensorCount, XiaomiRowState{});
 
         if (isSalahDue(now, timing)) {
             if (!hasValidTime) {
@@ -83,6 +91,11 @@ void run() {
         if (areSensorsDue(now, timing)) {
             updateSensorState(config, now, scanner, currentUiState);
             markSensorsUpdated(now, timing);
+        }
+
+        if (areXiaomiDue(now, timing)) {
+            updateXiaomiState(config, now, xiaomiScanner, currentUiState);
+            markXiaomiUpdated(now, config, timing);
         }
 
         if (isForecastDue(now, timing)) {

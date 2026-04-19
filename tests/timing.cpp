@@ -5,10 +5,11 @@
 
 namespace {
 
-Config makeConfig(int forecastUpdateIntervalMinutes) {
+Config makeConfig(int forecastUpdateIntervalMinutes, int xiaomiUpdateIntervalMinutes = 60) {
     Config config;
     config.forecast.openmeteoPem = "";
     config.forecast.updateIntervalMinutes = forecastUpdateIntervalMinutes;
+    config.xiaomi.updateIntervalMinutes = xiaomiUpdateIntervalMinutes;
     return config;
 }
 
@@ -17,6 +18,7 @@ void testAllTasksDueAtStartup() {
 
     assertTrue(isSalahDue(1000, timing), "salah should be due at startup");
     assertTrue(areSensorsDue(1000, timing), "sensors should be due at startup");
+    assertTrue(areXiaomiDue(1000, timing), "xiaomi should be due at startup");
     assertTrue(isForecastDue(1000, timing), "forecast should be due at startup");
 }
 
@@ -53,6 +55,19 @@ void testMarkSensorsUpdatedUsesNowPlusSixtySeconds() {
     );
 }
 
+void testMarkXiaomiUpdatedUsesConfiguredInterval() {
+    TimingState timing;
+    const Config config = makeConfig(17, 45);
+
+    markXiaomiUpdated(1000, config, timing);
+
+    assertEqual(
+        timing.nextXiaomiDueEpochS,
+        static_cast<std::time_t>(1000 + 45 * 60),
+        "xiaomi should use configured interval"
+    );
+}
+
 void testMarkForecastUpdatedSuccessUsesConfiguredInterval() {
     TimingState timing;
     const Config config = makeConfig(17);
@@ -81,6 +96,7 @@ void testDueChecksWork() {
     TimingState timing;
     timing.nextSalahDueEpochS = 100;
     timing.nextSensorsDueEpochS = 200;
+    timing.nextXiaomiDueEpochS = 250;
     timing.nextForecastDueEpochS = 300;
 
     assertTrue(!isSalahDue(99, timing), "salah should not be due before due time");
@@ -88,6 +104,9 @@ void testDueChecksWork() {
 
     assertTrue(!areSensorsDue(199, timing), "sensors should not be due before due time");
     assertTrue(areSensorsDue(200, timing), "sensors should be due at due time");
+
+    assertTrue(!areXiaomiDue(249, timing), "xiaomi should not be due before due time");
+    assertTrue(areXiaomiDue(250, timing), "xiaomi should be due at due time");
 
     assertTrue(!isForecastDue(299, timing), "forecast should not be due before due time");
     assertTrue(isForecastDue(300, timing), "forecast should be due at due time");
@@ -97,6 +116,7 @@ void testEarliestDueEpochSReturnsMinimum() {
     TimingState timing;
     timing.nextSalahDueEpochS = 500;
     timing.nextSensorsDueEpochS = 200;
+    timing.nextXiaomiDueEpochS = 700;
     timing.nextForecastDueEpochS = 800;
 
     assertEqual(
@@ -110,6 +130,7 @@ void testComputeSleepMsUsesEarliestDue() {
     TimingState timing;
     timing.nextSalahDueEpochS = 500;
     timing.nextSensorsDueEpochS = 200;
+    timing.nextXiaomiDueEpochS = 700;
     timing.nextForecastDueEpochS = 800;
 
     assertEqual(
@@ -123,6 +144,7 @@ void testComputeSleepMsReturnsZeroWhenOverdue() {
     TimingState timing;
     timing.nextSalahDueEpochS = 100;
     timing.nextSensorsDueEpochS = 200;
+    timing.nextXiaomiDueEpochS = 250;
     timing.nextForecastDueEpochS = 300;
 
     assertEqual(
@@ -139,6 +161,7 @@ void runTimingTests() {
     testMarkSalahUpdatedAlignsToNextMinuteBoundary();
     testMarkSalahUpdatedAtExactBoundaryMovesToNextMinute();
     testMarkSensorsUpdatedUsesNowPlusSixtySeconds();
+    testMarkXiaomiUpdatedUsesConfiguredInterval();
     testMarkForecastUpdatedSuccessUsesConfiguredInterval();
     testMarkForecastUpdatedFailureUsesFiveMinutes();
     testDueChecksWork();

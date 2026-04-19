@@ -18,6 +18,10 @@ bool areSensorsDue(std::time_t now, const TimingState& timing) {
     return now >= timing.nextSensorsDueEpochS;
 }
 
+bool areXiaomiDue(std::time_t now, const TimingState& timing) {
+    return now >= timing.nextXiaomiDueEpochS;
+}
+
 bool isForecastDue(std::time_t now, const TimingState& timing) {
     return now >= timing.nextForecastDueEpochS;
 }
@@ -28,6 +32,11 @@ void markSalahUpdated(std::time_t now, TimingState& timing) {
 
 void markSensorsUpdated(std::time_t now, TimingState& timing) {
     timing.nextSensorsDueEpochS = now + 60;
+}
+
+void markXiaomiUpdated(std::time_t now, const Config& config, TimingState& timing) {
+    timing.nextXiaomiDueEpochS =
+        now + static_cast<std::time_t>(config.xiaomi.updateIntervalMinutes) * 60;
 }
 
 void markForecastUpdatedSuccess(std::time_t now, const Config& config, TimingState& timing) {
@@ -43,6 +52,7 @@ std::time_t earliestDueEpochS(const TimingState& timing) {
     return std::min({
         timing.nextSalahDueEpochS,
         timing.nextSensorsDueEpochS,
+        timing.nextXiaomiDueEpochS,
         timing.nextForecastDueEpochS,
     });
 }

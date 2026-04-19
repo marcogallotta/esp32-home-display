@@ -6,6 +6,7 @@
 #include "salah/types.h"
 #include "switchbot/ble.h"
 #include "ui/state.h"
+#include "xiaomi/ble.h"
 
 void updateSalahState(
     const Config& config,
@@ -20,6 +21,13 @@ void updateSensorState(
     const Config& config,
     const std::time_t now,
     switchbot::Scanner& scanner,
+    UiState& uiState
+);
+
+void updateXiaomiState(
+    const Config& config,
+    const std::time_t now,
+    xiaomi::Scanner& scanner,
     UiState& uiState
 );
 
