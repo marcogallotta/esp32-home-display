@@ -43,3 +43,6 @@ clean-db: run-db wait-db
 			-d "$(DB_NAME)"' < drop.sql
 
 reset-db: clean-db create-schema
+
+run-server:
+	uvicorn main:app --reload
