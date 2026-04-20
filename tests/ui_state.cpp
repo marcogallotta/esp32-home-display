@@ -1,3 +1,4 @@
+#include "state.h"
 #include "ui/state.h"
 
 #include "helpers.h"
@@ -5,8 +6,8 @@
 
 namespace {
 
-UiState makeBaseState() {
-    UiState state;
+State makeBaseState() {
+    State state;
 
     state.hasSalah = true;
     state.salah.current = salah::Phase::Zuhr;
@@ -64,8 +65,8 @@ void testDisplayTempRounds() {
 }
 
 void testIdenticalStatesProduceNoDirtyRegions() {
-    const UiState previous = makeBaseState();
-    const UiState current = previous;
+    const State previous = makeBaseState();
+    const State current = previous;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
@@ -78,8 +79,8 @@ void testIdenticalStatesProduceNoDirtyRegions() {
 }
 
 void testSalahNameDirtyWhenCurrentChanges() {
-    const UiState previous = makeBaseState();
-    UiState current = previous;
+    const State previous = makeBaseState();
+    State current = previous;
     current.salah.current = salah::Phase::Asr;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -89,8 +90,8 @@ void testSalahNameDirtyWhenCurrentChanges() {
 }
 
 void testSalahNameDirtyWhenNextChanges() {
-    const UiState previous = makeBaseState();
-    UiState current = previous;
+    const State previous = makeBaseState();
+    State current = previous;
     current.salah.next = salah::Phase::Maghrib;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -100,8 +101,8 @@ void testSalahNameDirtyWhenNextChanges() {
 }
 
 void testMinutesDirtyWhenRemainingChanges() {
-    const UiState previous = makeBaseState();
-    UiState current = previous;
+    const State previous = makeBaseState();
+    State current = previous;
     current.salah.minutesRemaining = 41;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -111,8 +112,8 @@ void testMinutesDirtyWhenRemainingChanges() {
 }
 
 void testSalahRegionsDirtyWhenHasSalahChanges() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.hasSalah = false;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -122,8 +123,8 @@ void testSalahRegionsDirtyWhenHasSalahChanges() {
 }
 
 void testForecastDirtyWhenHasForecastChanges() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.hasForecast = false;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -132,8 +133,8 @@ void testForecastDirtyWhenHasForecastChanges() {
 }
 
 void testForecastDirtyWhenCountChanges() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.forecast.count = 1;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -142,8 +143,8 @@ void testForecastDirtyWhenCountChanges() {
 }
 
 void testForecastDirtyWhenDayChanges() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.forecast.days[1].weatherCode = 80;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -152,8 +153,8 @@ void testForecastDirtyWhenDayChanges() {
 }
 
 void testForecastNotDirtyWhenTempsRoundSame() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.forecast.days[0].tempMax = 18.49f;
     current.forecast.days[0].tempMin = 9.49f;
 
@@ -163,8 +164,8 @@ void testForecastNotDirtyWhenTempsRoundSame() {
 }
 
 void testForecastDirtyWhenTempsRoundDifferently() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.forecast.days[0].tempMax = 18.6f;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -173,8 +174,8 @@ void testForecastDirtyWhenTempsRoundDifferently() {
 }
 
 void testSingleSensorRowDirtyWhenHumidityChanges() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.sensors[0].humidity = 56;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -185,8 +186,8 @@ void testSingleSensorRowDirtyWhenHumidityChanges() {
 }
 
 void testSingleSensorRowDirtyWhenReadingAppears() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.sensors[1].hasReading = true;
     current.sensors[1].temperatureC = 19.0f;
     current.sensors[1].humidity = 44;
@@ -199,8 +200,8 @@ void testSingleSensorRowDirtyWhenReadingAppears() {
 }
 
 void testSensorNotDirtyWhenTempRoundsSame() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.sensors[0].temperatureC = 21.49f;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -210,8 +211,8 @@ void testSensorNotDirtyWhenTempRoundsSame() {
 }
 
 void testSensorDirtyWhenTempRoundsDifferently() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.sensors[0].temperatureC = 21.5f;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
@@ -221,8 +222,8 @@ void testSensorDirtyWhenTempRoundsDifferently() {
 }
 
 void testSensorDirtyWhenShortNameChanges() {
-    UiState previous = makeBaseState();
-    UiState current = previous;
+    State previous = makeBaseState();
+    State current = previous;
     current.sensors[0].shortName = 'K';
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);

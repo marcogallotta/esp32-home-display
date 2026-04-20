@@ -19,7 +19,7 @@ int displayTemp(float x) {
     return std::lround(x);
 }
 
-DirtyRegions computeDirtyRegions(const UiState& previous, const UiState& current) {
+DirtyRegions computeDirtyRegions(const State& previous, const State& current) {
     DirtyRegions dirty;
     dirty.sensorRows.assign(current.sensors.size(), false);
 

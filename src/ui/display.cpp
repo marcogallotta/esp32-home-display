@@ -42,18 +42,18 @@ void initDisplay() {
     oled.begin();
 }
 
-void drawSalahNameRegion(const UiState& uiState) {
+void drawSalahNameRegion(const State& state) {
     clearRegion(0, 0, 48, 16);
-    if (uiState.hasSalah) {
-        if (shouldFlipColoursForSalah(uiState.salah)) {
+    if (state.hasSalah) {
+        if (shouldFlipColoursForSalah(state.salah)) {
             oled.setDrawColor(1);
             oled.drawBox(0, 0, 48, 16);
             oled.setDrawColor(0);
         }
-        oled.drawStr(0, 12, toShortString(uiState.salah.current));
+        oled.drawStr(0, 12, toShortString(state.salah.current));
         oled.setDrawColor(1);
 
-        if (uiState.salah.current == salah::Phase::Isha) {
+        if (state.salah.current == salah::Phase::Isha) {
             oled.setContrast(0x00);
         } else {
             oled.setContrast(0xff);
@@ -61,16 +61,16 @@ void drawSalahNameRegion(const UiState& uiState) {
     }
 }
 
-void drawMinutesRegion(const UiState& uiState) {
+void drawMinutesRegion(const State& state) {
     clearRegion(0, 16, 48, 16);
-    if (uiState.hasSalah) {
-        if (shouldFlipColoursForSalah(uiState.salah)) {
+    if (state.hasSalah) {
+        if (shouldFlipColoursForSalah(state.salah)) {
             oled.setDrawColor(1);
             oled.drawBox(0, 16, 48, 16);
             oled.setDrawColor(0);
         }
         char buf[32];
-        const int min = uiState.salah.minutesRemaining;
+        const int min = state.salah.minutesRemaining;
         if (min > 60) {
             std::snprintf(buf, sizeof(buf), "%dh %d", min / 60, min % 60);
         } else {
@@ -81,7 +81,7 @@ void drawMinutesRegion(const UiState& uiState) {
     }
 }
 
-void drawSensorRowRegion(const UiState& uiState, int rowIndex) {
+void drawSensorRowRegion(const State& state, int rowIndex) {
     const int x = 48;
     const int y = rowIndex * 16;
     const int w = 44;
@@ -89,7 +89,7 @@ void drawSensorRowRegion(const UiState& uiState, int rowIndex) {
 
     clearRegion(x, y, w, h);
 
-    const SensorRowState& row = uiState.sensors[rowIndex];
+    const SensorRowState& row = state.sensors[rowIndex];
     if (!row.hasReading) {
         return;
     }
@@ -103,14 +103,14 @@ void drawSensorRowRegion(const UiState& uiState, int rowIndex) {
     oled.drawStr(x + 28, y + 12, buf);
 }
 
-void drawForecastRegion(const UiState& uiState) {
+void drawForecastRegion(const State& state) {
     clearRegion(92, 0, 36, 64);
-    if (!uiState.hasForecast) {
+    if (!state.hasForecast) {
         return;
     }
 
-    for (int i = 0; i < uiState.forecast.count; ++i) {
-        const auto& day = uiState.forecast.days[i];
+    for (int i = 0; i < state.forecast.count; ++i) {
+        const auto& day = state.forecast.days[i];
         char buf[32];
         std::snprintf(
             buf,
@@ -123,20 +123,20 @@ void drawForecastRegion(const UiState& uiState) {
     }
 }
 
-void drawAllRegions(const UiState& uiState) {
-    drawSalahNameRegion(uiState);
-    drawMinutesRegion(uiState);
+void drawAllRegions(const State& state) {
+    drawSalahNameRegion(state);
+    drawMinutesRegion(state);
 
     const int visibleRows = std::min<int>(
-        static_cast<int>(uiState.sensors.size()),
+        static_cast<int>(state.sensors.size()),
         kMaxVisibleSensorRows
     );
     for (int rowIndex = 0; rowIndex < visibleRows; ++rowIndex) {
-        drawSensorRowRegion(uiState, rowIndex);
+        drawSensorRowRegion(state, rowIndex);
     }
 
-    drawForecastRegion(uiState);
-    
+    drawForecastRegion(state);
+
     oled.sendBuffer();
 }
 

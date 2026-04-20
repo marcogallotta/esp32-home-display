@@ -16,7 +16,7 @@ void updateSalahState(
     int& oldDay,
     salah::Schedule& today,
     salah::Schedule& tomorrow,
-    UiState& uiState
+    State& state
 ) {
     if (localTime.tm_mday != oldDay) {
         salah::Schedule newToday;
@@ -30,14 +30,14 @@ void updateSalahState(
         oldDay = localTime.tm_mday;
     }
 
-    uiState.salah =
+    state.salah =
         salah::computeState(today, tomorrow, salah::minutesSinceMidnight(localTime));
-    uiState.hasSalah = true;
+    state.hasSalah = true;
 
-    platform::printLine(std::string("Current: ") + toString(uiState.salah.current));
-    platform::printLine(std::string("Next: ") + toString(uiState.salah.next));
+    platform::printLine(std::string("Current: ") + toString(state.salah.current));
+    platform::printLine(std::string("Next: ") + toString(state.salah.next));
     platform::printLine(
-        "Remaining: " + std::to_string(uiState.salah.minutesRemaining) + " min"
+        "Remaining: " + std::to_string(state.salah.minutesRemaining) + " min"
     );
     platform::printLine("");
 }
@@ -46,14 +46,14 @@ void updateSensorState(
     const Config& config,
     const std::time_t now,
     switchbot::Scanner& scanner,
-    UiState& uiState
+    State& state
 ) {
     scanner.poll();
     const auto sensors = scanner.snapshot();
 
-    for (std::size_t i = 0; i < uiState.sensors.size(); ++i) {
+    for (std::size_t i = 0; i < state.sensors.size(); ++i) {
         const auto& sensorConfig = config.switchbot.sensors[i];
-        SensorRowState& row = uiState.sensors[i];
+        SensorRowState& row = state.sensors[i];
         row.name = sensorConfig.name;
         row.shortName = sensorConfig.shortName.empty() ? '?' : sensorConfig.shortName[0];
 
@@ -73,9 +73,9 @@ void updateSensorState(
     }
 
     platform::printLine("Sensors:");
-    for (std::size_t i = 0; i < uiState.sensors.size(); ++i) {
+    for (std::size_t i = 0; i < state.sensors.size(); ++i) {
         const auto& sensorConfig = config.switchbot.sensors[i];
-        const SensorRowState& row = uiState.sensors[i];
+        const SensorRowState& row = state.sensors[i];
 
         if (!row.hasReading) {
 #ifdef ARDUINO
@@ -107,14 +107,14 @@ void updateXiaomiState(
     const Config& config,
     const std::time_t now,
     xiaomi::Scanner& scanner,
-    UiState& uiState
+    State& state
 ) {
     scanner.poll();
     const auto sensors = scanner.snapshot();
 
-    for (std::size_t i = 0; i < uiState.xiaomiSensors.size(); ++i) {
+    for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {
         const auto& sensorConfig = config.xiaomi.sensors[i];
-        XiaomiRowState& row = uiState.xiaomiSensors[i];
+        XiaomiRowState& row = state.xiaomiSensors[i];
         row.name = sensorConfig.name;
         row.shortName = sensorConfig.shortName.empty() ? '?' : sensorConfig.shortName[0];
 
@@ -140,9 +140,9 @@ void updateXiaomiState(
     }
 
     platform::printLine("Xiaomi:");
-    for (std::size_t i = 0; i < uiState.xiaomiSensors.size(); ++i) {
+    for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {
         const auto& sensorConfig = config.xiaomi.sensors[i];
-        const XiaomiRowState& row = uiState.xiaomiSensors[i];
+        const XiaomiRowState& row = state.xiaomiSensors[i];
 
         if (!row.hasReading) {
 #ifdef ARDUINO
@@ -191,7 +191,7 @@ void updateXiaomiState(
     platform::printLine("");
 }
 
-bool updateForecastState(const Config& config, UiState& uiState) {
+bool updateForecastState(const Config& config, State& state) {
     auto& p = forecast::platform(config.wifi);
     const std::string url = forecast::openmeteoUrl(config.location);
     const auto r = p.httpGet(url, config.forecast.openmeteoPem);
@@ -204,8 +204,8 @@ bool updateForecastState(const Config& config, UiState& uiState) {
     if (!forecast::parseForecastJson(r.body, data)) {
         return false;
     }
-    uiState.forecast = data;
-    uiState.hasForecast = true;
+    state.forecast = data;
+    state.hasForecast = true;
 
     for (int i = 0; i < data.count; ++i) {
         platform::printLine(

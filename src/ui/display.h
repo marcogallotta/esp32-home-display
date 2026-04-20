@@ -1,16 +1,16 @@
 #pragma once
 
-#include "state.h"
+#include "../state.h"
 
 #ifdef ARDUINO
 
 void initDisplay();
-void drawAllRegions(const UiState& uiState);
+void drawAllRegions(const State& state);
 
-void drawSalahNameRegion(const UiState& uiState);
-void drawMinutesRegion(const UiState& uiState);
-void drawSensorRowRegion(const UiState& uiState, int rowIndex);
-void drawForecastRegion(const UiState& uiState);
+void drawSalahNameRegion(const State& state);
+void drawMinutesRegion(const State& state);
+void drawSensorRowRegion(const State& state, int rowIndex);
+void drawForecastRegion(const State& state);
 
 void updateSalahNameRegion();
 void updateMinutesRegion();
