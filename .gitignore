@@ -7,5 +7,6 @@ flash_spiffs.bin
 mkspiffs
 otadata.bin
 partition_table.bin
+server/.env
 tools/switchbot.sh
 tools/xiaomi.sh

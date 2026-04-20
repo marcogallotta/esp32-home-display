@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS xiaomi_readings CASCADE;
+DROP TABLE IF EXISTS switchbot_readings CASCADE;
+DROP TABLE IF EXISTS sensors CASCADE;
