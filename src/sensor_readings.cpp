@@ -38,8 +38,7 @@ bool SwitchbotReading::equalsForDisplay(const SwitchbotReading& other) const {
 
 bool SwitchbotReading::equalsForApi(const SwitchbotReading& other) const {
     return temperatureC == other.temperatureC &&
-           humidityPct == other.humidityPct &&
-           lastSeenEpochS == other.lastSeenEpochS;
+           humidityPct == other.humidityPct;
 }
 
 bool XiaomiReading::hasAnyValue() const {
