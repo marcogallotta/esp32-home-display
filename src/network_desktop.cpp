@@ -7,7 +7,8 @@
 
 #include <curl/curl.h>
 
-namespace forecast {
+namespace network {
+namespace {
 
 size_t writeCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     const size_t total = size * nmemb;
@@ -43,6 +44,25 @@ public:
     }
 
     HttpResponse httpGet(const std::string& url, const std::string& pem) override {
+        return performRequest(url, nullptr, pem, nullptr);
+    }
+
+    HttpResponse httpPost(
+        const std::string& url,
+        const std::string& body,
+        const std::string& pem,
+        const std::string& contentType
+    ) override {
+        return performRequest(url, &body, pem, &contentType);
+    }
+
+private:
+    HttpResponse performRequest(
+        const std::string& url,
+        const std::string* body,
+        const std::string& pem,
+        const std::string* contentType
+    ) {
         HttpResponse resp;
 
         CURL* curl = curl_easy_init();
@@ -51,10 +71,14 @@ public:
             return resp;
         }
 
-        curl_blob caBlob{};
-        caBlob.data = const_cast<char*>(pem.data());
-        caBlob.len = pem.size();
-        caBlob.flags = CURL_BLOB_COPY;
+        struct curl_slist* headers = nullptr;
+        if (contentType != nullptr) {
+            headers = curl_slist_append(headers, ("Content-Type: " + *contentType).c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body->c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body->size()));
+        }
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
@@ -62,34 +86,53 @@ public:
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "my-app/1.0");
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-        curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &caBlob);
+
+        if (pem.empty()) {
+            log("Warning: empty PEM for " + url + "; TLS verification disabled");
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        } else {
+            curl_blob caBlob{};
+            caBlob.data = const_cast<char*>(pem.data());
+            caBlob.len = pem.size();
+            caBlob.flags = CURL_BLOB_COPY;
+
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+            curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &caBlob);
+        }
 
         const CURLcode rc = curl_easy_perform(curl);
         if (rc != CURLE_OK) {
             resp.error = curl_easy_strerror(rc);
+            if (headers != nullptr) {
+                curl_slist_free_all(headers);
+            }
             curl_easy_cleanup(curl);
             return resp;
         }
 
         long code = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-        resp.status_code = static_cast<int>(code);
+        resp.statusCode = static_cast<int>(code);
 
+        if (headers != nullptr) {
+            curl_slist_free_all(headers);
+        }
         curl_easy_cleanup(curl);
         return resp;
     }
 
-private:
     std::chrono::steady_clock::time_point start_;
 };
+
+} // namespace
 
 Platform& platform(const WifiConfig& wifiConfig) {
     static DesktopPlatform instance(wifiConfig);
     return instance;
 }
 
-} // namespace forecast
+} // namespace network
 
 #endif

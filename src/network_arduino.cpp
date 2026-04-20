@@ -2,14 +2,22 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
-#include <SPIFFS.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 
-#include "../config.h"
 #include "network.h"
 
-namespace forecast {
+namespace network {
+namespace {
+
+void configureTlsClient(WiFiClientSecure& client, const std::string& pem, Platform& platform, const std::string& url) {
+    if (pem.empty()) {
+        platform.log("Warning: empty PEM for " + url + "; TLS verification disabled");
+        client.setInsecure();
+    } else {
+        client.setCACert(pem.c_str());
+    }
+}
 
 class ArduinoPlatform final : public Platform {
 public:
@@ -52,7 +60,7 @@ public:
         }
 
         WiFiClientSecure client;
-        client.setCACert(pem.c_str());
+        configureTlsClient(client, pem, *this, url);
 
         HTTPClient http;
         if (!http.begin(client, url.c_str())) {
@@ -63,7 +71,45 @@ public:
         http.setTimeout(15000);
 
         const int code = http.GET();
-        resp.status_code = code;
+        resp.statusCode = code;
+
+        if (code > 0) {
+            resp.body = http.getString().c_str();
+        } else {
+            resp.error = http.errorToString(code).c_str();
+        }
+
+        http.end();
+        return resp;
+    }
+
+    HttpResponse httpPost(
+        const std::string& url,
+        const std::string& body,
+        const std::string& pem,
+        const std::string& contentType = "application/json"
+    ) override {
+        HttpResponse resp;
+
+        if (!networkReady(5000)) {
+            resp.error = "WiFi not connected";
+            return resp;
+        }
+
+        WiFiClientSecure client;
+        configureTlsClient(client, pem, *this, url);
+
+        HTTPClient http;
+        if (!http.begin(client, url.c_str())) {
+            resp.error = "http.begin failed";
+            return resp;
+        }
+
+        http.setTimeout(15000);
+        http.addHeader("Content-Type", contentType.c_str());
+
+        const int code = http.POST(reinterpret_cast<const uint8_t*>(body.data()), body.size());
+        resp.statusCode = code;
 
         if (code > 0) {
             resp.body = http.getString().c_str();
@@ -76,13 +122,13 @@ public:
     }
 };
 
+} // namespace
+
 Platform& platform(const WifiConfig& wifiConfig) {
-    // Lazily constructs the single app-lifetime platform instance.
-    // wifiConfig is used only on the first call.
     static ArduinoPlatform instance(wifiConfig);
     return instance;
 }
 
-} // namespace forecast
+} // namespace network
 
 #endif

@@ -8,6 +8,11 @@ struct ForecastConfig {
     int updateIntervalMinutes;
 };
 
+struct ApiConfig {
+    std::string baseUrl;
+    std::string pem;
+};
+
 struct LocationConfig {
     // Longitude and latitude in degrees. Used for both Salah and OpenMeteo API.
     float latitude;
@@ -58,6 +63,7 @@ struct XiaomiConfig {
 
 struct Config {
     ForecastConfig forecast;
+    ApiConfig api;
     LocationConfig location;
     SalahConfig salah;
     SwitchbotConfig switchbot;

@@ -1,8 +1,9 @@
 #include "update.h"
 
+#include <optional>
 #include <string>
 
-#include "forecast/network.h"
+#include "network.h"
 #include "forecast/openmeteo.h"
 #include "platform.h"
 #include "salah/service.h"
@@ -185,11 +186,11 @@ void updateXiaomiState(
 }
 
 bool updateForecastState(const Config& config, State& state) {
-    auto& p = forecast::platform(config.wifi);
+    auto& p = network::platform(config.wifi);
     const std::string url = forecast::openmeteoUrl(config.location);
     const auto r = p.httpGet(url, config.forecast.openmeteoPem);
-    if (r.status_code != 200) {
-        p.log("HTTP failed: status=" + std::to_string(r.status_code) + " error=" + r.error);
+    if (r.statusCode != 200) {
+        p.log("HTTP failed: status=" + std::to_string(r.statusCode) + " error=" + r.error);
         return false;
     }
 

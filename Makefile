@@ -25,21 +25,23 @@ TEST_TARGET := $(BUILD_DIR)/tests
 
 COMMON_SRC := \
 	lib/PrayerTimes/src/PrayerTimes.cpp \
+	src/api/client.cpp \
 	src/api/payloads.cpp \
+	src/api/client.cpp \
 	src/api/state.cpp \
 	src/ble/desktop.cpp \
 	src/config.cpp \
 	src/config_desktop.cpp \
-	src/timing.cpp \
-	src/update.cpp \
-	src/forecast/network_desktop.cpp \
 	src/forecast/openmeteo.cpp \
+	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
 	src/switchbot/protocol.cpp \
 	src/switchbot/ble.cpp \
+	src/timing.cpp \
+	src/update.cpp \
 	src/ui/display.cpp \
 	src/ui/state.cpp \
 	src/xiaomi/protocol.cpp \

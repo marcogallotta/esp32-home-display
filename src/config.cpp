@@ -40,6 +40,20 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("forecast.update_interval_minutes must be > 0");
     }
 
+    const JsonObject api = json["api"];
+    if (api.isNull()) {
+        return fail("api is not an object");
+    }
+    if (!api["base_url"].is<const char*>()) {
+        return fail("api.base_url is not a string");
+    }
+    if (!api["pem"].is<const char*>()) {
+        return fail("api.pem is not a string");
+    }
+
+    const char* apiBaseUrl = api["base_url"].as<const char*>();
+    const char* apiPem = api["pem"].as<const char*>();
+
     const JsonObject location = json["location"];
     if (location.isNull()) {
         return fail("location is not an object");
@@ -130,7 +144,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         sensor.mac = s["mac"].as<const char*>();
         sensor.name = s["name"].as<const char*>();
         sensor.shortName = s["short_name"].as<const char*>();
-
         config.switchbot.sensors.push_back(sensor);
     }
 
@@ -169,7 +182,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         sensor.mac = s["mac"].as<const char*>();
         sensor.name = s["name"].as<const char*>();
         sensor.shortName = s["short_name"].as<const char*>();
-
         config.xiaomi.sensors.push_back(sensor);
     }
 
@@ -189,6 +201,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
 
     config.forecast.openmeteoPem = openmeteoPem;
     config.forecast.updateIntervalMinutes = updateIntervalMinutes;
+
+    config.api.baseUrl = apiBaseUrl;
+    config.api.pem = apiPem;
 
     config.location.latitude = latitude;
     config.location.longitude = longitude;
