@@ -47,11 +47,15 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (!api["base_url"].is<const char*>()) {
         return fail("api.base_url is not a string");
     }
+    if (!api["api_key"].is<const char*>()) {
+        return fail("api.api_key is not a string");
+    }
     if (!api["pem"].is<const char*>()) {
         return fail("api.pem is not a string");
     }
 
     const char* apiBaseUrl = api["base_url"].as<const char*>();
+    const char* apiKey = api["api_key"].as<const char*>();
     const char* apiPem = api["pem"].as<const char*>();
 
     const JsonObject location = json["location"];
@@ -203,6 +207,7 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.forecast.updateIntervalMinutes = updateIntervalMinutes;
 
     config.api.baseUrl = apiBaseUrl;
+    config.api.apiKey = apiKey;
     config.api.pem = apiPem;
 
     config.location.latitude = latitude;

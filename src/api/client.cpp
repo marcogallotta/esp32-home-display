@@ -28,7 +28,19 @@ bool Client::postXiaomiReading(const XiaomiPayload& payload) const {
 
 bool Client::postJson(const std::string& path, const std::string& body) const {
     auto& p = network::platform(config_.wifi);
-    const auto r = p.httpPost(joinUrl(path), body, config_.api.pem, "application/json");
+
+    const network::Headers headers = {
+        {"x-api-key", config_.api.apiKey}
+    };
+
+    const auto r = p.httpPost(
+        joinUrl(path),
+        body,
+        config_.api.pem,
+        "application/json",
+        headers
+    );
+
     if (r.statusCode >= 200 && r.statusCode < 300) {
         return true;
     }

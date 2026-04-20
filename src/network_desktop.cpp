@@ -44,16 +44,17 @@ public:
     }
 
     HttpResponse httpGet(const std::string& url, const std::string& pem) override {
-        return performRequest(url, nullptr, pem, nullptr);
+        return performRequest(url, nullptr, pem, nullptr, nullptr);
     }
 
     HttpResponse httpPost(
         const std::string& url,
         const std::string& body,
         const std::string& pem,
-        const std::string& contentType
+        const std::string& contentType = "application/json",
+        const Headers& headers = {}
     ) override {
-        return performRequest(url, &body, pem, &contentType);
+        return performRequest(url, &body, pem, &contentType, &headers);
     }
 
 private:
@@ -61,7 +62,8 @@ private:
         const std::string& url,
         const std::string* body,
         const std::string& pem,
-        const std::string* contentType
+        const std::string* contentType,
+        const Headers* headers
     ) {
         HttpResponse resp;
 
@@ -71,10 +73,20 @@ private:
             return resp;
         }
 
-        struct curl_slist* headers = nullptr;
+        curl_slist* curlHeaders = nullptr;
         if (contentType != nullptr) {
-            headers = curl_slist_append(headers, ("Content-Type: " + *contentType).c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curlHeaders = curl_slist_append(curlHeaders, ("Content-Type: " + *contentType).c_str());
+        }
+        if (headers != nullptr) {
+            for (const auto& [key, value] : *headers) {
+                curlHeaders = curl_slist_append(curlHeaders, (key + ": " + value).c_str());
+            }
+        }
+        if (curlHeaders != nullptr) {
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curlHeaders);
+        }
+
+        if (body != nullptr) {
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body->c_str());
             curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body->size()));
@@ -105,8 +117,8 @@ private:
         const CURLcode rc = curl_easy_perform(curl);
         if (rc != CURLE_OK) {
             resp.error = curl_easy_strerror(rc);
-            if (headers != nullptr) {
-                curl_slist_free_all(headers);
+            if (curlHeaders != nullptr) {
+                curl_slist_free_all(curlHeaders);
             }
             curl_easy_cleanup(curl);
             return resp;
@@ -116,8 +128,8 @@ private:
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
         resp.statusCode = static_cast<int>(code);
 
-        if (headers != nullptr) {
-            curl_slist_free_all(headers);
+        if (curlHeaders != nullptr) {
+            curl_slist_free_all(curlHeaders);
         }
         curl_easy_cleanup(curl);
         return resp;

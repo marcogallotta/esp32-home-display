@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 
 #include "config.h"
@@ -12,6 +13,8 @@ struct HttpResponse {
     std::string body;
     std::string error;
 };
+
+using Headers = std::map<std::string, std::string>;
 
 class Platform {
 public:
@@ -28,7 +31,8 @@ public:
         const std::string& url,
         const std::string& body,
         const std::string& pem,
-        const std::string& contentType = "application/json"
+        const std::string& contentType = "application/json",
+        const Headers& headers = {}
     ) = 0;
 
 protected:

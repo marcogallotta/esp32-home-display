@@ -10,6 +10,7 @@ struct ForecastConfig {
 
 struct ApiConfig {
     std::string baseUrl;
+    std::string apiKey;
     std::string pem;
 };
 

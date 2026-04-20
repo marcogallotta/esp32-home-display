@@ -37,4 +37,5 @@ reset-db: run-db wait-db
 	python3 reset_db.py
 
 run-server:
-	uvicorn main:app --reload
+	@test -f $(API_KEY_FILE) || (echo "Missing $(API_KEY_FILE)"; exit 1)
+	@API_KEY="$$(cat $(API_KEY_FILE))" uvicorn main:app --reload

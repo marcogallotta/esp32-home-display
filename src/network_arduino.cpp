@@ -87,7 +87,8 @@ public:
         const std::string& url,
         const std::string& body,
         const std::string& pem,
-        const std::string& contentType = "application/json"
+        const std::string& contentType = "application/json",
+        const Headers& headers = {}
     ) override {
         HttpResponse resp;
 
@@ -107,6 +108,9 @@ public:
 
         http.setTimeout(15000);
         http.addHeader("Content-Type", contentType.c_str());
+        for (const auto& [key, value] : headers) {
+            http.addHeader(key.c_str(), value.c_str());
+        }
 
         const int code = http.POST(reinterpret_cast<const uint8_t*>(body.data()), body.size());
         resp.statusCode = code;

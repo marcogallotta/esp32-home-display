@@ -1,10 +1,11 @@
 import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Annotated, Optional
 import logging
+from typing import Annotated, Optional
+import os
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,6 +21,11 @@ from models import (
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
+API_KEY = os.getenv("API_KEY")
+def require_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401)
+protected = APIRouter(dependencies=[Depends(require_api_key)])
 
 HARD_TEMPERATURE_C_MIN = -40.0
 HARD_TEMPERATURE_C_MAX = 125.0
@@ -189,7 +195,7 @@ class SwitchbotReadingOut(BaseModel):
     humidity_pct: float
 
 
-@app.get("/switchbot/readings", response_model=list[SwitchbotReadingOut])
+@protected.get("/switchbot/readings", response_model=list[SwitchbotReadingOut])
 def get_switchbot_readings(
     mac: str,
     limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
@@ -245,7 +251,7 @@ class XiaomiReadingOut(BaseModel):
     conductivity_us_cm: Optional[int]
 
 
-@app.get("/xiaomi/readings", response_model=list[XiaomiReadingOut])
+@protected.get("/xiaomi/readings", response_model=list[XiaomiReadingOut])
 def get_xiaomi_readings(
     mac: str,
     limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
@@ -297,7 +303,7 @@ def get_xiaomi_readings(
     ]
 
 
-@app.post("/switchbot/reading")
+@protected.post("/switchbot/reading")
 def create_switchbot_reading(reading: SwitchbotReadingIn, db: Session = Depends(get_db)):
     maybe_warn_switchbot(reading)
     ensure_sensor(db, reading.mac, reading.name, sensor_type_to_db(reading.type))
@@ -314,7 +320,7 @@ def create_switchbot_reading(reading: SwitchbotReadingIn, db: Session = Depends(
     return {"ok": True}
 
 
-@app.post("/xiaomi/reading")
+@protected.post("/xiaomi/reading")
 def create_xiaomi_reading(reading: XiaomiReadingIn, db: Session = Depends(get_db)):
     maybe_warn_xiaomi(reading)
     ensure_sensor(db, reading.mac, reading.name, sensor_type_to_db(reading.type))
@@ -331,3 +337,5 @@ def create_xiaomi_reading(reading: XiaomiReadingIn, db: Session = Depends(get_db
     )
     db.commit()
     return {"ok": True}
+
+app.include_router(protected)
