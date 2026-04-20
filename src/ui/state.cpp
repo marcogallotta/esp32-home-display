@@ -4,13 +4,10 @@
 
 namespace {
 
-bool sameRenderedSensor(const SensorRowState& a, const SensorRowState& b) {
-    return
-        a.hasReading == b.hasReading &&
-        a.shortName == b.shortName &&
-        a.name == b.name &&
-        displayTemp(a.temperatureC) == displayTemp(b.temperatureC) &&
-        a.humidity == b.humidity;
+bool sameRenderedSwitchbotRow(const SwitchbotSensorState& a, const SwitchbotSensorState& b) {
+    return a.identity.name == b.identity.name &&
+           a.identity.shortName == b.identity.shortName &&
+           a.reading.equalsForDisplay(b.reading);
 }
 
 } // namespace
@@ -21,16 +18,14 @@ int displayTemp(float x) {
 
 DirtyRegions computeDirtyRegions(const State& previous, const State& current) {
     DirtyRegions dirty;
-    dirty.sensorRows.assign(current.sensors.size(), false);
+    dirty.sensorRows.assign(current.switchbotSensors.size(), false);
 
     if (previous.hasSalah != current.hasSalah) {
         dirty.salahName = true;
         dirty.minutes = true;
     } else if (current.hasSalah) {
-        if (
-            previous.salah.current != current.salah.current ||
-            previous.salah.next != current.salah.next
-        ) {
+        if (previous.salah.current != current.salah.current ||
+            previous.salah.next != current.salah.next) {
             dirty.salahName = true;
         }
 
@@ -48,13 +43,11 @@ DirtyRegions computeDirtyRegions(const State& previous, const State& current) {
             for (int i = 0; i < current.forecast.count; ++i) {
                 const auto& prevDay = previous.forecast.days[i];
                 const auto& currDay = current.forecast.days[i];
-                if (
-                    prevDay.date != currDay.date ||
+                if (prevDay.date != currDay.date ||
                     prevDay.weatherCode != currDay.weatherCode ||
                     displayTemp(prevDay.tempMax) != displayTemp(currDay.tempMax) ||
                     displayTemp(prevDay.tempMin) != displayTemp(currDay.tempMin) ||
-                    prevDay.rainProbMax != currDay.rainProbMax
-                ) {
+                    prevDay.rainProbMax != currDay.rainProbMax) {
                     dirty.forecast = true;
                     break;
                 }
@@ -62,8 +55,8 @@ DirtyRegions computeDirtyRegions(const State& previous, const State& current) {
         }
     }
 
-    for (std::size_t i = 0; i < current.sensors.size(); ++i) {
-        if (!sameRenderedSensor(previous.sensors[i], current.sensors[i])) {
+    for (std::size_t i = 0; i < current.switchbotSensors.size(); ++i) {
+        if (!sameRenderedSwitchbotRow(previous.switchbotSensors[i], current.switchbotSensors[i])) {
             dirty.sensorRows[i] = true;
             dirty.sensorsAny = true;
         }

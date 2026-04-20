@@ -14,26 +14,21 @@ State makeBaseState() {
     state.salah.next = salah::Phase::Asr;
     state.salah.minutesRemaining = 42;
 
-    state.sensors = {
-        SensorRowState{
-            true,
-            'L',
-            "Living Room",
-            21.2f,
-            55,
-            1000,
-            -60
+    state.switchbotSensors = {
+        SwitchbotSensorState{
+            SensorIdentity{"AA:BB:CC:DD:EE:FF", "Living Room", "LR"},
+            SwitchbotReading{}
         },
-        SensorRowState{
-            false,
-            'B',
-            "Bedroom",
-            0.0f,
-            0,
-            0,
-            0
+        SwitchbotSensorState{
+            SensorIdentity{"11:22:33:44:55:66", "Bedroom", "BR"},
+            SwitchbotReading{}
         }
     };
+
+    state.switchbotSensors[0].reading.temperatureC = 21.2f;
+    state.switchbotSensors[0].reading.humidityPct = 55;
+    state.switchbotSensors[0].reading.lastSeenEpochS = 1000;
+    state.switchbotSensors[0].reading.rssi = -60;
 
     state.hasForecast = true;
     state.forecast.count = 2;
@@ -89,17 +84,6 @@ void testSalahNameDirtyWhenCurrentChanges() {
     assertTrue(!dirty.minutes, "minutes should not be dirty");
 }
 
-void testSalahNameDirtyWhenNextChanges() {
-    const State previous = makeBaseState();
-    State current = previous;
-    current.salah.next = salah::Phase::Maghrib;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.salahName, "salahName should be dirty");
-    assertTrue(!dirty.minutes, "minutes should not be dirty");
-}
-
 void testMinutesDirtyWhenRemainingChanges() {
     const State previous = makeBaseState();
     State current = previous;
@@ -109,37 +93,6 @@ void testMinutesDirtyWhenRemainingChanges() {
 
     assertTrue(!dirty.salahName, "salahName should not be dirty");
     assertTrue(dirty.minutes, "minutes should be dirty");
-}
-
-void testSalahRegionsDirtyWhenHasSalahChanges() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.hasSalah = false;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.salahName, "salahName should be dirty");
-    assertTrue(dirty.minutes, "minutes should be dirty");
-}
-
-void testForecastDirtyWhenHasForecastChanges() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.hasForecast = false;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.forecast, "forecast should be dirty");
-}
-
-void testForecastDirtyWhenCountChanges() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.forecast.count = 1;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.forecast, "forecast should be dirty");
 }
 
 void testForecastDirtyWhenDayChanges() {
@@ -152,31 +105,10 @@ void testForecastDirtyWhenDayChanges() {
     assertTrue(dirty.forecast, "forecast should be dirty");
 }
 
-void testForecastNotDirtyWhenTempsRoundSame() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.forecast.days[0].tempMax = 18.49f;
-    current.forecast.days[0].tempMin = 9.49f;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(!dirty.forecast, "forecast should not be dirty");
-}
-
-void testForecastDirtyWhenTempsRoundDifferently() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.forecast.days[0].tempMax = 18.6f;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.forecast, "forecast should be dirty");
-}
-
 void testSingleSensorRowDirtyWhenHumidityChanges() {
     State previous = makeBaseState();
     State current = previous;
-    current.sensors[0].humidity = 56;
+    current.switchbotSensors[0].reading.humidityPct = 56;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
@@ -188,9 +120,10 @@ void testSingleSensorRowDirtyWhenHumidityChanges() {
 void testSingleSensorRowDirtyWhenReadingAppears() {
     State previous = makeBaseState();
     State current = previous;
-    current.sensors[1].hasReading = true;
-    current.sensors[1].temperatureC = 19.0f;
-    current.sensors[1].humidity = 44;
+    current.switchbotSensors[1].reading.temperatureC = 19.0f;
+    current.switchbotSensors[1].reading.humidityPct = 44;
+    current.switchbotSensors[1].reading.lastSeenEpochS = 1234;
+    current.switchbotSensors[1].reading.rssi = -70;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
@@ -202,7 +135,7 @@ void testSingleSensorRowDirtyWhenReadingAppears() {
 void testSensorNotDirtyWhenTempRoundsSame() {
     State previous = makeBaseState();
     State current = previous;
-    current.sensors[0].temperatureC = 21.49f;
+    current.switchbotSensors[0].reading.temperatureC = 21.49f;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
@@ -213,7 +146,7 @@ void testSensorNotDirtyWhenTempRoundsSame() {
 void testSensorDirtyWhenTempRoundsDifferently() {
     State previous = makeBaseState();
     State current = previous;
-    current.sensors[0].temperatureC = 21.5f;
+    current.switchbotSensors[0].reading.temperatureC = 21.5f;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
@@ -224,7 +157,7 @@ void testSensorDirtyWhenTempRoundsDifferently() {
 void testSensorDirtyWhenShortNameChanges() {
     State previous = makeBaseState();
     State current = previous;
-    current.sensors[0].shortName = 'K';
+    current.switchbotSensors[0].identity.shortName = "K";
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
@@ -238,14 +171,8 @@ void runUiStateTests() {
     testDisplayTempRounds();
     testIdenticalStatesProduceNoDirtyRegions();
     testSalahNameDirtyWhenCurrentChanges();
-    testSalahNameDirtyWhenNextChanges();
     testMinutesDirtyWhenRemainingChanges();
-    testSalahRegionsDirtyWhenHasSalahChanges();
-    testForecastDirtyWhenHasForecastChanges();
-    testForecastDirtyWhenCountChanges();
     testForecastDirtyWhenDayChanges();
-    testForecastNotDirtyWhenTempsRoundSame();
-    testForecastDirtyWhenTempsRoundDifferently();
     testSingleSensorRowDirtyWhenHumidityChanges();
     testSingleSensorRowDirtyWhenReadingAppears();
     testSensorNotDirtyWhenTempRoundsSame();

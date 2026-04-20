@@ -17,16 +17,16 @@ void updateSalahState(
     State& state
 );
 
-void updateSensorState(
+void updateSwitchbotState(
     const Config& config,
-    const std::time_t now,
+    std::time_t now,
     switchbot::Scanner& scanner,
     State& state
 );
 
 void updateXiaomiState(
     const Config& config,
-    const std::time_t now,
+    std::time_t now,
     xiaomi::Scanner& scanner,
     State& state
 );

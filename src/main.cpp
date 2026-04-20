@@ -24,7 +24,7 @@ constexpr int kMaxVisibleSensorRows = 4;
 
 bool hasAnyXiaomiReading(const State& state) {
     for (const auto& row : state.xiaomiSensors) {
-        if (row.hasReading) {
+        if (row.reading.hasAnyValue()) {
             return true;
         }
     }
@@ -33,10 +33,10 @@ bool hasAnyXiaomiReading(const State& state) {
 
 bool allXiaomiRowsComplete(const State& state) {
     for (const auto& row : state.xiaomiSensors) {
-        if (!row.hasReading) {
-            return false;
-        }
-        if (!row.hasTemperature || !row.hasLux || !row.hasMoisture || !row.hasConductivity) {
+        if (!row.reading.temperatureC.has_value() ||
+            !row.reading.lux.has_value() ||
+            !row.reading.moisturePct.has_value() ||
+            !row.reading.conductivityUsCm.has_value()) {
             return false;
         }
     }
@@ -53,11 +53,11 @@ void run() {
     }
     const Config config = tmpConfig;
 
-    const std::size_t sensorCount = config.switchbot.sensors.size();
+    const std::size_t switchbotSensorCount = config.switchbot.sensors.size();
     const std::size_t xiaomiSensorCount = config.xiaomi.sensors.size();
 
 #ifdef ARDUINO
-    if (sensorCount > kMaxVisibleSensorRows) {
+    if (switchbotSensorCount > kMaxVisibleSensorRows) {
         platform::printLine("Config error: OLED supports at most 4 sensors");
         return;
     }
@@ -72,20 +72,19 @@ void run() {
 
     State currentState;
     State previousState;
-    currentState.sensors.resize(sensorCount);
-    previousState.sensors.resize(sensorCount);
+    currentState.switchbotSensors.resize(switchbotSensorCount);
+    previousState.switchbotSensors.resize(switchbotSensorCount);
     currentState.xiaomiSensors.resize(xiaomiSensorCount);
     previousState.xiaomiSensors.resize(xiaomiSensorCount);
 
     UiState currentUiState;
     bool hasPreviousState = false;
 
-    switchbot::Scanner scanner(config.switchbot);
+    switchbot::Scanner switchbotScanner(config.switchbot);
     xiaomi::Scanner xiaomiScanner(config.xiaomi);
 
-    // Note that these callbacks are asyn, and don't run on the main thread
     std::atomic<bool> switchbotUpdatePending{false};
-    scanner.setUpdateCallback([&]() {
+    switchbotScanner.setUpdateCallback([&]() {
         switchbotUpdatePending.store(true);
     });
 
@@ -95,7 +94,7 @@ void run() {
     });
 
     ble::Scanner bleScanner([&](const ble::AdvertisementEvent& event) {
-        scanner.handleAdvertisement(event);
+        switchbotScanner.handleAdvertisement(event);
         xiaomiScanner.handleAdvertisement(event);
     });
     bleScanner.start();
@@ -130,13 +129,11 @@ void run() {
         }
 
         if (switchbotUpdatePending.exchange(false) || areSensorsDue(now, timing)) {
-            currentState.sensors.assign(sensorCount, SensorRowState{});
-            updateSensorState(config, now, scanner, currentState);
+            updateSwitchbotState(config, now, switchbotScanner, currentState);
             markSensorsUpdated(now, timing);
         }
 
         if (xiaomiUpdatePending.exchange(false) || areXiaomiDue(now, timing)) {
-            currentState.xiaomiSensors.assign(xiaomiSensorCount, XiaomiRowState{});
             updateXiaomiState(config, now, xiaomiScanner, currentState);
 
             if (allXiaomiRowsComplete(currentState)) {
@@ -170,7 +167,7 @@ void run() {
             currentUiState.dirty.salahName = true;
             currentUiState.dirty.minutes = true;
             currentUiState.dirty.sensorsAny = true;
-            currentUiState.dirty.sensorRows.assign(sensorCount, true);
+            currentUiState.dirty.sensorRows.assign(switchbotSensorCount, true);
             currentUiState.dirty.forecast = true;
             hasPreviousState = true;
             doFullDraw = true;
@@ -182,9 +179,10 @@ void run() {
         platform::printLine(std::string("  salahName=") + (currentUiState.dirty.salahName ? "yes" : "no"));
         platform::printLine(std::string("  minutes=") + (currentUiState.dirty.minutes ? "yes" : "no"));
         platform::printLine(std::string("  sensorsAny=") + (currentUiState.dirty.sensorsAny ? "yes" : "no"));
-        for (std::size_t i = 0; i < sensorCount; ++i) {
+        for (std::size_t i = 0; i < switchbotSensorCount; ++i) {
             platform::printLine(
-                "  sensor[" + std::to_string(i) + "]=" + (currentUiState.dirty.sensorRows[i] ? "yes" : "no")
+                "  sensor[" + std::to_string(i) + "]=" +
+                (currentUiState.dirty.sensorRows[i] ? "yes" : "no")
             );
         }
         platform::printLine("");
@@ -204,7 +202,7 @@ void run() {
             }
 
             const int visibleRows = std::min<int>(
-                static_cast<int>(sensorCount),
+                static_cast<int>(switchbotSensorCount),
                 kMaxVisibleSensorRows
             );
             for (int rowIndex = 0; rowIndex < visibleRows; ++rowIndex) {

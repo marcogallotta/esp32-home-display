@@ -89,17 +89,20 @@ void drawSensorRowRegion(const State& state, int rowIndex) {
 
     clearRegion(x, y, w, h);
 
-    const SensorRowState& row = state.sensors[rowIndex];
-    if (!row.hasReading) {
+    const auto& row = state.switchbotSensors[rowIndex];
+    if (!row.reading.hasCompleteReading()) {
         return;
     }
 
+    const char shortName =
+        row.identity.shortName.empty() ? '?' : row.identity.shortName[0];
+
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "%c", row.shortName);
+    std::snprintf(buf, sizeof(buf), "%c", shortName);
     oled.drawStr(x, y + 12, buf);
-    std::snprintf(buf, sizeof(buf), "%d", displayTemp(row.temperatureC));
+    std::snprintf(buf, sizeof(buf), "%d", displayTemp(*row.reading.temperatureC));
     oled.drawStr(x + 12, y + 12, buf);
-    std::snprintf(buf, sizeof(buf), "%d", static_cast<int>(row.humidity));
+    std::snprintf(buf, sizeof(buf), "%d", static_cast<int>(*row.reading.humidityPct));
     oled.drawStr(x + 28, y + 12, buf);
 }
 
@@ -128,7 +131,7 @@ void drawAllRegions(const State& state) {
     drawMinutesRegion(state);
 
     const int visibleRows = std::min<int>(
-        static_cast<int>(state.sensors.size()),
+        static_cast<int>(state.switchbotSensors.size()),
         kMaxVisibleSensorRows
     );
     for (int rowIndex = 0; rowIndex < visibleRows; ++rowIndex) {
@@ -136,7 +139,6 @@ void drawAllRegions(const State& state) {
     }
 
     drawForecastRegion(state);
-
     oled.sendBuffer();
 }
 

@@ -1,8 +1,6 @@
 #include "update.h"
 
-#include <exception>
 #include <string>
-#include <tuple>
 
 #include "forecast/network.h"
 #include "forecast/openmeteo.h"
@@ -33,16 +31,9 @@ void updateSalahState(
     state.salah =
         salah::computeState(today, tomorrow, salah::minutesSinceMidnight(localTime));
     state.hasSalah = true;
-
-    platform::printLine(std::string("Current: ") + toString(state.salah.current));
-    platform::printLine(std::string("Next: ") + toString(state.salah.next));
-    platform::printLine(
-        "Remaining: " + std::to_string(state.salah.minutesRemaining) + " min"
-    );
-    platform::printLine("");
 }
 
-void updateSensorState(
+void updateSwitchbotState(
     const Config& config,
     const std::time_t now,
     switchbot::Scanner& scanner,
@@ -51,53 +42,52 @@ void updateSensorState(
     scanner.poll();
     const auto sensors = scanner.snapshot();
 
-    for (std::size_t i = 0; i < state.sensors.size(); ++i) {
+    for (std::size_t i = 0; i < state.switchbotSensors.size(); ++i) {
         const auto& sensorConfig = config.switchbot.sensors[i];
-        SensorRowState& row = state.sensors[i];
-        row.name = sensorConfig.name;
-        row.shortName = sensorConfig.shortName.empty() ? '?' : sensorConfig.shortName[0];
+        auto& row = state.switchbotSensors[i];
+
+        row.identity.mac = sensorConfig.mac;
+        row.identity.name = sensorConfig.name;
+        row.identity.shortName = sensorConfig.shortName;
 
         const auto it = sensors.find(sensorConfig.mac);
         if (it == sensors.end()) {
+            row.reading = SwitchbotReading{};
             continue;
         }
 
         const auto& reading = it->second;
-        row.hasReading = true;
-        row.name = reading.name;
-        row.shortName = reading.shortName.empty() ? '?' : reading.shortName[0];
-        row.temperatureC = reading.temperature_c;
-        row.humidity = reading.humidity;
-        row.lastSeenEpochS = reading.last_seen_epoch_s;
-        row.rssi = reading.rssi;
+        row.reading.temperatureC = reading.temperature_c;
+        row.reading.humidityPct = reading.humidity;
+        row.reading.lastSeenEpochS = reading.last_seen_epoch_s;
+        row.reading.rssi = reading.rssi;
     }
 
     platform::printLine("Sensors:");
-    for (std::size_t i = 0; i < state.sensors.size(); ++i) {
-        const auto& sensorConfig = config.switchbot.sensors[i];
-        const SensorRowState& row = state.sensors[i];
-
-        if (!row.hasReading) {
+    for (const auto& row : state.switchbotSensors) {
+        if (!row.reading.hasCompleteReading()) {
 #ifdef ARDUINO
-            platform::printLine(sensorConfig.shortName + ": no reading yet");
+            platform::printLine(row.identity.shortName + ": no reading yet");
 #else
-            platform::printLine(sensorConfig.name + ": no reading yet");
+            platform::printLine(row.identity.name + ": no reading yet");
 #endif
             continue;
         }
 
 #ifdef ARDUINO
-        const std::string label(1, row.shortName);
+        const std::string label = row.identity.shortName.empty()
+            ? "?"
+            : std::string(1, row.identity.shortName[0]);
 #else
-        const std::string label = row.name;
+        const std::string label = row.identity.name;
 #endif
 
         platform::printLine(
             label + ": " +
-            std::to_string(row.temperatureC) + "C, " +
-            std::to_string(static_cast<int>(row.humidity)) + "%, " +
-            std::to_string((now - row.lastSeenEpochS) / 60) + "m, " +
-            "rssi=" + std::to_string(row.rssi)
+            std::to_string(*row.reading.temperatureC) + "C, " +
+            std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%, " +
+            std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m, " +
+            "rssi=" + std::to_string(*row.reading.rssi)
         );
     }
     platform::printLine("");
@@ -114,49 +104,49 @@ void updateXiaomiState(
 
     for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {
         const auto& sensorConfig = config.xiaomi.sensors[i];
-        XiaomiRowState& row = state.xiaomiSensors[i];
-        row.name = sensorConfig.name;
-        row.shortName = sensorConfig.shortName.empty() ? '?' : sensorConfig.shortName[0];
+        auto& row = state.xiaomiSensors[i];
+
+        row.identity.mac = sensorConfig.mac;
+        row.identity.name = sensorConfig.name;
+        row.identity.shortName = sensorConfig.shortName;
 
         const auto it = sensors.find(sensorConfig.mac);
         if (it == sensors.end()) {
+            row.reading = XiaomiReading{};
             continue;
         }
 
         const auto& reading = it->second;
-        row.hasReading = true;
-        row.name = reading.name;
-        row.shortName = reading.shortName.empty() ? '?' : reading.shortName[0];
-        row.hasTemperature = reading.hasTemperature;
-        row.temperatureC = reading.temperatureC;
-        row.hasLux = reading.hasLux;
-        row.lux = reading.lux;
-        row.hasMoisture = reading.hasMoisture;
-        row.moisturePct = reading.moisturePct;
-        row.hasConductivity = reading.hasConductivity;
-        row.conductivityUsCm = reading.conductivityUsCm;
-        row.lastSeenEpochS = reading.lastSeenEpochS;
-        row.rssi = reading.rssi;
+
+        row.reading.temperatureC =
+            reading.hasTemperature ? std::optional<float>(reading.temperatureC) : std::nullopt;
+        row.reading.moisturePct =
+            reading.hasMoisture ? std::optional<std::uint8_t>(reading.moisturePct) : std::nullopt;
+        row.reading.lux =
+            reading.hasLux ? std::optional<int>(reading.lux) : std::nullopt;
+        row.reading.conductivityUsCm =
+            reading.hasConductivity ? std::optional<int>(reading.conductivityUsCm) : std::nullopt;
+        row.reading.lastSeenEpochS = reading.lastSeenEpochS;
+        row.reading.rssi = reading.rssi;
     }
 
     platform::printLine("Xiaomi:");
-    for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {
-        const auto& sensorConfig = config.xiaomi.sensors[i];
-        const XiaomiRowState& row = state.xiaomiSensors[i];
-
-        if (!row.hasReading) {
+    for (const auto& row : state.xiaomiSensors) {
+        if (!row.reading.hasAnyValue()) {
 #ifdef ARDUINO
-            platform::printLine(sensorConfig.shortName + ": no reading yet");
+            platform::printLine(row.identity.shortName + ": no reading yet");
 #else
-            platform::printLine(sensorConfig.name + ": no reading yet");
+            platform::printLine(row.identity.name + ": no reading yet");
 #endif
             continue;
         }
 
 #ifdef ARDUINO
-        const std::string label(1, row.shortName);
+        const std::string label = row.identity.shortName.empty()
+            ? "?"
+            : std::string(1, row.identity.shortName[0]);
 #else
-        const std::string label = row.name;
+        const std::string label = row.identity.name;
 #endif
 
         std::string line = label + ": ";
@@ -170,21 +160,24 @@ void updateXiaomiState(
             first = false;
         };
 
-        if (row.hasTemperature) {
-            appendPart(std::to_string(row.temperatureC) + "C");
+        if (row.reading.temperatureC.has_value()) {
+            appendPart(std::to_string(*row.reading.temperatureC) + "C");
         }
-        if (row.hasMoisture) {
-            appendPart(std::to_string(static_cast<int>(row.moisturePct)) + "%");
+        if (row.reading.moisturePct.has_value()) {
+            appendPart(std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%");
         }
-        if (row.hasLux) {
-            appendPart("lux=" + std::to_string(row.lux));
+        if (row.reading.lux.has_value()) {
+            appendPart("lux=" + std::to_string(*row.reading.lux));
         }
-        if (row.hasConductivity) {
-            appendPart("cond=" + std::to_string(row.conductivityUsCm));
+        if (row.reading.conductivityUsCm.has_value()) {
+            appendPart("cond=" + std::to_string(*row.reading.conductivityUsCm));
         }
-
-        appendPart(std::to_string((now - row.lastSeenEpochS) / 60) + "m");
-        appendPart("rssi=" + std::to_string(row.rssi));
+        if (row.reading.lastSeenEpochS.has_value()) {
+            appendPart(std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m");
+        }
+        if (row.reading.rssi.has_value()) {
+            appendPart("rssi=" + std::to_string(*row.reading.rssi));
+        }
 
         platform::printLine(line);
     }
@@ -204,19 +197,8 @@ bool updateForecastState(const Config& config, State& state) {
     if (!forecast::parseForecastJson(r.body, data)) {
         return false;
     }
+
     state.forecast = data;
     state.hasForecast = true;
-
-    for (int i = 0; i < data.count; ++i) {
-        platform::printLine(
-            data.days[i].date +
-            " code=" + std::to_string(data.days[i].weatherCode) +
-            " max=" + std::to_string(data.days[i].tempMax) +
-            " min=" + std::to_string(data.days[i].tempMin) +
-            " rain=" + std::to_string(data.days[i].rainProbMax)
-        );
-    }
-    platform::printLine("");
-
     return true;
 }

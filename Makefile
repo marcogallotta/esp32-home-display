@@ -35,6 +35,7 @@ COMMON_SRC := \
 	src/platform_desktop.cpp \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
+	src/sensor_readings.cpp \
 	src/switchbot/protocol.cpp \
 	src/switchbot/ble.cpp \
 	src/ui/display.cpp \
