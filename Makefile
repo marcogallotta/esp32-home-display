@@ -29,6 +29,7 @@ COMMON_SRC := \
 	src/api/payloads.cpp \
 	src/api/client.cpp \
 	src/api/state.cpp \
+	src/api_sync.cpp \
 	src/ble/desktop.cpp \
 	src/config.cpp \
 	src/config_desktop.cpp \

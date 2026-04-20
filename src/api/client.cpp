@@ -19,11 +19,11 @@ Client::Client(const Config& config)
 }
 
 bool Client::postSwitchbotReading(const SwitchbotPayload& payload) const {
-    return postJson("/switchbot/readings", toJson(payload));
+    return postJson("/switchbot/reading", toJson(payload));
 }
 
 bool Client::postXiaomiReading(const XiaomiPayload& payload) const {
-    return postJson("/xiaomi/readings", toJson(payload));
+    return postJson("/xiaomi/reading", toJson(payload));
 }
 
 bool Client::postJson(const std::string& path, const std::string& body) const {

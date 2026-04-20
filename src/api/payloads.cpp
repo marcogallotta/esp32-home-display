@@ -136,7 +136,7 @@ std::string toJson(const SwitchbotPayload& payload) {
     doc["type"] = payload.type;
     doc["timestamp"] = payload.timestamp;
     doc["temperature_c"] = payload.temperatureC;
-    doc["humidity_pct"] = payload.humidityPct;
+    doc["humidity_pct"] = static_cast<int>(payload.humidityPct);
 
     std::string out;
     serializeJson(doc, out);
@@ -152,26 +152,15 @@ std::string toJson(const XiaomiPayload& payload) {
 
     if (payload.temperatureC.has_value()) {
         doc["temperature_c"] = *payload.temperatureC;
-    } else {
-        doc["temperature_c"] = nullptr;
     }
-
     if (payload.moisturePct.has_value()) {
-        doc["moisture_pct"] = *payload.moisturePct;
-    } else {
-        doc["moisture_pct"] = nullptr;
+        doc["moisture_pct"] = static_cast<int>(*payload.moisturePct);
     }
-
     if (payload.lightLux.has_value()) {
         doc["light_lux"] = *payload.lightLux;
-    } else {
-        doc["light_lux"] = nullptr;
     }
-
     if (payload.conductivityUsCm.has_value()) {
         doc["conductivity_us_cm"] = *payload.conductivityUsCm;
-    } else {
-        doc["conductivity_us_cm"] = nullptr;
     }
 
     std::string out;

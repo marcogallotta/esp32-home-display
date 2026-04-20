@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <string>
 
+#include "api/client.h"
+#include "api/state.h"
+#include "api_sync.h"
 #include "ble/scanner.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
@@ -76,6 +79,10 @@ void run() {
     previousState.switchbotSensors.resize(switchbotSensorCount);
     currentState.xiaomiSensors.resize(xiaomiSensorCount);
     previousState.xiaomiSensors.resize(xiaomiSensorCount);
+
+    api::State apiState;
+    api::initState(currentState, apiState);
+    api::Client apiClient(config);
 
     UiState currentUiState;
     bool hasPreviousState = false;
@@ -160,6 +167,8 @@ void run() {
             currentState.forecast = lastForecastData;
             currentState.hasForecast = true;
         }
+
+        syncApiState(currentState, apiState, apiClient);
 
         [[maybe_unused]] bool doFullDraw = false;
 
