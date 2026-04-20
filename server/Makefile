@@ -1,7 +1,7 @@
 include .env
 export
 
-.PHONY: run-db stop-db delete-db create-schema create-db wait-db clean-db reset-db run-server
+.PHONY: run-db wait-db stop-db delete-db reset-db reset-db run-server
 
 run-db:
 	@test -f $(DB_PASSWORD_FILE) || (echo "Missing $(DB_PASSWORD_FILE)"; exit 1)
