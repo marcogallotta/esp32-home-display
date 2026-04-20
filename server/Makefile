@@ -1,24 +1,28 @@
 include .env
 export
 
-.PHONY: run-db stop-db delete-db create-schema create-db wait-db clean-db reset-db
+.PHONY: run-db stop-db delete-db create-schema create-db wait-db clean-db reset-db run-server
 
 run-db:
+	@test -f $(DB_PASSWORD_FILE) || (echo "Missing $(DB_PASSWORD_FILE)"; exit 1)
+	@chmod 600 $(DB_PASSWORD_FILE)
 	@if docker ps --format '{{.Names}}' | grep -qx postgres; then \
 		echo "postgres already running"; \
 	elif docker ps -a --format '{{.Names}}' | grep -qx postgres; then \
 		docker start postgres; \
 	else \
 		docker run --name postgres \
-		  	-e POSTGRES_DB=$(DB_NAME) \
-			-e POSTGRES_HOST_AUTH_METHOD=trust \
+			-e POSTGRES_DB=$(DB_NAME) \
+			-e POSTGRES_USER=$(DB_USER) \
+			-e POSTGRES_PASSWORD_FILE=/run/secrets/db_password \
 			-p 127.0.0.1:$(DB_PORT):5432 \
-		  	-v pgdata:/var/lib/postgresql \
-		  	-d postgres; \
+			-v pgdata:/var/lib/postgresql \
+			-v $(CURDIR)/$(DB_PASSWORD_FILE):/run/secrets/db_password:ro \
+			-d postgres; \
 	fi
 
 wait-db:
-	@until docker exec postgres pg_isready -U $(DB_USER) >/dev/null 2>&1; do \
+	@until docker exec postgres pg_isready -U $(DB_USER) -d $(DB_NAME) >/dev/null 2>&1; do \
 		sleep 0.5; \
 	done
 
@@ -27,22 +31,10 @@ stop-db:
 
 delete-db: stop-db
 	@printf "Delete postgres container? [y/N] " && \
-		read ans && [ "$$ans" = "y" ] && \
-		docker rm postgres || true
+		read ans && [ "$$ans" = "y" ] && docker rm postgres || true
 
-create-schema: run-db wait-db
-	docker exec -i postgres sh -c 'psql \
-		-U "$(DB_USER)" \
-		-d "$(DB_NAME)"' < schema.sql
-
-clean-db: run-db wait-db
-	@printf "Drop db tables? [y/N] " && \
-		read ans && [ "$$ans" = "y" ] && \
-		docker exec -i postgres sh -c 'psql \
-			-U "$(DB_USER)" \
-			-d "$(DB_NAME)"' < drop.sql
-
-reset-db: clean-db create-schema
+reset-db: run-db wait-db
+	python3 reset_db.py
 
 run-server:
 	uvicorn main:app --reload
