@@ -237,6 +237,66 @@ def get_switchbot_readings(
     ]
 
 
+class XiaomiReadingOut(BaseModel):
+    timestamp: datetime
+    temperature_c: Optional[float]
+    moisture_pct: Optional[int]
+    light_lux: Optional[int]
+    conductivity_us_cm: Optional[int]
+
+
+@app.get("/xiaomi/readings", response_model=list[XiaomiReadingOut])
+def get_xiaomi_readings(
+    mac: str,
+    limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
+    before: datetime | None = None,
+    after: datetime | None = None,
+    db: Session = Depends(get_db),
+):
+    mac = validate_mac_address(mac)
+    before = validate_query_timestamp("before", before)
+    after = validate_query_timestamp("after", after)
+
+    if before is not None and after is not None and after > before:
+        raise HTTPException(status_code=400, detail="after must be <= before")
+
+    sensor = db.get(Sensor, mac)
+    if sensor is None:
+        return []
+
+    stmt = (
+        select(
+            XiaomiReading.timestamp,
+            XiaomiReading.temperature_c,
+            XiaomiReading.moisture_pct,
+            XiaomiReading.light_lux,
+            XiaomiReading.conductivity_us_cm,
+        )
+        .where(XiaomiReading.mac == mac)
+        .order_by(XiaomiReading.timestamp.desc())
+        .limit(limit)
+    )
+
+    if before is not None:
+        stmt = stmt.where(XiaomiReading.timestamp <= before)
+
+    if after is not None:
+        stmt = stmt.where(XiaomiReading.timestamp >= after)
+
+    rows = db.execute(stmt).all()
+
+    return [
+        XiaomiReadingOut(
+            timestamp=row.timestamp,
+            temperature_c=row.temperature_c,
+            moisture_pct=row.moisture_pct,
+            light_lux=row.light_lux,
+            conductivity_us_cm=row.conductivity_us_cm,
+        )
+        for row in rows
+    ]
+
+
 @app.post("/switchbot/reading")
 def create_switchbot_reading(reading: SwitchbotReadingIn, db: Session = Depends(get_db)):
     maybe_warn_switchbot(reading)
