@@ -24,6 +24,8 @@ class ReadingIn(BaseModel):
 
     @model_validator(mode="after")
     def validate_fields(self):
+        if self.name == "":
+            raise ValueError(f"name cannot be empty")
         check_range("temperature_c", self.temperature_c, HARD_TEMPERATURE_C_MIN, HARD_TEMPERATURE_C_MAX)
         check_range("humidity_pct", self.humidity_pct, HARD_HUMIDITY_PCT_MIN, HARD_HUMIDITY_PCT_MAX)
         return self
