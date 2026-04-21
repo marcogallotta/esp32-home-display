@@ -30,12 +30,28 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
         raise HTTPException(status_code=400, detail="sensor name does not match existing sensor")
 
 
+def compare_existing_and_incoming(existing: Any, incoming: Any, compare_fields: list[str]) -> str:
+    for field in compare_fields:
+        existing_value = getattr(existing, field)
+        incoming_value = getattr(incoming, field)
+
+        if existing_value is None or incoming_value is None:
+            continue
+
+        if existing_value != incoming_value:
+            return "conflict"
+
+    return "duplicate"
+
+
 def ingest_reading(
     db: Session,
     reading: Any,
     sensor_type: int,
     maybe_warn: Callable[[Any], None],
     build_row: Callable[[Any], Any],
+    reading_model: Any,
+    compare_fields: list[str],
 ):
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
@@ -43,17 +59,28 @@ def ingest_reading(
     maybe_warn(reading)
     ensure_sensor(db, reading.mac, reading.name, sensor_type)
 
-    db.add(build_row(reading))
+    row = build_row(reading)
+    db.add(row)
+
     try:
         db.commit()
+        return {"status": "ok", "result": "created"}
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={"status": "error", "error": "duplicate timestamp for sensor"},
-        ) from exc
 
-    return {"ok": True}
+        existing = db.execute(
+            select(reading_model).where(
+                reading_model.mac == reading.mac,
+                reading_model.timestamp == reading.timestamp,
+            )
+        ).scalar_one()
+
+        result = compare_existing_and_incoming(existing, reading, compare_fields)
+
+        return {
+            "status": "ok",
+            "result": result,
+        }
 
 
 def fetch_readings(
