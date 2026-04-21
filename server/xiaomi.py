@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-from common import SensorType, check_range, warn_if_suspicious
+from common import check_range, warn_if_suspicious
 from models import XIAOMI_TYPE, XiaomiReading
 
 
@@ -24,7 +24,6 @@ SOFT_CONDUCTIVITY_US_CM_MAX = 10_000
 class ReadingIn(BaseModel):
     mac: str
     name: str | None = None
-    type: SensorType
     timestamp: datetime
     temperature_c: float | None = None
     moisture_pct: int | None = None
@@ -33,9 +32,6 @@ class ReadingIn(BaseModel):
 
     @model_validator(mode="after")
     def validate_fields(self):
-        if self.type != SensorType.xiaomi:
-            raise ValueError("type must be 'xiaomi'")
-
         if (
             self.temperature_c is None
             and self.moisture_pct is None

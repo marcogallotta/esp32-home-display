@@ -79,7 +79,7 @@ def ingest_reading(
     maybe_warn(reading)
     ensure_sensor(db, reading.mac, reading.name, sensor_type)
 
-    values = reading.model_dump(exclude={"name", "type"})
+    values = reading.model_dump(exclude={"name"})
 
     table = reading_model.__table__
     insert_stmt = insert(table).values(**values)

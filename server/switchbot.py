@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-from common import SensorType, check_range, warn_if_suspicious
+from common import check_range, warn_if_suspicious
 from models import SWITCHBOT_TYPE, SwitchbotReading
 
 
@@ -18,16 +18,12 @@ SOFT_TEMPERATURE_C_MAX = 60.0
 class ReadingIn(BaseModel):
     mac: str
     name: str | None = None
-    type: SensorType
     timestamp: datetime
     temperature_c: float
     humidity_pct: float
 
     @model_validator(mode="after")
     def validate_fields(self):
-        if self.type != SensorType.switchbot:
-            raise ValueError("type must be 'switchbot'")
-
         check_range("temperature_c", self.temperature_c, HARD_TEMPERATURE_C_MIN, HARD_TEMPERATURE_C_MAX)
         check_range("humidity_pct", self.humidity_pct, HARD_HUMIDITY_PCT_MIN, HARD_HUMIDITY_PCT_MAX)
         return self
