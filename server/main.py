@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Annotated
+import os
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 import switchbot as sb
@@ -11,7 +12,17 @@ from models import SessionLocal
 from service import fetch_readings, ingest_reading
 
 
+API_KEY = os.getenv("API_KEY")
+
 app = FastAPI()
+
+
+def require_api_key(x_api_key: str | None = Header(default=None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
+protected = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 def get_db():
@@ -27,7 +38,7 @@ def health():
     return {"ok": True}
 
 
-@app.post("/switchbot/reading")
+@protected.post("/switchbot/reading")
 def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
     return ingest_reading(
         db=db,
@@ -39,7 +50,7 @@ def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db
     )
 
 
-@app.post("/xiaomi/reading")
+@protected.post("/xiaomi/reading")
 def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
     return ingest_reading(
         db=db,
@@ -56,7 +67,7 @@ def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
     )
 
 
-@app.get("/switchbot/readings", response_model=list[sb.ReadingOut])
+@protected.get("/switchbot/readings", response_model=list[sb.ReadingOut])
 def get_switchbot_readings(
     mac: str,
     limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
@@ -76,7 +87,7 @@ def get_switchbot_readings(
     )
 
 
-@app.get("/xiaomi/readings", response_model=list[xm.ReadingOut])
+@protected.get("/xiaomi/readings", response_model=list[xm.ReadingOut])
 def get_xiaomi_readings(
     mac: str,
     limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
@@ -100,3 +111,6 @@ def get_xiaomi_readings(
             "conductivity_us_cm",
         ],
     )
+
+
+app.include_router(protected)

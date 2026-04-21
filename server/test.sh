@@ -1,4 +1,7 @@
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
+. .env
+read -r API_KEY < "$API_KEY_FILE"
+
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:FF",
@@ -9,7 +12,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
     "humidity_pct": 29
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:FF",
@@ -19,7 +22,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
     "humidity_pct": 29
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:FF",
@@ -29,7 +32,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
     "humidity_pct": 29
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:FF",
@@ -39,7 +42,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/switchbot/reading \
     "humidity_pct": 29
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:00",
@@ -49,7 +52,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
     "temperature_c": 20.1
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:00",
@@ -59,7 +62,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
     "temperature_c": 20.1
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:00",
@@ -69,7 +72,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
     "temperature_c": 20.4
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:00",
@@ -80,7 +83,7 @@ curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
     "moisture_pct": 50
   }'
 
-curl -H "X-api-key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
+curl -H "X-API-Key: $API_KEY" -X POST http://127.0.0.1:8000/xiaomi/reading \
   -H 'Content-Type: application/json' \
   -d '{
     "mac": "AA:BB:CC:DD:EE:00",
