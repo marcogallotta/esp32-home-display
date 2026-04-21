@@ -59,3 +59,7 @@ run-server:
 test:
 	ENV=test $(MAKE) db-reset-schema
 	ENV=test pytest -q
+
+test-cov:
+	ENV=test $(MAKE) db-reset-schema
+	ENV=test pytest --cov=. --cov-report=term-missing

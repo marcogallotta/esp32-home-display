@@ -3,5 +3,6 @@ httpx
 psycopg[binary]
 pydantic
 pytest
+pytest-cov
 SQLAlchemy
 uvicorn[standard]
