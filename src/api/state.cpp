@@ -11,6 +11,10 @@ void initState(const ::State& appState, State& apiState) {
         appState.xiaomiSensors.size(),
         XiaomiReading{}
     );
+    apiState.xiaomi.pending.assign(
+        appState.xiaomiSensors.size(),
+        XiaomiBufferedState{}
+    );
 }
 
 bool shouldSendSwitchbot(

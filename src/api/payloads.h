@@ -34,6 +34,11 @@ std::optional<SwitchbotPayload> makeSwitchbotPayload(
     const SwitchbotReading& reading
 );
 
+std::optional<XiaomiPayload> makeXiaomiPayload(
+    const SensorIdentity& identity,
+    const XiaomiReading& reading
+);
+
 std::optional<XiaomiPayload> makeXiaomiTemperaturePayload(
     const SensorIdentity& identity,
     const XiaomiReading& reading

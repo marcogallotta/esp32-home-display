@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "../sensor_readings.h"
@@ -11,8 +12,15 @@ struct SwitchbotApiState {
     std::vector<SwitchbotReading> lastSent;
 };
 
+struct XiaomiBufferedState {
+    bool active = false;
+    XiaomiReading reading;
+    std::int64_t openedAtEpochS = 0;
+};
+
 struct XiaomiApiState {
     std::vector<XiaomiReading> lastSent;
+    std::vector<XiaomiBufferedState> pending;
 };
 
 struct State {

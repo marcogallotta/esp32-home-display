@@ -1,9 +1,13 @@
 #include "api_sync.h"
 
+#include <ctime>
+
 #include "api/payloads.h"
 #include "platform.h"
 
 namespace {
+
+constexpr std::int64_t kXiaomiBufferWindowSeconds = 60;
 
 bool isAccepted(api::WriteResult result) {
     return result == api::WriteResult::Created ||
@@ -25,6 +29,31 @@ void logConflict(
         " status=" + std::to_string(response.statusCode) +
         " body=" + response.body
     );
+}
+
+bool hasCompleteXiaomiReading(const XiaomiReading& reading) {
+    return reading.temperatureC.has_value() &&
+           reading.moisturePct.has_value() &&
+           reading.lux.has_value() &&
+           reading.conductivityUsCm.has_value();
+}
+
+bool differsFromLastSent(const XiaomiReading& current, const XiaomiReading& lastSent) {
+    return api::shouldSendXiaomiTemperature(current, lastSent) ||
+           api::shouldSendXiaomiMoisture(current, lastSent) ||
+           api::shouldSendXiaomiLux(current, lastSent) ||
+           api::shouldSendXiaomiConductivity(current, lastSent);
+}
+
+bool sameBufferedData(const XiaomiReading& a, const XiaomiReading& b) {
+    return a.temperatureC == b.temperatureC &&
+           a.moisturePct == b.moisturePct &&
+           a.lux == b.lux &&
+           a.conductivityUsCm == b.conductivityUsCm;
+}
+
+void resetPending(api::XiaomiBufferedState& pending) {
+    pending = api::XiaomiBufferedState{};
 }
 
 } // namespace
@@ -57,81 +86,50 @@ void syncApiState(
         }
     }
 
+    const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+
     for (std::size_t i = 0; i < appState.xiaomiSensors.size(); ++i) {
         const auto& sensor = appState.xiaomiSensors[i];
         const auto& current = sensor.reading;
         auto& lastSent = apiState.xiaomi.lastSent[i];
-        bool sensorConflicted = false;
+        auto& pending = apiState.xiaomi.pending[i];
 
-        if (api::shouldSendXiaomiTemperature(current, lastSent)) {
-            const auto payload = api::makeXiaomiTemperaturePayload(sensor.identity, current);
-            if (payload.has_value()) {
-                const api::WriteResponse response = client.postXiaomiReading(*payload);
-                if (isAccepted(response.result)) {
-                    lastSent.temperatureC = current.temperatureC;
-                    lastSent.lastSeenEpochS = current.lastSeenEpochS;
-                } else if (response.result == api::WriteResult::Conflict) {
-                    logConflict("xiaomi", sensor.identity, response);
-                    lastSent = XiaomiReading{};
-                    sensorConflicted = true;
-                }
+        if (current.hasAnyValue() && differsFromLastSent(current, lastSent)) {
+            if (!pending.active) {
+                pending.active = true;
+                pending.openedAtEpochS = current.lastSeenEpochS.value_or(now);
+            }
+
+            if (!sameBufferedData(current, pending.reading)) {
+                pending.reading = current;
             }
         }
 
-        if (sensorConflicted) {
+        if (!pending.active) {
             continue;
         }
 
-        if (api::shouldSendXiaomiMoisture(current, lastSent)) {
-            const auto payload = api::makeXiaomiMoisturePayload(sensor.identity, current);
-            if (payload.has_value()) {
-                const api::WriteResponse response = client.postXiaomiReading(*payload);
-                if (isAccepted(response.result)) {
-                    lastSent.moisturePct = current.moisturePct;
-                    lastSent.lastSeenEpochS = current.lastSeenEpochS;
-                } else if (response.result == api::WriteResult::Conflict) {
-                    logConflict("xiaomi", sensor.identity, response);
-                    lastSent = XiaomiReading{};
-                    sensorConflicted = true;
-                }
-            }
-        }
+        const bool flushDueToComplete = hasCompleteXiaomiReading(pending.reading);
+        const bool flushDueToTimeout =
+            now >= pending.openedAtEpochS + kXiaomiBufferWindowSeconds;
 
-        if (sensorConflicted) {
+        if (!flushDueToComplete && !flushDueToTimeout) {
             continue;
         }
 
-        if (api::shouldSendXiaomiLux(current, lastSent)) {
-            const auto payload = api::makeXiaomiLuxPayload(sensor.identity, current);
-            if (payload.has_value()) {
-                const api::WriteResponse response = client.postXiaomiReading(*payload);
-                if (isAccepted(response.result)) {
-                    lastSent.lux = current.lux;
-                    lastSent.lastSeenEpochS = current.lastSeenEpochS;
-                } else if (response.result == api::WriteResult::Conflict) {
-                    logConflict("xiaomi", sensor.identity, response);
-                    lastSent = XiaomiReading{};
-                    sensorConflicted = true;
-                }
-            }
-        }
-
-        if (sensorConflicted) {
+        const auto payload = api::makeXiaomiPayload(sensor.identity, pending.reading);
+        if (!payload.has_value()) {
             continue;
         }
 
-        if (api::shouldSendXiaomiConductivity(current, lastSent)) {
-            const auto payload = api::makeXiaomiConductivityPayload(sensor.identity, current);
-            if (payload.has_value()) {
-                const api::WriteResponse response = client.postXiaomiReading(*payload);
-                if (isAccepted(response.result)) {
-                    lastSent.conductivityUsCm = current.conductivityUsCm;
-                    lastSent.lastSeenEpochS = current.lastSeenEpochS;
-                } else if (response.result == api::WriteResult::Conflict) {
-                    logConflict("xiaomi", sensor.identity, response);
-                    lastSent = XiaomiReading{};
-                }
-            }
+        const api::WriteResponse response = client.postXiaomiReading(*payload);
+        if (isAccepted(response.result)) {
+            lastSent = pending.reading;
+            resetPending(pending);
+        } else if (response.result == api::WriteResult::Conflict) {
+            logConflict("xiaomi", sensor.identity, response);
+            lastSent = XiaomiReading{};
+            resetPending(pending);
         }
     }
 }

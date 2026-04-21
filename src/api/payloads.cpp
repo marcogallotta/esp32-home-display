@@ -69,6 +69,38 @@ std::optional<SwitchbotPayload> makeSwitchbotPayload(
     return payload;
 }
 
+std::optional<XiaomiPayload> makeXiaomiPayload(
+    const SensorIdentity& identity,
+    const XiaomiReading& reading
+) {
+    auto payload = makeBaseXiaomiPayload(identity, reading);
+    if (!payload.has_value()) {
+        return std::nullopt;
+    }
+
+    if (reading.temperatureC.has_value()) {
+        payload->temperatureC = reading.temperatureC;
+    }
+    if (reading.moisturePct.has_value()) {
+        payload->moisturePct = reading.moisturePct;
+    }
+    if (reading.lux.has_value()) {
+        payload->lightLux = reading.lux;
+    }
+    if (reading.conductivityUsCm.has_value()) {
+        payload->conductivityUsCm = reading.conductivityUsCm;
+    }
+
+    if (!payload->temperatureC.has_value() &&
+        !payload->moisturePct.has_value() &&
+        !payload->lightLux.has_value() &&
+        !payload->conductivityUsCm.has_value()) {
+        return std::nullopt;
+    }
+
+    return payload;
+}
+
 std::optional<XiaomiPayload> makeXiaomiTemperaturePayload(
     const SensorIdentity& identity,
     const XiaomiReading& reading
