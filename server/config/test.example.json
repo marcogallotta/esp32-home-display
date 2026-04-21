@@ -3,7 +3,7 @@
   "database": {
     "driver": "postgresql+psycopg",
     "host": "localhost",
-    "port": 5432,
+    "port": 5433,
     "name": "eps32_test",
     "user": "postgres",
     "password": "your-test-password"
