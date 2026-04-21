@@ -2,9 +2,10 @@ from datetime import datetime
 from typing import Any, Callable
 
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func, literal_column
 
 from common import (
     normalize_timestamp_to_utc,
@@ -21,6 +22,7 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
         if name is None:
             raise HTTPException(status_code=400, detail="name required for unknown sensor")
         db.add(Sensor(mac=mac, name=name, type=sensor_type))
+        db.flush()
         return
 
     if sensor.type != sensor_type:
@@ -30,7 +32,9 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
         raise HTTPException(status_code=400, detail="sensor name does not match existing sensor")
 
 
-def compare_existing_and_incoming(existing: Any, incoming: Any, compare_fields: list[str]) -> str:
+def classify_noop(existing: Any, incoming: Any, compare_fields: list[str]) -> dict[str, Any]:
+    warnings = []
+
     for field in compare_fields:
         existing_value = getattr(existing, field)
         incoming_value = getattr(incoming, field)
@@ -39,9 +43,26 @@ def compare_existing_and_incoming(existing: Any, incoming: Any, compare_fields: 
             continue
 
         if existing_value != incoming_value:
-            return "conflict"
+            warnings.append(
+                {
+                    "code": "conflicting_field_ignored",
+                    "field": field,
+                    "existing": existing_value,
+                    "incoming": incoming_value,
+                }
+            )
 
-    return "duplicate"
+    if warnings:
+        return {
+            "status": "ok",
+            "result": "conflict",
+            "warnings": warnings,
+        }
+
+    return {
+        "status": "ok",
+        "result": "duplicate",
+    }
 
 
 def ingest_reading(
@@ -49,7 +70,6 @@ def ingest_reading(
     reading: Any,
     sensor_type: int,
     maybe_warn: Callable[[Any], None],
-    build_row: Callable[[Any], Any],
     reading_model: Any,
     compare_fields: list[str],
 ):
@@ -59,28 +79,66 @@ def ingest_reading(
     maybe_warn(reading)
     ensure_sensor(db, reading.mac, reading.name, sensor_type)
 
-    row = build_row(reading)
-    db.add(row)
+    values = reading.model_dump(exclude={"name", "type"})
 
-    try:
-        db.commit()
-        return {"status": "ok", "result": "created"}
-    except IntegrityError as exc:
-        db.rollback()
+    table = reading_model.__table__
+    insert_stmt = insert(table).values(**values)
+    excluded = insert_stmt.excluded
 
-        existing = db.execute(
-            select(reading_model).where(
-                reading_model.mac == reading.mac,
-                reading_model.timestamp == reading.timestamp,
+    compatibility_checks = []
+    merge_needed_checks = []
+
+    for field in compare_fields:
+        col = getattr(table.c, field)
+        excluded_col = getattr(excluded, field)
+
+        compatibility_checks.append(
+            or_(
+                col.is_(None),
+                excluded_col.is_(None),
+                col == excluded_col,
             )
-        ).scalar_one()
+        )
 
-        result = compare_existing_and_incoming(existing, reading, compare_fields)
+        merge_needed_checks.append(
+            and_(
+                col.is_(None),
+                excluded_col.is_not(None),
+            )
+        )
 
+    upsert_stmt = (
+        insert_stmt.on_conflict_do_update(
+            index_elements=[table.c.mac, table.c.timestamp],
+            set_={
+                field: func.coalesce(getattr(table.c, field), getattr(excluded, field))
+                for field in compare_fields
+            },
+            where=and_(
+                *compatibility_checks,
+                or_(*merge_needed_checks),
+            ),
+        )
+        .returning(literal_column("xmax = 0").label("inserted"))
+    )
+
+    row = db.execute(upsert_stmt).first()
+    db.commit()
+
+    if row is not None:
         return {
             "status": "ok",
-            "result": result,
+            "result": "created" if row.inserted else "merged",
         }
+
+    existing = db.execute(
+        select(reading_model).where(
+            reading_model.mac == reading.mac,
+            reading_model.timestamp == reading.timestamp,
+        )
+    ).scalar_one()
+
+    return classify_noop(existing, reading, compare_fields)
 
 
 def fetch_readings(

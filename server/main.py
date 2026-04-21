@@ -34,7 +34,6 @@ def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db
         reading=reading,
         sensor_type=sb.SENSOR_TYPE_DB,
         maybe_warn=sb.maybe_warn,
-        build_row=sb.build_row,
         reading_model=sb.READING_MODEL,
         compare_fields=["temperature_c", "humidity_pct"],
     )
@@ -47,7 +46,6 @@ def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         reading=reading,
         sensor_type=xm.SENSOR_TYPE_DB,
         maybe_warn=xm.maybe_warn,
-        build_row=xm.build_row,
         reading_model=xm.READING_MODEL,
         compare_fields=[
             "temperature_c",
