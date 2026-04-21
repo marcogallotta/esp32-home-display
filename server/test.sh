@@ -1,5 +1,4 @@
-. .env
-read -r API_KEY < "$API_KEY_FILE"
+read -r API_KEY < .secrets/api_key
 curln() {
   curl "$@"
   printf '\n'

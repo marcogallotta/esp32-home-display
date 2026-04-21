@@ -1,0 +1,11 @@
+{
+  "api_key": "test-api-key",
+  "database": {
+    "driver": "postgresql+psycopg",
+    "host": "localhost",
+    "port": 5432,
+    "name": "eps32_test",
+    "user": "postgres",
+    "password": "your-test-password"
+  }
+}

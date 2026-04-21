@@ -1,8 +1,5 @@
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
-
-import os
 
 from sqlalchemy import (
     DateTime,
@@ -13,40 +10,12 @@ from sqlalchemy import (
     SmallInteger,
     String,
     UniqueConstraint,
-    create_engine,
 )
-from sqlalchemy.engine import URL
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "eps32")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD_FILE = os.getenv("DB_PASSWORD_FILE", ".secrets/db_password")
 
 SWITCHBOT_TYPE = 1
 XIAOMI_TYPE = 2
-
-
-def read_db_password() -> str:
-    password = Path(DB_PASSWORD_FILE).read_text(encoding="utf-8").strip()
-    if not password:
-        raise RuntimeError(f"{DB_PASSWORD_FILE} is empty")
-    return password
-
-
-DATABASE_URL = URL.create(
-    "postgresql+psycopg",
-    username=DB_USER,
-    password=read_db_password(),
-    host=DB_HOST,
-    port=DB_PORT,
-    database=DB_NAME,
-)
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 class Base(DeclarativeBase):

@@ -1,11 +1,14 @@
-include .env
-export
+ENV ?= dev
+export ENV
 
-.PHONY: run-db wait-db stop-db delete-db reset-db reset-db run-server
+DB_NAME = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["name"])')
+DB_USER = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["user"])')
+DB_PORT = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["port"])')
+DB_PASSWORD = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["password"])')
+
+.PHONY: run-db wait-db stop-db delete-db reset-db run-server
 
 run-db:
-	@test -f $(DB_PASSWORD_FILE) || (echo "Missing $(DB_PASSWORD_FILE)"; exit 1)
-	@chmod 600 $(DB_PASSWORD_FILE)
 	@if docker ps --format '{{.Names}}' | grep -qx postgres; then \
 		echo "postgres already running"; \
 	elif docker ps -a --format '{{.Names}}' | grep -qx postgres; then \
@@ -14,10 +17,9 @@ run-db:
 		docker run --name postgres \
 			-e POSTGRES_DB=$(DB_NAME) \
 			-e POSTGRES_USER=$(DB_USER) \
-			-e POSTGRES_PASSWORD_FILE=/run/secrets/db_password \
+			-e POSTGRES_PASSWORD=$(DB_PASSWORD) \
 			-p 127.0.0.1:$(DB_PORT):5432 \
 			-v pgdata:/var/lib/postgresql \
-			-v $(CURDIR)/$(DB_PASSWORD_FILE):/run/secrets/db_password:ro \
 			-d postgres; \
 	fi
 
@@ -37,5 +39,4 @@ reset-db: run-db wait-db
 	python3 reset_db.py
 
 run-server:
-	@test -f $(API_KEY_FILE) || (echo "Missing $(API_KEY_FILE)"; exit 1)
-	@API_KEY="$$(cat $(API_KEY_FILE))" uvicorn main:app --reload
+	uvicorn main:app --reload
