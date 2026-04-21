@@ -3,6 +3,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from common import (
@@ -43,7 +44,14 @@ def ingest_reading(
     ensure_sensor(db, reading.mac, reading.name, sensor_type)
 
     db.add(build_row(reading))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"status": "error", "error": "duplicate timestamp for sensor"},
+        ) from exc
 
     return {"ok": True}
 

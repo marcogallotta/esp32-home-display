@@ -4,7 +4,17 @@ from typing import Optional
 
 import os
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, create_engine
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    create_engine,
+)
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -54,6 +64,7 @@ class Sensor(Base):
 class SwitchbotReading(Base):
     __tablename__ = "switchbot_readings"
     __table_args__ = (
+        UniqueConstraint("mac", "timestamp", name="switchbot_readings_mac_timestamp_uniq"),
         Index("switchbot_readings_mac_timestamp_idx", "mac", "timestamp"),
     )
 
@@ -67,6 +78,7 @@ class SwitchbotReading(Base):
 class XiaomiReading(Base):
     __tablename__ = "xiaomi_readings"
     __table_args__ = (
+        UniqueConstraint("mac", "timestamp", name="xiaomi_readings_mac_timestamp_uniq"),
         Index("xiaomi_readings_mac_timestamp_idx", "mac", "timestamp"),
     )
 
