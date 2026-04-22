@@ -49,12 +49,11 @@ bool allXiaomiRowsComplete(const State& state) {
 } // namespace
 
 void run() {
-    Config tmpConfig;
-    if (!loadConfig(tmpConfig)) {
+    Config config;
+    if (!loadConfig(config)) {
         platform::printLine("Failed to load config");
         return;
     }
-    const Config config = tmpConfig;
 
     const std::size_t switchbotSensorCount = config.switchbot.sensors.size();
     const std::size_t xiaomiSensorCount = config.xiaomi.sensors.size();
