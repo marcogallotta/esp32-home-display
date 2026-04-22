@@ -112,7 +112,8 @@ public:
             http.addHeader(key.c_str(), value.c_str());
         }
 
-        const int code = http.POST(reinterpret_cast<const uint8_t*>(body.data()), body.size());
+        auto* data = reinterpret_cast<uint8_t*>(const_cast<char*>(body.data()));
+        const int code = http.POST(data, body.size());
         resp.statusCode = code;
 
         if (code > 0) {
