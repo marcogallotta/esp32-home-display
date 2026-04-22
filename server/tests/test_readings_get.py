@@ -88,6 +88,41 @@ def test_switchbot_get_respects_limit(client, api_key):
     ]
 
 
+def test_switchbot_get_rejects_limit_too_large(client, api_key):
+    response = client.get(
+        "/switchbot/readings",
+        headers=auth_headers(api_key),
+        params={"mac": "AA:BB:CC:DD:EE:FF", "limit": 101},
+    )
+
+    assert response.status_code == 422
+
+
+def test_switchbot_get_rejects_negative_limit(client, api_key):
+    response = client.get(
+        "/switchbot/readings",
+        headers=auth_headers(api_key),
+        params={"mac": "AA:BB:CC:DD:EE:FF", "limit": -1},
+    )
+
+    assert response.status_code == 422
+
+
+def test_switchbot_get_rejects_after_greater_than_before(client, api_key):
+    response = client.get(
+        "/switchbot/readings",
+        headers=auth_headers(api_key),
+        params={
+            "mac": "AA:BB:CC:DD:EE:FF",
+            "after": "2026-04-21T18:10:00Z",
+            "before": "2026-04-21T18:05:00Z",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "after must be <= before"}
+
+
 def test_switchbot_get_respects_before_and_after(client, api_key):
     post_switchbot(
         client,
