@@ -14,7 +14,6 @@ from service import fetch_readings, ingest_reading
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)):
     api_key = request.app.state.config.get("api_key")
-    print(f"{api_key=}")
     if not api_key:
         raise HTTPException(status_code=500, detail="server misconfigured")
     if x_api_key != api_key:
