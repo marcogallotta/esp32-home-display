@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -13,6 +13,7 @@ from common import (
 )
 from errors import BadRequestError
 from models import Sensor
+from sensor_spec import SensorSpec
 
 
 def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
@@ -32,10 +33,10 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
         raise BadRequestError("sensor name does not match existing sensor")
 
 
-def classify_noop(existing: Any, incoming: Any, compare_fields: list[str]) -> dict[str, Any]:
+def classify_noop(existing: Any, incoming: Any, data_fields: list[str]) -> dict[str, Any]:
     warnings = []
 
-    for field in compare_fields:
+    for field in data_fields:
         existing_value = getattr(existing, field)
         incoming_value = getattr(incoming, field)
 
@@ -68,27 +69,24 @@ def classify_noop(existing: Any, incoming: Any, compare_fields: list[str]) -> di
 def ingest_reading(
     db: Session,
     reading: Any,
-    sensor_type: int,
-    maybe_warn: Callable[[Any], None],
-    reading_model: Any,
-    compare_fields: list[str],
+    sensor: SensorSpec,
 ):
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
 
-    maybe_warn(reading)
-    ensure_sensor(db, reading.mac, reading.name, sensor_type)
+    sensor.maybe_warn(reading)
+    ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
 
     values = reading.model_dump(exclude={"name"})
 
-    table = reading_model.__table__
+    table = sensor.reading_model.__table__
     insert_stmt = insert(table).values(**values)
     excluded = insert_stmt.excluded
 
     compatibility_checks = []
     merge_needed_checks = []
 
-    for field in compare_fields:
+    for field in sensor.data_fields:
         col = getattr(table.c, field)
         excluded_col = getattr(excluded, field)
 
@@ -112,7 +110,7 @@ def ingest_reading(
             index_elements=[table.c.mac, table.c.timestamp],
             set_={
                 field: func.coalesce(getattr(table.c, field), getattr(excluded, field))
-                for field in compare_fields
+                for field in sensor.data_fields
             },
             where=and_(
                 *compatibility_checks,
@@ -132,13 +130,13 @@ def ingest_reading(
         }
 
     existing = db.execute(
-        select(reading_model).where(
-            reading_model.mac == reading.mac,
-            reading_model.timestamp == reading.timestamp,
+        select(sensor.reading_model).where(
+            sensor.reading_model.mac == reading.mac,
+            sensor.reading_model.timestamp == reading.timestamp,
         )
     ).scalar_one()
 
-    return classify_noop(existing, reading, compare_fields)
+    return classify_noop(existing, reading, sensor.data_fields)
 
 
 def fetch_readings(
@@ -147,9 +145,8 @@ def fetch_readings(
     limit: int,
     before: datetime | None,
     after: datetime | None,
-    reading_model: Any,
-    out_model: Any,
-    selected_fields: list[str],
+    reading_out: Any,
+    sensor: SensorSpec,
 ):
     mac = validate_mac_address(mac)
     before = validate_query_timestamp("before", before)
@@ -158,28 +155,29 @@ def fetch_readings(
     if before is not None and after is not None and after > before:
         raise BadRequestError("after must be <= before")
 
-    sensor = db.get(Sensor, mac)
-    if sensor is None:
+    sensor_row = db.get(Sensor, mac)
+    if sensor_row is None:
         return []
 
-    columns = [getattr(reading_model, field) for field in selected_fields]
+    selected_fields = ["timestamp", *sensor.data_fields]
+    columns = [getattr(sensor.reading_model, field) for field in selected_fields]
 
     stmt = (
         select(*columns)
-        .where(reading_model.mac == mac)
-        .order_by(reading_model.timestamp.desc())
+        .where(sensor.reading_model.mac == mac)
+        .order_by(sensor.reading_model.timestamp.desc())
         .limit(limit)
     )
 
     if before is not None:
-        stmt = stmt.where(reading_model.timestamp <= before)
+        stmt = stmt.where(sensor.reading_model.timestamp <= before)
 
     if after is not None:
-        stmt = stmt.where(reading_model.timestamp >= after)
+        stmt = stmt.where(sensor.reading_model.timestamp >= after)
 
     rows = db.execute(stmt).all()
 
     return [
-        out_model(**{field: getattr(row, field) for field in selected_fields})
+        reading_out(**{field: getattr(row, field) for field in selected_fields})
         for row in rows
     ]

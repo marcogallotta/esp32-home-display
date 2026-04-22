@@ -4,6 +4,7 @@ from pydantic import BaseModel, model_validator
 
 from common import check_range, warn_if_suspicious
 from models import XIAOMI_TYPE, XiaomiReading
+from sensor_spec import SensorSpec
 
 
 HARD_TEMPERATURE_C_MIN = -40.0
@@ -32,6 +33,9 @@ class ReadingIn(BaseModel):
 
     @model_validator(mode="after")
     def validate_fields(self):
+        if self.name == "":
+            raise ValueError("name must not be empty")
+
         if (
             self.temperature_c is None
             and self.moisture_pct is None
@@ -72,16 +76,14 @@ def maybe_warn(reading: ReadingIn):
         warn_if_suspicious("conductivity_us_cm", reading.conductivity_us_cm, reading.mac)
 
 
-def build_row(reading: ReadingIn) -> XiaomiReading:
-    return XiaomiReading(
-        mac=reading.mac,
-        timestamp=reading.timestamp,
-        temperature_c=reading.temperature_c,
-        moisture_pct=reading.moisture_pct,
-        light_lux=reading.light_lux,
-        conductivity_us_cm=reading.conductivity_us_cm,
-    )
-
-
-SENSOR_TYPE_DB = XIAOMI_TYPE
-READING_MODEL = XiaomiReading
+SENSOR = SensorSpec(
+    db_sensor_type=XIAOMI_TYPE,
+    reading_model=XiaomiReading,
+    data_fields=[
+        "temperature_c",
+        "moisture_pct",
+        "light_lux",
+        "conductivity_us_cm",
+    ],
+    maybe_warn=maybe_warn,
+)

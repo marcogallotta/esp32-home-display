@@ -4,6 +4,7 @@ from pydantic import BaseModel, model_validator
 
 from common import check_range, warn_if_suspicious
 from models import SWITCHBOT_TYPE, SwitchbotReading
+from sensor_spec import SensorSpec
 
 
 HARD_TEMPERATURE_C_MIN = -40.0
@@ -25,7 +26,8 @@ class ReadingIn(BaseModel):
     @model_validator(mode="after")
     def validate_fields(self):
         if self.name == "":
-            raise ValueError(f"name cannot be empty")
+            raise ValueError("name must not be empty")
+
         check_range("temperature_c", self.temperature_c, HARD_TEMPERATURE_C_MIN, HARD_TEMPERATURE_C_MAX)
         check_range("humidity_pct", self.humidity_pct, HARD_HUMIDITY_PCT_MIN, HARD_HUMIDITY_PCT_MAX)
         return self
@@ -42,14 +44,9 @@ def maybe_warn(reading: ReadingIn):
         warn_if_suspicious("temperature_c", reading.temperature_c, reading.mac)
 
 
-def build_row(reading: ReadingIn) -> SwitchbotReading:
-    return SwitchbotReading(
-        mac=reading.mac,
-        timestamp=reading.timestamp,
-        temperature_c=reading.temperature_c,
-        humidity_pct=reading.humidity_pct,
-    )
-
-
-SENSOR_TYPE_DB = SWITCHBOT_TYPE
-READING_MODEL = SwitchbotReading
+SENSOR = SensorSpec(
+    db_sensor_type=SWITCHBOT_TYPE,
+    reading_model=SwitchbotReading,
+    data_fields=["temperature_c", "humidity_pct"],
+    maybe_warn=maybe_warn,
+)

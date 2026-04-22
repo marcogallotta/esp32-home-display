@@ -60,10 +60,7 @@ def create_app(config: dict) -> FastAPI:
         return ingest_reading(
             db=db,
             reading=reading,
-            sensor_type=sb.SENSOR_TYPE_DB,
-            maybe_warn=sb.maybe_warn,
-            reading_model=sb.READING_MODEL,
-            compare_fields=["temperature_c", "humidity_pct"],
+            sensor=sb.SENSOR,
         )
 
     @protected.post("/xiaomi/reading")
@@ -71,15 +68,7 @@ def create_app(config: dict) -> FastAPI:
         return ingest_reading(
             db=db,
             reading=reading,
-            sensor_type=xm.SENSOR_TYPE_DB,
-            maybe_warn=xm.maybe_warn,
-            reading_model=xm.READING_MODEL,
-            compare_fields=[
-                "temperature_c",
-                "moisture_pct",
-                "light_lux",
-                "conductivity_us_cm",
-            ],
+            sensor=xm.SENSOR,
         )
 
     @protected.get("/switchbot/readings", response_model=list[sb.ReadingOut])
@@ -96,9 +85,8 @@ def create_app(config: dict) -> FastAPI:
             limit=limit,
             before=before,
             after=after,
-            reading_model=sb.READING_MODEL,
-            out_model=sb.ReadingOut,
-            selected_fields=["timestamp", "temperature_c", "humidity_pct"],
+            reading_out=sb.ReadingOut,
+            sensor=sb.SENSOR,
         )
 
     @protected.get("/xiaomi/readings", response_model=list[xm.ReadingOut])
@@ -115,15 +103,8 @@ def create_app(config: dict) -> FastAPI:
             limit=limit,
             before=before,
             after=after,
-            reading_model=xm.READING_MODEL,
-            out_model=xm.ReadingOut,
-            selected_fields=[
-                "timestamp",
-                "temperature_c",
-                "moisture_pct",
-                "light_lux",
-                "conductivity_us_cm",
-            ],
+            reading_out=xm.ReadingOut,
+            sensor=xm.SENSOR,
         )
 
     app.include_router(protected)
