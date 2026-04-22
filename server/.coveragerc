@@ -1,0 +1,5 @@
+[run]
+omit =
+    conftest.py
+    reset_db.py
+    tests/*
