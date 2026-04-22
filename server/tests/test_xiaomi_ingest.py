@@ -1,21 +1,12 @@
 import pytest
 
-
-def make_payload(**overrides):
-    payload = {
-        "mac": "AA:BB:CC:DD:EE:FF",
-        "name": "ficus",
-        "timestamp": "2026-04-21T18:00:00Z",
-        "temperature_c": 21.5,
-    }
-    payload.update(overrides)
-    return payload
+from tests.helpers import auth_headers, make_xiaomi_payload
 
 
 def post_xiaomi(client, api_key, payload):
     return client.post(
         "/xiaomi/reading",
-        headers={"x-api-key": api_key},
+        headers=auth_headers(api_key),
         json=payload,
     )
 
@@ -24,7 +15,7 @@ def test_xiaomi_create_accepts_partial_reading(client, api_key):
     response = post_xiaomi(
         client,
         api_key,
-        make_payload(
+        make_xiaomi_payload(
             temperature_c=None,
             moisture_pct=35,
         ),
@@ -41,12 +32,12 @@ def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
     first = post_xiaomi(
         client,
         api_key,
-        make_payload(temperature_c=21.5),
+        make_xiaomi_payload(temperature_c=21.5),
     )
     second = post_xiaomi(
         client,
         api_key,
-        make_payload(
+        make_xiaomi_payload(
             temperature_c=None,
             moisture_pct=35,
         ),
@@ -66,7 +57,7 @@ def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
 
     fetch = client.get(
         "/xiaomi/readings",
-        headers={"x-api-key": api_key},
+        headers=auth_headers(api_key),
         params={"mac": "AA:BB:CC:DD:EE:FF"},
     )
 
@@ -86,7 +77,7 @@ def test_xiaomi_create_returns_duplicate_for_identical_partial_reading(client, a
     first = post_xiaomi(
         client,
         api_key,
-        make_payload(
+        make_xiaomi_payload(
             temperature_c=None,
             moisture_pct=35,
         ),
@@ -94,7 +85,7 @@ def test_xiaomi_create_returns_duplicate_for_identical_partial_reading(client, a
     second = post_xiaomi(
         client,
         api_key,
-        make_payload(
+        make_xiaomi_payload(
             temperature_c=None,
             moisture_pct=35,
         ),
@@ -117,12 +108,12 @@ def test_xiaomi_create_returns_conflict_for_single_field_conflict(client, api_ke
     first = post_xiaomi(
         client,
         api_key,
-        make_payload(temperature_c=21.5),
+        make_xiaomi_payload(temperature_c=21.5),
     )
     second = post_xiaomi(
         client,
         api_key,
-        make_payload(temperature_c=22.5),
+        make_xiaomi_payload(temperature_c=22.5),
     )
 
     assert first.status_code == 200
@@ -150,12 +141,12 @@ def test_xiaomi_create_returns_conflict_when_conflict_and_new_data_are_mixed(cli
     first = post_xiaomi(
         client,
         api_key,
-        make_payload(temperature_c=21.5),
+        make_xiaomi_payload(temperature_c=21.5),
     )
     second = post_xiaomi(
         client,
         api_key,
-        make_payload(
+        make_xiaomi_payload(
             temperature_c=22.5,
             moisture_pct=35,
         ),
@@ -183,7 +174,7 @@ def test_xiaomi_create_returns_conflict_when_conflict_and_new_data_are_mixed(cli
 
     fetch = client.get(
         "/xiaomi/readings",
-        headers={"x-api-key": api_key},
+        headers=auth_headers(api_key),
         params={"mac": "AA:BB:CC:DD:EE:FF"},
     )
 
@@ -202,8 +193,8 @@ def test_xiaomi_create_returns_conflict_when_conflict_and_new_data_are_mixed(cli
 @pytest.mark.parametrize(
     "payload",
     [
-        make_payload(moisture_pct=-1, temperature_c=None),
-        make_payload(moisture_pct=101, temperature_c=None),
+        make_xiaomi_payload(moisture_pct=-1, temperature_c=None),
+        make_xiaomi_payload(moisture_pct=101, temperature_c=None),
     ],
     ids=[
         "moisture too low",

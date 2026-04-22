@@ -1,28 +1,18 @@
 import pytest
 
-
-def make_payload(**overrides):
-    payload = {
-        "mac": "AA:BB:CC:DD:EE:FF",
-        "name": "living room",
-        "timestamp": "2026-04-21T18:00:00Z",
-        "temperature_c": 21.5,
-        "humidity_pct": 48.0,
-    }
-    payload.update(overrides)
-    return payload
+from tests.helpers import auth_headers, make_switchbot_payload
 
 
 def post_switchbot(client, api_key, payload):
     return client.post(
         "/switchbot/reading",
-        headers={"x-api-key": api_key},
+        headers=auth_headers(api_key),
         json=payload,
     )
 
 
 def test_switchbot_create_accepts_valid_payload(client, api_key):
-    response = post_switchbot(client, api_key, make_payload())
+    response = post_switchbot(client, api_key, make_switchbot_payload())
 
     assert response.status_code == 200
     assert response.json() == {
@@ -43,7 +33,7 @@ def test_switchbot_create_accepts_valid_payload(client, api_key):
     ],
 )
 def test_switchbot_create_accepts_valid_mac(client, api_key, mac):
-    response = post_switchbot(client, api_key, make_payload(mac=mac))
+    response = post_switchbot(client, api_key, make_switchbot_payload(mac=mac))
 
     assert response.status_code == 200
     assert response.json()["result"] == "created"
@@ -65,13 +55,13 @@ def test_switchbot_create_accepts_valid_mac(client, api_key, mac):
     ],
 )
 def test_switchbot_create_rejects_invalid_mac(client, api_key, mac):
-    response = post_switchbot(client, api_key, make_payload(mac=mac))
+    response = post_switchbot(client, api_key, make_switchbot_payload(mac=mac))
 
     assert response.status_code == 400
 
 
 def test_switchbot_create_rejects_missing_mac(client, api_key):
-    payload = make_payload()
+    payload = make_switchbot_payload()
     del payload["mac"]
 
     response = post_switchbot(client, api_key, payload)
@@ -82,9 +72,9 @@ def test_switchbot_create_rejects_missing_mac(client, api_key):
 @pytest.mark.parametrize(
     ("name", "expected_status"),
     [
-        ("living room", 200),
+        ("location A", 200),
         (None, 400),
-        ("", 422),  # requires explicit validation in app code
+        ("", 422),
     ],
     ids=[
         "valid name",
@@ -93,7 +83,7 @@ def test_switchbot_create_rejects_missing_mac(client, api_key):
     ],
 )
 def test_switchbot_create_validates_name(client, api_key, name, expected_status):
-    payload = make_payload()
+    payload = make_switchbot_payload()
     if name is None:
         del payload["name"]
     else:
@@ -120,7 +110,7 @@ def test_switchbot_create_validates_name(client, api_key, name, expected_status)
     ],
 )
 def test_switchbot_create_validates_timestamp(client, api_key, timestamp, expected_status):
-    payload = make_payload()
+    payload = make_switchbot_payload()
     if timestamp is None:
         del payload["timestamp"]
     else:
@@ -151,7 +141,7 @@ def test_switchbot_create_validates_timestamp(client, api_key, timestamp, expect
     ],
 )
 def test_switchbot_create_validates_temperature(client, api_key, temperature_c, expected_status):
-    payload = make_payload()
+    payload = make_switchbot_payload()
     if temperature_c is None:
         del payload["temperature_c"]
     else:
@@ -163,7 +153,7 @@ def test_switchbot_create_validates_temperature(client, api_key, temperature_c, 
 
 
 def test_switchbot_create_accepts_soft_out_of_range_temperature_and_logs_warning(client, api_key, caplog):
-    response = post_switchbot(client, api_key, make_payload(temperature_c=-25.0))
+    response = post_switchbot(client, api_key, make_switchbot_payload(temperature_c=-25.0))
 
     assert response.status_code == 200
     assert response.json() == {
@@ -196,7 +186,7 @@ def test_switchbot_create_accepts_soft_out_of_range_temperature_and_logs_warning
     ],
 )
 def test_switchbot_create_validates_humidity(client, api_key, humidity_pct, expected_status):
-    payload = make_payload()
+    payload = make_switchbot_payload()
     if humidity_pct is None:
         del payload["humidity_pct"]
     else:
@@ -208,7 +198,7 @@ def test_switchbot_create_validates_humidity(client, api_key, humidity_pct, expe
 
 
 def test_switchbot_create_rejects_missing_temperature_and_humidity(client, api_key):
-    payload = make_payload()
+    payload = make_switchbot_payload()
     del payload["temperature_c"]
     del payload["humidity_pct"]
 
