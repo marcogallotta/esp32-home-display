@@ -5,9 +5,9 @@
 #include <string>
 
 bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
-    // Using a fixed-size for simplicity. You might need to adjust this based on your 
+    // Using a fixed-size for simplicity. You might need to adjust this based on your
     // expected config size and available memory.
-    StaticJsonDocument<5120> json;
+    StaticJsonDocument<2048> json;
     const DeserializationError err = deserializeJson(json, text.c_str(), text.size());
     if (err) {
         if (logErrors) {
@@ -27,14 +27,14 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (forecast.isNull()) {
         return fail("forecast is not an object");
     }
-    if (!forecast["openmeteo_pem"].is<const char*>()) {
-        return fail("forecast.openmeteo_pem is not a string");
+    if (!forecast["openmeteo_pem_file"].is<const char*>()) {
+        return fail("forecast.openmeteo_pem_file is not a string");
     }
     if (!forecast["update_interval_minutes"].is<int>()) {
         return fail("forecast.update_interval_minutes is not an int");
     }
 
-    const char* openmeteoPem = forecast["openmeteo_pem"].as<const char*>();
+    const char* openmeteoPemFile = forecast["openmeteo_pem_file"].as<const char*>();
     const int updateIntervalMinutes = forecast["update_interval_minutes"].as<int>();
     if (updateIntervalMinutes <= 0) {
         return fail("forecast.update_interval_minutes must be > 0");
@@ -50,13 +50,13 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (!api["api_key"].is<const char*>()) {
         return fail("api.api_key is not a string");
     }
-    if (!api["pem"].is<const char*>()) {
-        return fail("api.pem is not a string");
+    if (!api["pem_file"].is<const char*>()) {
+        return fail("api.pem_file is not a string");
     }
 
     const char* apiBaseUrl = api["base_url"].as<const char*>();
     const char* apiKey = api["api_key"].as<const char*>();
-    const char* apiPem = api["pem"].as<const char*>();
+    const char* apiPemFile = api["pem_file"].as<const char*>();
 
     const JsonObject location = json["location"];
     if (location.isNull()) {
@@ -203,12 +203,14 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     const char* ssid = wifi["ssid"].as<const char*>();
     const char* password = wifi["password"].as<const char*>();
 
-    config.forecast.openmeteoPem = openmeteoPem;
+    config.forecast.openmeteoPemFile = openmeteoPemFile;
+    config.forecast.openmeteoPem.clear();
     config.forecast.updateIntervalMinutes = updateIntervalMinutes;
 
     config.api.baseUrl = apiBaseUrl;
     config.api.apiKey = apiKey;
-    config.api.pem = apiPem;
+    config.api.pemFile = apiPemFile;
+    config.api.pem.clear();
 
     config.location.latitude = latitude;
     config.location.longitude = longitude;

@@ -4,20 +4,41 @@
 
 #include <SPIFFS.h>
 
+namespace {
+
+bool readTextFile(const std::string& path, std::string& out) {
+    File fin = SPIFFS.open(path.c_str(), "r");
+    if (!fin) {
+        return false;
+    }
+
+    out.resize(fin.size());
+    const size_t n = fin.readBytes(out.data(), out.size());
+    out.resize(n);
+    return true;
+}
+
+bool loadPemFiles(Config& config) {
+    return readTextFile(config.api.pemFile, config.api.pem) &&
+           readTextFile(config.forecast.openmeteoPemFile, config.forecast.openmeteoPem);
+}
+
+} // namespace
+
 bool loadConfig(Config& config) {
     if (!SPIFFS.begin(false)) {
         return false;
     }
 
-    File fin = SPIFFS.open("/config.json", "r");
-    if (!fin) {
+    std::string text;
+    if (!readTextFile("/config.json", text)) {
         return false;
     }
 
-    std::string text(fin.size(), '\0');
-    size_t n = fin.readBytes(text.data(), text.size());
-    text.resize(n);
+    if (!parseConfigText(text, config)) {
+        return false;
+    }
 
-    return parseConfigText(text, config);
+    return loadPemFiles(config);
 }
 #endif

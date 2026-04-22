@@ -91,9 +91,10 @@ run: $(MAIN_TARGET)
 run-tests: $(TEST_TARGET)
 	$/$(TEST_TARGET)
 
-$(BUILD_DIR)/spiffs.bin: config.json
+$(BUILD_DIR)/spiffs.bin: config.json certs
 	mkdir -p $(ESP32_DATA_DIR)
 	cp config.json $(ESP32_DATA_DIR)
+	cp -R certs $(ESP32_DATA_DIR)
 	mkdir -p $(BUILD_DIR)
 	mkspiffs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x20000 $(BUILD_DIR)/spiffs.bin
 

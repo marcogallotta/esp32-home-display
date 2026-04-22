@@ -4,6 +4,7 @@
 #include <vector>
 
 struct ForecastConfig {
+    std::string openmeteoPemFile;
     std::string openmeteoPem;
     int updateIntervalMinutes;
 };
@@ -11,6 +12,7 @@ struct ForecastConfig {
 struct ApiConfig {
     std::string baseUrl;
     std::string apiKey;
+    std::string pemFile;
     std::string pem;
 };
 

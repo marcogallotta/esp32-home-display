@@ -1,8 +1,9 @@
 .vscode
 build
+certs/laptop.pem
 config.json
 esp32-build
-esp32-data/config.json
+esp32-data
 flash_spiffs.bin
 mkspiffs
 otadata.bin
