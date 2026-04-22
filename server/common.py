@@ -3,7 +3,7 @@ from enum import Enum
 import logging
 import re
 
-from fastapi import HTTPException
+from errors import BadRequestError
 
 
 logger = logging.getLogger(__name__)
@@ -36,13 +36,13 @@ def warn_if_suspicious(metric: str, value, mac: str):
 
 def validate_mac_address(mac: str) -> str:
     if not MAC_ADDRESS_RE.fullmatch(mac):
-        raise HTTPException(status_code=400, detail="invalid mac format")
+        raise BadRequestError("invalid mac format")
     return mac.upper()
 
 
 def normalize_timestamp_to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        raise HTTPException(status_code=400, detail="timestamp must include timezone")
+        raise BadRequestError("timestamp must include timezone")
     return value.astimezone(timezone.utc)
 
 
@@ -51,12 +51,12 @@ def validate_query_timestamp(name: str, value: datetime | None) -> datetime | No
         return None
 
     if value.tzinfo is None:
-        raise HTTPException(status_code=400, detail=f"{name} must include timezone")
+        raise BadRequestError(f"{name} must include timezone")
 
     now = datetime.now(timezone.utc)
     if value < QUERY_TIMESTAMP_MIN:
-        raise HTTPException(status_code=400, detail=f"{name} is too old")
+        raise BadRequestError(f"{name} is too old")
     if value > now + QUERY_TIMESTAMP_MAX_SKEW:
-        raise HTTPException(status_code=400, detail=f"{name} is too far in the future")
+        raise BadRequestError(f"{name} is too far in the future")
 
     return value.astimezone(timezone.utc)

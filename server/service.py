@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Any, Callable
 
-from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -12,6 +11,7 @@ from common import (
     validate_mac_address,
     validate_query_timestamp,
 )
+from errors import BadRequestError
 from models import Sensor
 
 
@@ -20,16 +20,16 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
 
     if sensor is None:
         if name is None:
-            raise HTTPException(status_code=400, detail="name required for unknown sensor")
+            raise BadRequestError("name required for unknown sensor")
         db.add(Sensor(mac=mac, name=name, type=sensor_type))
         db.flush()
         return
 
     if sensor.type != sensor_type:
-        raise HTTPException(status_code=400, detail="sensor type does not match existing sensor")
+        raise BadRequestError("sensor type does not match existing sensor")
 
     if name is not None and sensor.name != name:
-        raise HTTPException(status_code=400, detail="sensor name does not match existing sensor")
+        raise BadRequestError("sensor name does not match existing sensor")
 
 
 def classify_noop(existing: Any, incoming: Any, compare_fields: list[str]) -> dict[str, Any]:
@@ -156,7 +156,7 @@ def fetch_readings(
     after = validate_query_timestamp("after", after)
 
     if before is not None and after is not None and after > before:
-        raise HTTPException(status_code=400, detail="after must be <= before")
+        raise BadRequestError("after must be <= before")
 
     sensor = db.get(Sensor, mac)
     if sensor is None:

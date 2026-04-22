@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 import switchbot as sb
@@ -9,13 +10,14 @@ import xiaomi as xm
 from common import READINGS_DEFAULT_LIMIT, READINGS_MAX_LIMIT
 from config import load_config
 from db import build_engine, build_session_factory
+from errors import BadRequestError, ServerMisconfiguredError
 from service import fetch_readings, ingest_reading
 
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)):
     api_key = request.app.state.config.get("api_key")
     if not api_key:
-        raise HTTPException(status_code=500, detail="server misconfigured")
+        raise ServerMisconfiguredError("server misconfigured")
     if x_api_key != api_key:
         raise HTTPException(status_code=401, detail="unauthorized")
 
@@ -38,6 +40,14 @@ def create_app(config: dict) -> FastAPI:
     app.state.config = config
     app.state.engine = engine
     app.state.session_factory = session_factory
+
+    @app.exception_handler(BadRequestError)
+    def handle_bad_request(_: Request, exc: BadRequestError):
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(ServerMisconfiguredError)
+    def handle_server_misconfigured(_: Request, exc: ServerMisconfiguredError):
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
     protected = APIRouter(dependencies=[Depends(require_api_key)])
 
