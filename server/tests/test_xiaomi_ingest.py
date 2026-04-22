@@ -1,14 +1,6 @@
 import pytest
 
-from tests.helpers import auth_headers, make_xiaomi_payload
-
-
-def post_xiaomi(client, api_key, payload):
-    return client.post(
-        "/xiaomi/reading",
-        headers=auth_headers(api_key),
-        json=payload,
-    )
+from tests.helpers import make_xiaomi_payload, post_xiaomi, auth_headers
 
 
 def test_xiaomi_create_accepts_partial_reading(client, api_key):

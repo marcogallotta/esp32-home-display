@@ -22,3 +22,19 @@ def make_switchbot_payload(**overrides):
 
 def make_xiaomi_payload(**overrides):
     return make_sensor_payload(**overrides)
+
+
+def post_switchbot(client, api_key, payload):
+    return client.post(
+        "/switchbot/reading",
+        headers=auth_headers(api_key),
+        json=payload,
+    )
+
+
+def post_xiaomi(client, api_key, payload):
+    return client.post(
+        "/xiaomi/reading",
+        headers=auth_headers(api_key),
+        json=payload,
+    )

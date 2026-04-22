@@ -39,3 +39,11 @@ def client(app):
 def api_key():
     config = load_config()
     return config["api_key"]
+
+@pytest.fixture
+def db_session(app):
+    session = app.state.session_factory()
+    try:
+        yield session
+    finally:
+        session.close()

@@ -1,14 +1,6 @@
 import pytest
 
-from tests.helpers import auth_headers, make_switchbot_payload
-
-
-def post_switchbot(client, api_key, payload):
-    return client.post(
-        "/switchbot/reading",
-        headers=auth_headers(api_key),
-        json=payload,
-    )
+from tests.helpers import make_switchbot_payload, post_switchbot
 
 
 def test_switchbot_create_accepts_valid_payload(client, api_key):
