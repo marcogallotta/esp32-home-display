@@ -41,14 +41,29 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
         raise BadRequestError("sensor name does not match existing sensor")
 
 
-def classify_noop(existing: Any, incoming: Any, data_fields: list[str]) -> dict[str, Any]:
+def classify_existing_reading(
+    existing_values: dict[str, Any] | None,
+    incoming: Any,
+    data_fields: list[str],
+) -> dict[str, Any]:
+    if existing_values is None:
+        return {
+            "status": "ok",
+            "result": "created",
+        }
+
     warnings = []
+    merged = False
 
     for field in data_fields:
-        existing_value = getattr(existing, field)
+        existing_value = existing_values[field]
         incoming_value = getattr(incoming, field)
 
-        if existing_value is None or incoming_value is None:
+        if incoming_value is None:
+            continue
+
+        if existing_value is None:
+            merged = True
             continue
 
         if existing_value != incoming_value:
@@ -61,11 +76,24 @@ def classify_noop(existing: Any, incoming: Any, data_fields: list[str]) -> dict[
                 }
             )
 
+    if warnings and merged:
+        return {
+            "status": "ok",
+            "result": "merged_with_conflict",
+            "warnings": warnings,
+        }
+
     if warnings:
         return {
             "status": "ok",
             "result": "conflict",
             "warnings": warnings,
+        }
+
+    if merged:
+        return {
+            "status": "ok",
+            "result": "merged",
         }
 
     return {
@@ -85,27 +113,31 @@ def ingest_reading(
     warn_soft_ranges(reading, sensor.soft_ranges)
     ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
 
+    existing = db.execute(
+        select(sensor.reading_model).where(
+            sensor.reading_model.mac == reading.mac,
+            sensor.reading_model.timestamp == reading.timestamp,
+        )
+    ).scalar_one_or_none()
+
+    existing_values = None
+    if existing is not None:
+        existing_values = {
+            field: getattr(existing, field)
+            for field in sensor.data_fields
+        }
+
     values = reading.model_dump(exclude={"name"})
 
     table = sensor.reading_model.__table__
     insert_stmt = insert(table).values(**values)
     excluded = insert_stmt.excluded
 
-    compatibility_checks = []
     merge_needed_checks = []
 
     for field in sensor.data_fields:
         col = getattr(table.c, field)
         excluded_col = getattr(excluded, field)
-
-        compatibility_checks.append(
-            or_(
-                col.is_(None),
-                excluded_col.is_(None),
-                col == excluded_col,
-            )
-        )
-
         merge_needed_checks.append(
             and_(
                 col.is_(None),
@@ -120,10 +152,7 @@ def ingest_reading(
                 field: func.coalesce(getattr(table.c, field), getattr(excluded, field))
                 for field in sensor.data_fields
             },
-            where=and_(
-                *compatibility_checks,
-                or_(*merge_needed_checks),
-            ),
+            where=or_(*merge_needed_checks),
         )
         .returning(literal_column("xmax = 0").label("inserted"))
     )
@@ -131,20 +160,13 @@ def ingest_reading(
     row = db.execute(upsert_stmt).first()
     db.commit()
 
-    if row is not None:
+    if existing_values is None and row is not None and row.inserted:
         return {
             "status": "ok",
-            "result": "created" if row.inserted else "merged",
+            "result": "created",
         }
 
-    existing = db.execute(
-        select(sensor.reading_model).where(
-            sensor.reading_model.mac == reading.mac,
-            sensor.reading_model.timestamp == reading.timestamp,
-        )
-    ).scalar_one()
-
-    return classify_noop(existing, reading, sensor.data_fields)
+    return classify_existing_reading(existing_values, reading, sensor.data_fields)
 
 
 def fetch_readings(

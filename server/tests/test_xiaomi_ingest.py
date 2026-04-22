@@ -1,6 +1,6 @@
 import pytest
 
-from tests.helpers import make_xiaomi_payload, post_xiaomi, auth_headers
+from tests.helpers import auth_headers, make_xiaomi_payload, post_xiaomi
 
 
 def test_xiaomi_create_accepts_partial_reading(client, api_key):
@@ -129,7 +129,7 @@ def test_xiaomi_create_returns_conflict_for_single_field_conflict(client, api_ke
     }
 
 
-def test_xiaomi_create_returns_conflict_when_conflict_and_new_data_are_mixed(client, api_key):
+def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_are_mixed(client, api_key):
     first = post_xiaomi(
         client,
         api_key,
@@ -153,7 +153,7 @@ def test_xiaomi_create_returns_conflict_when_conflict_and_new_data_are_mixed(cli
     assert second.status_code == 200
     assert second.json() == {
         "status": "ok",
-        "result": "conflict",
+        "result": "merged_with_conflict",
         "warnings": [
             {
                 "code": "conflicting_field_ignored",
@@ -175,7 +175,7 @@ def test_xiaomi_create_returns_conflict_when_conflict_and_new_data_are_mixed(cli
         {
             "timestamp": "2026-04-21T18:00:00Z",
             "temperature_c": 21.5,
-            "moisture_pct": None,
+            "moisture_pct": 35,
             "light_lux": None,
             "conductivity_us_cm": None,
         }

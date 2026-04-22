@@ -48,11 +48,10 @@ def test_xiaomi_merge_stores_merged_fields(client, api_key, db_session):
     assert row.timestamp.isoformat() == "2026-04-21T18:00:00+00:00"
 
 
-def test_xiaomi_conflict_does_not_write_conflicting_or_new_mixed_in_data(client, api_key, db_session):
+def test_xiaomi_conflict_does_not_write_conflicting_data(client, api_key, db_session):
     first_payload = make_xiaomi_payload()
     second_payload = make_xiaomi_payload(
         temperature_c=22.5,
-        moisture_pct=35,
     )
 
     first = post_xiaomi(client, api_key, first_payload)
@@ -82,6 +81,44 @@ def test_xiaomi_conflict_does_not_write_conflicting_or_new_mixed_in_data(client,
     assert row.mac == first_payload["mac"].upper()
     assert row.temperature_c == first_payload["temperature_c"]
     assert row.moisture_pct is None
+    assert row.light_lux is None
+    assert row.conductivity_us_cm is None
+
+
+def test_xiaomi_conflict_merges_new_non_conflicting_data(client, api_key, db_session):
+    first_payload = make_xiaomi_payload()
+    second_payload = make_xiaomi_payload(
+        temperature_c=22.5,
+        moisture_pct=35,
+    )
+
+    first = post_xiaomi(client, api_key, first_payload)
+    second = post_xiaomi(client, api_key, second_payload)
+
+    assert first.status_code == 200
+    assert first.json() == {"status": "ok", "result": "created"}
+
+    assert second.status_code == 200
+    assert second.json() == {
+        "status": "ok",
+        "result": "merged_with_conflict",
+        "warnings": [
+            {
+                "code": "conflicting_field_ignored",
+                "field": "temperature_c",
+                "existing": first_payload["temperature_c"],
+                "incoming": second_payload["temperature_c"],
+            }
+        ],
+    }
+
+    rows = db_session.query(XiaomiReading).all()
+    assert len(rows) == 1
+
+    row = rows[0]
+    assert row.mac == first_payload["mac"].upper()
+    assert row.temperature_c == first_payload["temperature_c"]
+    assert row.moisture_pct == second_payload["moisture_pct"]
     assert row.light_lux is None
     assert row.conductivity_us_cm is None
 
