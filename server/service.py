@@ -16,7 +16,7 @@ from common import (
 )
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import Sensor
-from sensor_spec import SensorSpec
+from sensor_spec import ReadingLike, SensorSpec
 
 
 def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
@@ -52,22 +52,22 @@ def is_expected_unique_conflict(exc: IntegrityError, constraint_name: str) -> bo
 
 
 def classify_existing_reading(
-    existing_values: dict[str, Any] | None,
-    incoming: Any,
-    data_fields: list[str],
-) -> dict[str, Any]:
+    existing_values: dict[str, object] | None,
+    incoming: ReadingLike,
+    sensor: SensorSpec,
+) -> dict[str, object]:
     if existing_values is None:
         return {
             "status": "ok",
             "result": "created",
         }
 
-    warnings = []
+    warnings: list[dict[str, object]] = []
     merged = False
 
-    for field in data_fields:
-        existing_value = existing_values[field]
-        incoming_value = getattr(incoming, field)
+    for field in sensor.data_fields:
+        existing_value = existing_values[field.name]
+        incoming_value = getattr(incoming, field.name)
 
         if incoming_value is None:
             continue
@@ -80,7 +80,7 @@ def classify_existing_reading(
             warnings.append(
                 {
                     "code": "conflicting_field_ignored",
-                    "field": field,
+                    "field": field.name,
                     "existing": existing_value,
                     "incoming": incoming_value,
                 }
@@ -114,9 +114,9 @@ def classify_existing_reading(
 
 def ingest_reading(
     db: Session,
-    reading: Any,
+    reading: ReadingLike,
     sensor: SensorSpec,
-):
+) -> dict[str, object]:
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
 
@@ -133,7 +133,7 @@ def ingest_reading(
     existing_values = None
     if existing is not None:
         existing_values = {
-            field: getattr(existing, field)
+            field.name: getattr(existing, field.name)
             for field in sensor.data_fields
         }
 
@@ -146,8 +146,8 @@ def ingest_reading(
     merge_needed_checks = []
 
     for field in sensor.data_fields:
-        col = getattr(table.c, field)
-        excluded_col = getattr(excluded, field)
+        col = field.column
+        excluded_col = getattr(excluded, field.name)
         merge_needed_checks.append(
             and_(
                 col.is_(None),
@@ -159,7 +159,7 @@ def ingest_reading(
         insert_stmt.on_conflict_do_update(
             index_elements=[table.c.mac, table.c.timestamp],
             set_={
-                field: func.coalesce(getattr(table.c, field), getattr(excluded, field))
+                field.name: func.coalesce(field.column, getattr(excluded, field.name))
                 for field in sensor.data_fields
             },
             where=or_(*merge_needed_checks),
@@ -182,7 +182,7 @@ def ingest_reading(
             "result": "created",
         }
 
-    return classify_existing_reading(existing_values, reading, sensor.data_fields)
+    return classify_existing_reading(existing_values, reading, sensor)
 
 
 def fetch_readings(
@@ -191,9 +191,8 @@ def fetch_readings(
     limit: int,
     before: datetime | None,
     after: datetime | None,
-    reading_out: Any,
     sensor: SensorSpec,
-):
+) -> list[object]:
     mac = validate_mac_address(mac)
     before = validate_query_timestamp("before", before)
     after = validate_query_timestamp("after", after)
@@ -205,8 +204,8 @@ def fetch_readings(
     if sensor_row is None:
         return []
 
-    selected_fields = ["timestamp", *sensor.data_fields]
-    columns = [getattr(sensor.reading_model, field) for field in selected_fields]
+    selected_field_names = ["timestamp", *(field.name for field in sensor.data_fields)]
+    columns = [sensor.reading_model.timestamp, *(field.column for field in sensor.data_fields)]
 
     stmt = (
         select(*columns)
@@ -224,6 +223,6 @@ def fetch_readings(
     rows = db.execute(stmt).all()
 
     return [
-        reading_out(**{field: getattr(row, field) for field in selected_fields})
+        sensor.reading_out(**{name: getattr(row, name) for name in selected_field_names})
         for row in rows
     ]

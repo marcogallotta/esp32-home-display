@@ -88,7 +88,6 @@ def create_app(config: dict) -> FastAPI:
             limit=limit,
             before=before,
             after=after,
-            reading_out=sb.ReadingOut,
             sensor=sb.SENSOR,
         )
 
@@ -106,7 +105,6 @@ def create_app(config: dict) -> FastAPI:
             limit=limit,
             before=before,
             after=after,
-            reading_out=xm.ReadingOut,
             sensor=xm.SENSOR,
         )
 

@@ -4,7 +4,7 @@ from pydantic import BaseModel, model_validator
 
 from common import check_hard_ranges
 from models import XIAOMI_TYPE, XiaomiReading
-from sensor_spec import SensorSpec
+from sensor_spec import DataField, SensorSpec
 
 
 class ReadingIn(BaseModel):
@@ -41,16 +41,17 @@ class ReadingOut(BaseModel):
     conductivity_us_cm: int | None
 
 
-SENSOR = SensorSpec(
+SENSOR = SensorSpec[ReadingIn, ReadingOut, XiaomiReading](
     db_sensor_type=XIAOMI_TYPE,
     reading_model=XiaomiReading,
+    reading_out=ReadingOut,
     unique_constraint_name="xiaomi_readings_mac_timestamp_uniq",
-    data_fields=[
-        "temperature_c",
-        "moisture_pct",
-        "light_lux",
-        "conductivity_us_cm",
-    ],
+    data_fields=(
+        DataField("temperature_c", XiaomiReading.temperature_c),
+        DataField("moisture_pct", XiaomiReading.moisture_pct),
+        DataField("light_lux", XiaomiReading.light_lux),
+        DataField("conductivity_us_cm", XiaomiReading.conductivity_us_cm),
+    ),
     hard_ranges={
         "temperature_c": (-40.0, 125.0),
         "moisture_pct": (0, 100),
