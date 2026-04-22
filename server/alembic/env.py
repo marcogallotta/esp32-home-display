@@ -32,7 +32,7 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     app_config = load_config()
-    return str(build_database_url(app_config))
+    return str(build_database_url(app_config).render_as_string(hide_password=False))
 
 
 def run_migrations_offline() -> None:
