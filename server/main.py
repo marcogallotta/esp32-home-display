@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -10,16 +10,15 @@ import xiaomi as xm
 from common import READINGS_DEFAULT_LIMIT, READINGS_MAX_LIMIT
 from config import load_config
 from db import build_engine, build_session_factory
-from errors import BadRequestError, ServerMisconfiguredError
-from service import fetch_readings, ingest_reading
+from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
+from service import fetch_readings, ingest_reading, verify_api_key
 
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)):
-    api_key = request.app.state.config.get("api_key")
-    if not api_key:
-        raise ServerMisconfiguredError("server misconfigured")
-    if x_api_key != api_key:
-        raise HTTPException(status_code=401, detail="unauthorized")
+    verify_api_key(
+        expected_api_key=request.app.state.config.get("api_key"),
+        provided_api_key=x_api_key,
+    )
 
 
 def get_db(request: Request):
@@ -44,6 +43,10 @@ def create_app(config: dict) -> FastAPI:
     @app.exception_handler(BadRequestError)
     def handle_bad_request(_: Request, exc: BadRequestError):
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(UnauthorizedError)
+    def handle_unauthorized(_: Request, exc: UnauthorizedError):
+        return JSONResponse(status_code=401, content={"detail": str(exc)})
 
     @app.exception_handler(ServerMisconfiguredError)
     def handle_server_misconfigured(_: Request, exc: ServerMisconfiguredError):

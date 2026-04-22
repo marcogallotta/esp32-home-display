@@ -12,9 +12,16 @@ from common import (
     validate_query_timestamp,
     warn_soft_ranges,
 )
-from errors import BadRequestError
+from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import Sensor
 from sensor_spec import SensorSpec
+
+
+def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
+    if not expected_api_key:
+        raise ServerMisconfiguredError("server misconfigured")
+    if provided_api_key != expected_api_key:
+        raise UnauthorizedError("unauthorized")
 
 
 def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
