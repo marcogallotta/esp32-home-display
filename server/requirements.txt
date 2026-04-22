@@ -1,3 +1,4 @@
+alembic
 fastapi
 httpx
 psycopg[binary]
