@@ -30,8 +30,22 @@ def check_range(name: str, value, min_value, max_value):
         raise ValueError(f"{name} must be in [{min_value}, {max_value}]")
 
 
+def check_hard_ranges(reading, hard_ranges: dict[str, tuple[int | float, int | float]]):
+    for field, (min_value, max_value) in hard_ranges.items():
+        check_range(field, getattr(reading, field), min_value, max_value)
+
+
 def warn_if_suspicious(metric: str, value, mac: str):
     logger.warning("Suspicious %s=%s for sensor %s", metric, value, mac)
+
+
+def warn_soft_ranges(reading, soft_ranges: dict[str, tuple[int | float, int | float]]):
+    for field, (min_value, max_value) in soft_ranges.items():
+        value = getattr(reading, field)
+        if value is None:
+            continue
+        if value < min_value or value > max_value:
+            warn_if_suspicious(field, value, reading.mac)
 
 
 def validate_mac_address(mac: str) -> str:

@@ -10,6 +10,7 @@ from common import (
     normalize_timestamp_to_utc,
     validate_mac_address,
     validate_query_timestamp,
+    warn_soft_ranges,
 )
 from errors import BadRequestError
 from models import Sensor
@@ -74,7 +75,7 @@ def ingest_reading(
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
 
-    sensor.maybe_warn(reading)
+    warn_soft_ranges(reading, sensor.soft_ranges)
     ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
 
     values = reading.model_dump(exclude={"name"})

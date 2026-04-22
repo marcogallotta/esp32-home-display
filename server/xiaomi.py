@@ -2,24 +2,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-from common import check_range, warn_if_suspicious
+from common import check_hard_ranges
 from models import XIAOMI_TYPE, XiaomiReading
 from sensor_spec import SensorSpec
-
-
-HARD_TEMPERATURE_C_MIN = -40.0
-HARD_TEMPERATURE_C_MAX = 125.0
-HARD_MOISTURE_PCT_MIN = 0
-HARD_MOISTURE_PCT_MAX = 100
-HARD_LIGHT_LUX_MIN = 0
-HARD_LIGHT_LUX_MAX = 1_000_000
-HARD_CONDUCTIVITY_US_CM_MIN = 0
-HARD_CONDUCTIVITY_US_CM_MAX = 100_000
-
-SOFT_TEMPERATURE_C_MIN = -20.0
-SOFT_TEMPERATURE_C_MAX = 60.0
-SOFT_LIGHT_LUX_MAX = 200_000
-SOFT_CONDUCTIVITY_US_CM_MAX = 10_000
 
 
 class ReadingIn(BaseModel):
@@ -44,15 +29,7 @@ class ReadingIn(BaseModel):
         ):
             raise ValueError("at least one reading field must be non-null")
 
-        check_range("temperature_c", self.temperature_c, HARD_TEMPERATURE_C_MIN, HARD_TEMPERATURE_C_MAX)
-        check_range("moisture_pct", self.moisture_pct, HARD_MOISTURE_PCT_MIN, HARD_MOISTURE_PCT_MAX)
-        check_range("light_lux", self.light_lux, HARD_LIGHT_LUX_MIN, HARD_LIGHT_LUX_MAX)
-        check_range(
-            "conductivity_us_cm",
-            self.conductivity_us_cm,
-            HARD_CONDUCTIVITY_US_CM_MIN,
-            HARD_CONDUCTIVITY_US_CM_MAX,
-        )
+        check_hard_ranges(self, SENSOR.hard_ranges)
         return self
 
 
@@ -64,18 +41,6 @@ class ReadingOut(BaseModel):
     conductivity_us_cm: int | None
 
 
-def maybe_warn(reading: ReadingIn):
-    if reading.temperature_c is not None:
-        if reading.temperature_c < SOFT_TEMPERATURE_C_MIN or reading.temperature_c > SOFT_TEMPERATURE_C_MAX:
-            warn_if_suspicious("temperature_c", reading.temperature_c, reading.mac)
-
-    if reading.light_lux is not None and reading.light_lux > SOFT_LIGHT_LUX_MAX:
-        warn_if_suspicious("light_lux", reading.light_lux, reading.mac)
-
-    if reading.conductivity_us_cm is not None and reading.conductivity_us_cm > SOFT_CONDUCTIVITY_US_CM_MAX:
-        warn_if_suspicious("conductivity_us_cm", reading.conductivity_us_cm, reading.mac)
-
-
 SENSOR = SensorSpec(
     db_sensor_type=XIAOMI_TYPE,
     reading_model=XiaomiReading,
@@ -85,5 +50,15 @@ SENSOR = SensorSpec(
         "light_lux",
         "conductivity_us_cm",
     ],
-    maybe_warn=maybe_warn,
+    hard_ranges={
+        "temperature_c": (-40.0, 125.0),
+        "moisture_pct": (0, 100),
+        "light_lux": (0, 1_000_000),
+        "conductivity_us_cm": (0, 100_000),
+    },
+    soft_ranges={
+        "temperature_c": (-20.0, 60.0),
+        "light_lux": (0, 200_000),
+        "conductivity_us_cm": (0, 10_000),
+    },
 )
