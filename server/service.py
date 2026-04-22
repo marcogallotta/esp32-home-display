@@ -1,8 +1,10 @@
 from datetime import datetime
 from typing import Any
 
+from psycopg.errors import UniqueViolation
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func, literal_column
 
@@ -39,6 +41,14 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
 
     if name is not None and sensor.name != name:
         raise BadRequestError("sensor name does not match existing sensor")
+
+
+def is_expected_unique_conflict(exc: IntegrityError, constraint_name: str) -> bool:
+    orig = exc.orig
+    return (
+        isinstance(orig, UniqueViolation)
+        and getattr(orig.diag, "constraint_name", None) == constraint_name
+    )
 
 
 def classify_existing_reading(
@@ -157,8 +167,14 @@ def ingest_reading(
         .returning(literal_column("xmax = 0").label("inserted"))
     )
 
-    row = db.execute(upsert_stmt).first()
-    db.commit()
+    try:
+        row = db.execute(upsert_stmt).first()
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if not is_expected_unique_conflict(exc, sensor.unique_constraint_name):
+            raise
+        row = None
 
     if existing_values is None and row is not None and row.inserted:
         return {

@@ -32,6 +32,7 @@ class ReadingOut(BaseModel):
 SENSOR = SensorSpec(
     db_sensor_type=SWITCHBOT_TYPE,
     reading_model=SwitchbotReading,
+    unique_constraint_name="switchbot_readings_mac_timestamp_uniq",
     data_fields=["temperature_c", "humidity_pct"],
     hard_ranges={
         "temperature_c": (-40.0, 125.0),

@@ -44,6 +44,7 @@ class ReadingOut(BaseModel):
 SENSOR = SensorSpec(
     db_sensor_type=XIAOMI_TYPE,
     reading_model=XiaomiReading,
+    unique_constraint_name="xiaomi_readings_mac_timestamp_uniq",
     data_fields=[
         "temperature_c",
         "moisture_pct",
