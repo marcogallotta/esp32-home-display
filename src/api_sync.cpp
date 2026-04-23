@@ -1,24 +1,27 @@
 #include "api_sync.h"
 
 #include <ctime>
+#include <cstdint>
+#include <string>
 
+#include "api/backend_result.h"
 #include "api/payloads.h"
+#include "network.h"
 #include "platform.h"
 
 namespace {
-
 constexpr std::int64_t kXiaomiBufferWindowSeconds = 60;
 
-bool isAccepted(api::WriteResult result) {
-    return result == api::WriteResult::Created ||
-           result == api::WriteResult::Duplicate ||
-           result == api::WriteResult::Merged;
+bool isAccepted(api::BackendWriteResult result) {
+    return result == api::BackendWriteResult::Created ||
+           result == api::BackendWriteResult::Duplicate ||
+           result == api::BackendWriteResult::Merged;
 }
 
 void logConflict(
     const char* sensorType,
     const SensorIdentity& identity,
-    const api::WriteResponse& response
+    const network::HttpResponse& response
 ) {
     platform::printLine(
         std::string("WARNING: API conflict for ") +
@@ -77,10 +80,21 @@ void syncApiState(
             continue;
         }
 
-        const api::WriteResponse response = client.postSwitchbotReading(*payload);
-        if (isAccepted(response.result)) {
+        const network::HttpResponse response = client.postSwitchbotReading(*payload);
+
+        if (response.transport != network::TransportResult::Ok) {
+            continue;
+        }
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            continue;
+        }
+
+        const api::BackendWriteResult result = api::parseBackendWriteResult(response);
+
+        if (isAccepted(result)) {
             lastSent = current;
-        } else if (response.result == api::WriteResult::Conflict) {
+        } else if (result == api::BackendWriteResult::Conflict) {
             logConflict("switchbot", sensor.identity, response);
             lastSent = SwitchbotReading{};
         }
@@ -122,11 +136,22 @@ void syncApiState(
             continue;
         }
 
-        const api::WriteResponse response = client.postXiaomiReading(*payload);
-        if (isAccepted(response.result)) {
+        const network::HttpResponse response = client.postXiaomiReading(*payload);
+
+        if (response.transport != network::TransportResult::Ok) {
+            continue;
+        }
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            continue;
+        }
+
+        const api::BackendWriteResult result = api::parseBackendWriteResult(response);
+
+        if (isAccepted(result)) {
             lastSent = pending.reading;
             resetPending(pending);
-        } else if (response.result == api::WriteResult::Conflict) {
+        } else if (result == api::BackendWriteResult::Conflict) {
             logConflict("xiaomi", sensor.identity, response);
             lastSent = XiaomiReading{};
             resetPending(pending);
