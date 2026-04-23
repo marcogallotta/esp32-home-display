@@ -44,27 +44,11 @@ public:
     }
 
     HttpResponse request(const Request& request) override {
-        if (request.method == Method::Get) {
-            return performRequest(request.url, nullptr, request.pem, nullptr, nullptr);
-        }
-
-        return performRequest(
-            request.url,
-            &request.body,
-            request.pem,
-            &request.contentType,
-            &request.headers
-        );
+        return performRequest(request);
     }
 
 private:
-    HttpResponse performRequest(
-        const std::string& url,
-        const std::string* body,
-        const std::string& pem,
-        const std::string* contentType,
-        const Headers* headers
-    ) {
+    HttpResponse performRequest(const Request& request) {
         HttpResponse resp;
 
         CURL* curl = curl_easy_init();
@@ -74,39 +58,43 @@ private:
         }
 
         curl_slist* curlHeaders = nullptr;
-        if (contentType != nullptr) {
-            curlHeaders = curl_slist_append(curlHeaders, ("Content-Type: " + *contentType).c_str());
+
+        if (request.method == Method::Post) {
+            curlHeaders = curl_slist_append(
+                curlHeaders,
+                ("Content-Type: " + request.contentType).c_str()
+            );
         }
-        if (headers != nullptr) {
-            for (const auto& [key, value] : *headers) {
-                curlHeaders = curl_slist_append(curlHeaders, (key + ": " + value).c_str());
-            }
+
+        for (const auto& [key, value] : request.headers) {
+            curlHeaders = curl_slist_append(curlHeaders, (key + ": " + value).c_str());
         }
+
         if (curlHeaders != nullptr) {
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curlHeaders);
         }
 
-        if (body != nullptr) {
+        if (request.method == Method::Post) {
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body->c_str());
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body->size()));
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body.size()));
         }
 
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_URL, request.url.c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "my-app/1.0");
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
 
-        if (pem.empty()) {
-            log("Warning: empty PEM for " + url + "; TLS verification disabled");
+        if (request.pem.empty()) {
+            log("Warning: empty PEM for " + request.url + "; TLS verification disabled");
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
         } else {
             curl_blob caBlob{};
-            caBlob.data = const_cast<char*>(pem.data());
-            caBlob.len = pem.size();
+            caBlob.data = const_cast<char*>(request.pem.data());
+            caBlob.len = request.pem.size();
             caBlob.flags = CURL_BLOB_COPY;
 
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
