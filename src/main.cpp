@@ -259,6 +259,7 @@ void logDirtyRegions(const AppContext& app) {
     platform::printLine(std::string("  salahName=") + (app.currentUiState.dirty.salahName ? "yes" : "no"));
     platform::printLine(std::string("  minutes=") + (app.currentUiState.dirty.minutes ? "yes" : "no"));
     platform::printLine(std::string("  sensorsAny=") + (app.currentUiState.dirty.sensorsAny ? "yes" : "no"));
+    platform::printLine(std::string("  forecast=") + (app.currentUiState.dirty.forecast ? "yes" : "no"));
 
     for (std::size_t i = 0; i < app.currentState.switchbotSensors.size(); ++i) {
         platform::printLine(

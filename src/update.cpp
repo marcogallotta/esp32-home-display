@@ -207,8 +207,11 @@ bool updateForecastState(const Config& config, State& state) {
 
     forecast::ForecastData data;
     if (!forecast::parseForecastJson(r.body, data)) {
+        p.log("Forecast JSON parse failed");
         return false;
     }
+
+    p.log("Forecast OK: count=" + std::to_string(data.count));
 
     state.forecast = data;
     state.hasForecast = true;
