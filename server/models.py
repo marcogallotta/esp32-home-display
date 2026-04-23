@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -24,6 +25,9 @@ class Base(DeclarativeBase):
 
 class Sensor(Base):
     __tablename__ = "sensors"
+    __table_args__ = (
+        CheckConstraint("type IN (1, 2)", name="sensors_type_valid"),
+    )
 
     mac: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
