@@ -80,7 +80,7 @@ struct AppContext {
     }
 };
 
-bool validateConfig(const Config& config) {
+bool validateConfig([[maybe_unused]] const Config& config) {
 #ifdef ARDUINO
     if (config.switchbot.sensors.size() > kMaxVisibleSensorRows) {
         platform::printLine("Config error: OLED supports at most 4 sensors");
