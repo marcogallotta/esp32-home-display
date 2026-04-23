@@ -17,7 +17,7 @@ def test_switchbot_create_stores_row_correctly(client, api_key, db_session):
     assert row.mac == payload["mac"].upper()
     assert row.temperature_c == payload["temperature_c"]
     assert row.humidity_pct == payload["humidity_pct"]
-    assert row.timestamp.isoformat() == "2026-04-21T18:00:00+00:00"
+    assert row.timestamp.isoformat() == payload["timestamp"].replace("Z", "+00:00")
 
 
 def test_xiaomi_merge_stores_merged_fields(client, api_key, db_session):
@@ -43,9 +43,9 @@ def test_xiaomi_merge_stores_merged_fields(client, api_key, db_session):
     assert row.mac == first_payload["mac"].upper()
     assert row.temperature_c == first_payload["temperature_c"]
     assert row.moisture_pct == second_payload["moisture_pct"]
-    assert row.light_lux is None
-    assert row.conductivity_us_cm is None
-    assert row.timestamp.isoformat() == "2026-04-21T18:00:00+00:00"
+    assert row.light_lux == first_payload.get("light_lux")
+    assert row.conductivity_us_cm == first_payload.get("conductivity_us_cm")
+    assert row.timestamp.isoformat() == first_payload["timestamp"].replace("Z", "+00:00")
 
 
 def test_xiaomi_conflict_does_not_write_conflicting_data(client, api_key, db_session):
@@ -80,9 +80,10 @@ def test_xiaomi_conflict_does_not_write_conflicting_data(client, api_key, db_ses
     row = rows[0]
     assert row.mac == first_payload["mac"].upper()
     assert row.temperature_c == first_payload["temperature_c"]
-    assert row.moisture_pct is None
-    assert row.light_lux is None
-    assert row.conductivity_us_cm is None
+    assert row.moisture_pct == first_payload.get("moisture_pct")
+    assert row.light_lux == first_payload.get("light_lux")
+    assert row.conductivity_us_cm == first_payload.get("conductivity_us_cm")
+    assert row.timestamp.isoformat() == first_payload["timestamp"].replace("Z", "+00:00")
 
 
 def test_xiaomi_conflict_merges_new_non_conflicting_data(client, api_key, db_session):
@@ -119,8 +120,9 @@ def test_xiaomi_conflict_merges_new_non_conflicting_data(client, api_key, db_ses
     assert row.mac == first_payload["mac"].upper()
     assert row.temperature_c == first_payload["temperature_c"]
     assert row.moisture_pct == second_payload["moisture_pct"]
-    assert row.light_lux is None
-    assert row.conductivity_us_cm is None
+    assert row.light_lux == first_payload.get("light_lux")
+    assert row.conductivity_us_cm == first_payload.get("conductivity_us_cm")
+    assert row.timestamp.isoformat() == first_payload["timestamp"].replace("Z", "+00:00")
 
 
 def test_xiaomi_duplicate_does_not_create_extra_rows(client, api_key, db_session):
@@ -143,5 +145,8 @@ def test_xiaomi_duplicate_does_not_create_extra_rows(client, api_key, db_session
 
     row = rows[0]
     assert row.mac == payload["mac"].upper()
-    assert row.temperature_c is None
+    assert row.temperature_c == payload["temperature_c"]
     assert row.moisture_pct == payload["moisture_pct"]
+    assert row.light_lux == payload.get("light_lux")
+    assert row.conductivity_us_cm == payload.get("conductivity_us_cm")
+    assert row.timestamp.isoformat() == payload["timestamp"].replace("Z", "+00:00")
