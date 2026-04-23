@@ -187,10 +187,21 @@ void updateXiaomiState(
 
 bool updateForecastState(const Config& config, State& state) {
     auto& p = network::platform(config.wifi);
-    const std::string url = forecast::openmeteoUrl(config.location);
-    const auto r = p.httpGet(url, config.forecast.openmeteoPem);
+
+    network::Request request;
+    request.method = network::Method::Get;
+    request.url = forecast::openmeteoUrl(config.location);
+    request.pem = config.forecast.openmeteoPem;
+
+    const auto r = p.request(request);
+
+    if (r.transport != network::TransportResult::Ok) {
+        p.log("Forecast transport failed: error=" + r.error);
+        return false;
+    }
+
     if (r.statusCode != 200) {
-        p.log("HTTP failed: status=" + std::to_string(r.statusCode) + " error=" + r.error);
+        p.log("Forecast HTTP failed: status=" + std::to_string(r.statusCode));
         return false;
     }
 

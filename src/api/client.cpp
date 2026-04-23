@@ -67,17 +67,29 @@ WriteResponse Client::postXiaomiReading(const XiaomiPayload& payload) const {
 WriteResponse Client::postJson(const std::string& path, const std::string& body) const {
     auto& p = network::platform(config_.wifi);
 
-    const network::Headers headers = {
+    network::Request request;
+    request.method = network::Method::Post;
+    request.url = joinUrl(path);
+    request.body = body;
+    request.pem = config_.api.pem;
+    request.contentType = "application/json";
+    request.headers = {
         {"x-api-key", config_.api.apiKey}
     };
 
-    const auto r = p.httpPost(
-        joinUrl(path),
-        body,
-        config_.api.pem,
-        "application/json",
-        headers
-    );
+    const auto r = p.request(request);
+
+    WriteResponse out;
+    out.statusCode = r.statusCode;
+    out.body = r.body;
+    out.error = r.error;
+
+    if (r.transport != network::TransportResult::Ok) {
+        p.log(
+            "API POST transport failed: error=" + r.error
+        );
+        return out;
+    }
 
     if (r.statusCode >= 200 && r.statusCode < 300) {
         const WriteResponse parsed = parseWriteResponse(r);
@@ -85,7 +97,6 @@ WriteResponse Client::postJson(const std::string& path, const std::string& body)
             p.log(
                 "API POST returned unrecognized success body: status=" +
                 std::to_string(r.statusCode) +
-                " error=" + r.error +
                 " body=" + r.body
             );
         }
@@ -94,14 +105,9 @@ WriteResponse Client::postJson(const std::string& path, const std::string& body)
 
     p.log(
         "API POST failed: status=" + std::to_string(r.statusCode) +
-        " error=" + r.error +
         " body=" + r.body
     );
 
-    WriteResponse out;
-    out.statusCode = r.statusCode;
-    out.body = r.body;
-    out.error = r.error;
     return out;
 }
 
