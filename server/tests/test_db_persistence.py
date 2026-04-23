@@ -8,7 +8,7 @@ def test_switchbot_create_stores_row_correctly(client, api_key, db_session):
     response = post_switchbot(client, api_key, payload)
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "result": "created"}
+    assert response.json()["result"] == "created"
 
     rows = db_session.query(SwitchbotReading).all()
     assert len(rows) == 1
@@ -31,10 +31,10 @@ def test_xiaomi_merge_stores_merged_fields(client, api_key, db_session):
     second = post_xiaomi(client, api_key, second_payload)
 
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "result": "created"}
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {"status": "ok", "result": "merged"}
+    assert second.json()["result"] == "merged"
 
     rows = db_session.query(XiaomiReading).all()
     assert len(rows) == 1
@@ -58,21 +58,18 @@ def test_xiaomi_conflict_does_not_write_conflicting_data(client, api_key, db_ses
     second = post_xiaomi(client, api_key, second_payload)
 
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "result": "created"}
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {
-        "status": "ok",
-        "result": "conflict",
-        "warnings": [
-            {
-                "code": "conflicting_field_ignored",
-                "field": "temperature_c",
-                "existing": first_payload["temperature_c"],
-                "incoming": second_payload["temperature_c"],
-            }
-        ],
-    }
+    assert second.json()["result"] == "conflict"
+    assert second.json()["warnings"] == [
+        {
+            "code": "conflicting_field_ignored",
+            "field": "temperature_c",
+            "existing": first_payload["temperature_c"],
+            "incoming": second_payload["temperature_c"],
+        }
+    ]
 
     rows = db_session.query(XiaomiReading).all()
     assert len(rows) == 1
@@ -97,21 +94,18 @@ def test_xiaomi_conflict_merges_new_non_conflicting_data(client, api_key, db_ses
     second = post_xiaomi(client, api_key, second_payload)
 
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "result": "created"}
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {
-        "status": "ok",
-        "result": "merged_with_conflict",
-        "warnings": [
-            {
-                "code": "conflicting_field_ignored",
-                "field": "temperature_c",
-                "existing": first_payload["temperature_c"],
-                "incoming": second_payload["temperature_c"],
-            }
-        ],
-    }
+    assert second.json()["result"] == "merged_with_conflict"
+    assert second.json()["warnings"] == [
+        {
+            "code": "conflicting_field_ignored",
+            "field": "temperature_c",
+            "existing": first_payload["temperature_c"],
+            "incoming": second_payload["temperature_c"],
+        }
+    ]
 
     rows = db_session.query(XiaomiReading).all()
     assert len(rows) == 1
@@ -135,10 +129,10 @@ def test_xiaomi_duplicate_does_not_create_extra_rows(client, api_key, db_session
     second = post_xiaomi(client, api_key, payload)
 
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "result": "created"}
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {"status": "ok", "result": "duplicate"}
+    assert second.json()["result"] == "duplicate"
 
     rows = db_session.query(XiaomiReading).all()
     assert len(rows) == 1

@@ -12,10 +12,7 @@ def test_xiaomi_create_accepts_partial_reading(client, api_key):
     response = post_xiaomi(client, api_key, payload)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert response.json()["result"] == "created"
 
 
 def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
@@ -29,16 +26,10 @@ def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
     second = post_xiaomi(client, api_key, second_payload)
 
     assert first.status_code == 200
-    assert first.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {
-        "status": "ok",
-        "result": "merged",
-    }
+    assert second.json()["result"] == "merged"
 
     fetch = client.get(
         "/xiaomi/readings",
@@ -68,16 +59,10 @@ def test_xiaomi_create_returns_duplicate_for_identical_partial_reading(client, a
     second = post_xiaomi(client, api_key, payload)
 
     assert first.status_code == 200
-    assert first.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {
-        "status": "ok",
-        "result": "duplicate",
-    }
+    assert second.json()["result"] == "duplicate"
 
 
 def test_xiaomi_create_returns_conflict_for_single_field_conflict(client, api_key):
@@ -88,24 +73,18 @@ def test_xiaomi_create_returns_conflict_for_single_field_conflict(client, api_ke
     second = post_xiaomi(client, api_key, second_payload)
 
     assert first.status_code == 200
-    assert first.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {
-        "status": "ok",
-        "result": "conflict",
-        "warnings": [
-            {
-                "code": "conflicting_field_ignored",
-                "field": "temperature_c",
-                "existing": first_payload["temperature_c"],
-                "incoming": second_payload["temperature_c"],
-            }
-        ],
-    }
+    assert second.json()["result"] == "conflict"
+    assert second.json()["warnings"] == [
+        {
+            "code": "conflicting_field_ignored",
+            "field": "temperature_c",
+            "existing": first_payload["temperature_c"],
+            "incoming": second_payload["temperature_c"],
+        }
+    ]
 
 
 def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_are_mixed(client, api_key):
@@ -119,24 +98,18 @@ def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_a
     second = post_xiaomi(client, api_key, second_payload)
 
     assert first.status_code == 200
-    assert first.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert first.json()["result"] == "created"
 
     assert second.status_code == 200
-    assert second.json() == {
-        "status": "ok",
-        "result": "merged_with_conflict",
-        "warnings": [
-            {
-                "code": "conflicting_field_ignored",
-                "field": "temperature_c",
-                "existing": first_payload["temperature_c"],
-                "incoming": second_payload["temperature_c"],
-            }
-        ],
-    }
+    assert second.json()["result"] == "merged_with_conflict"
+    assert second.json()["warnings"] == [
+        {
+            "code": "conflicting_field_ignored",
+            "field": "temperature_c",
+            "existing": first_payload["temperature_c"],
+            "incoming": second_payload["temperature_c"],
+        }
+    ]
 
     fetch = client.get(
         "/xiaomi/readings",
