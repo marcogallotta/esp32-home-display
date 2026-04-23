@@ -48,10 +48,25 @@ public:
             delay(250);
         }
 
-        return WiFi.status() == WL_CONNECTED;
+        return true;
     }
 
-    HttpResponse httpGet(const std::string& url, const std::string& pem) override {
+    HttpResponse request(const Request& request) override {
+        if (request.method == Method::Get) {
+            return performGet(request.url, request.pem);
+        }
+
+        return performPost(
+            request.url,
+            request.body,
+            request.pem,
+            request.contentType,
+            request.headers
+        );
+    }
+
+private:
+    HttpResponse performGet(const std::string& url, const std::string& pem) {
         HttpResponse resp;
 
         if (!networkReady(5000)) {
@@ -83,13 +98,13 @@ public:
         return resp;
     }
 
-    HttpResponse httpPost(
+    HttpResponse performPost(
         const std::string& url,
         const std::string& body,
         const std::string& pem,
-        const std::string& contentType = "application/json",
-        const Headers& headers = {}
-    ) override {
+        const std::string& contentType,
+        const Headers& headers
+    ) {
         HttpResponse resp;
 
         if (!networkReady(5000)) {

@@ -43,18 +43,18 @@ public:
         return true;
     }
 
-    HttpResponse httpGet(const std::string& url, const std::string& pem) override {
-        return performRequest(url, nullptr, pem, nullptr, nullptr);
-    }
+    HttpResponse request(const Request& request) override {
+        if (request.method == Method::Get) {
+            return performRequest(request.url, nullptr, request.pem, nullptr, nullptr);
+        }
 
-    HttpResponse httpPost(
-        const std::string& url,
-        const std::string& body,
-        const std::string& pem,
-        const std::string& contentType = "application/json",
-        const Headers& headers = {}
-    ) override {
-        return performRequest(url, &body, pem, &contentType, &headers);
+        return performRequest(
+            request.url,
+            &request.body,
+            request.pem,
+            &request.contentType,
+            &request.headers
+        );
     }
 
 private:

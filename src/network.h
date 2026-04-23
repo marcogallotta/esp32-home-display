@@ -16,6 +16,20 @@ struct HttpResponse {
 
 using Headers = std::map<std::string, std::string>;
 
+enum class Method {
+    Get,
+    Post,
+};
+
+struct Request {
+    Method method = Method::Get;
+    std::string url;
+    std::string body;
+    std::string pem;
+    std::string contentType = "application/json";
+    Headers headers;
+};
+
 class Platform {
 public:
     explicit Platform(const WifiConfig& wifiConfig)
@@ -26,14 +40,32 @@ public:
     virtual uint64_t millis() const = 0;
     virtual bool networkReady(unsigned long timeoutMs = 15000) = 0;
 
-    virtual HttpResponse httpGet(const std::string& url, const std::string& pem) = 0;
+    virtual HttpResponse request(const Request& request) = 0;
+
+    virtual HttpResponse httpGet(const std::string& url, const std::string& pem) {
+        Request request;
+        request.method = Method::Get;
+        request.url = url;
+        request.pem = pem;
+        return this->request(request);
+    }
+
     virtual HttpResponse httpPost(
         const std::string& url,
         const std::string& body,
         const std::string& pem,
         const std::string& contentType = "application/json",
         const Headers& headers = {}
-    ) = 0;
+    ) {
+        Request request;
+        request.method = Method::Post;
+        request.url = url;
+        request.body = body;
+        request.pem = pem;
+        request.contentType = contentType;
+        request.headers = headers;
+        return this->request(request);
+    }
 
 protected:
     const WifiConfig& wifiConfig() const { return wifiConfig_; }
