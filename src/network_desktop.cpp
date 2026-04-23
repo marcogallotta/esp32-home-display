@@ -17,6 +17,31 @@ size_t writeCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     return total;
 }
 
+TransportResult mapCurlCode(CURLcode rc) {
+    switch (rc) {
+        case CURLE_OK:
+            return TransportResult::Ok;
+
+        case CURLE_OPERATION_TIMEDOUT:
+            return TransportResult::Timeout;
+
+        case CURLE_SSL_CONNECT_ERROR:
+        case CURLE_PEER_FAILED_VERIFICATION:
+        case CURLE_SSL_CACERT:
+        case CURLE_SSL_CERTPROBLEM:
+        case CURLE_SSL_ISSUER_ERROR:
+            return TransportResult::TlsError;
+
+        case CURLE_FAILED_INIT:
+        case CURLE_URL_MALFORMAT:
+        case CURLE_NOT_BUILT_IN:
+            return TransportResult::InternalError;
+
+        default:
+            return TransportResult::NetworkError;
+    }
+}
+
 class DesktopPlatform final : public Platform {
 public:
     explicit DesktopPlatform(const WifiConfig& wifiConfig)
@@ -53,7 +78,7 @@ private:
 
         CURL* curl = curl_easy_init();
         if (!curl) {
-            resp.error = "curl_easy_init failed";
+            resp.transport = TransportResult::InternalError;
             return resp;
         }
 
@@ -103,6 +128,8 @@ private:
         }
 
         const CURLcode rc = curl_easy_perform(curl);
+        resp.transport = mapCurlCode(rc);
+
         if (rc != CURLE_OK) {
             resp.error = curl_easy_strerror(rc);
             if (curlHeaders != nullptr) {

@@ -8,12 +8,6 @@
 
 namespace network {
 
-struct HttpResponse {
-    int statusCode = -1;
-    std::string body;
-    std::string error;
-};
-
 using Headers = std::map<std::string, std::string>;
 
 enum class Method {
@@ -28,6 +22,21 @@ struct Request {
     std::string pem;
     std::string contentType = "application/json";
     Headers headers;
+};
+
+enum class TransportResult {
+    Ok,
+    InternalError,
+    NetworkError,
+    TlsError,
+    Timeout,
+};
+
+struct HttpResponse {
+    TransportResult transport = TransportResult::InternalError;
+    int statusCode = 0;
+    std::string body;
+    std::string error;
 };
 
 class Platform {

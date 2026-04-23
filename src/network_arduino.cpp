@@ -19,6 +19,27 @@ void configureTlsClient(WiFiClientSecure& client, const std::string& pem, Platfo
     }
 }
 
+TransportResult mapHttpClientError(int code) {
+    switch (code) {
+        case HTTPC_ERROR_CONNECTION_REFUSED:
+        case HTTPC_ERROR_CONNECTION_LOST:
+        case HTTPC_ERROR_SEND_HEADER_FAILED:
+        case HTTPC_ERROR_SEND_PAYLOAD_FAILED:
+        case HTTPC_ERROR_NOT_CONNECTED:
+            return TransportResult::NetworkError;
+
+        case HTTPC_ERROR_READ_TIMEOUT:
+            return TransportResult::Timeout;
+
+        case HTTPC_ERROR_ENCODING:
+        case HTTPC_ERROR_TOO_LESS_RAM:
+            return TransportResult::InternalError;
+
+        default:
+            return TransportResult::NetworkError;
+    }
+}
+
 class ArduinoPlatform final : public Platform {
 public:
     explicit ArduinoPlatform(const WifiConfig& wifiConfig)
@@ -60,7 +81,7 @@ private:
         HttpResponse resp;
 
         if (!networkReady(5000)) {
-            resp.error = "WiFi not connected";
+            resp.transport = TransportResult::NetworkError;
             return resp;
         }
 
@@ -69,7 +90,7 @@ private:
 
         HTTPClient http;
         if (!http.begin(client, request.url.c_str())) {
-            resp.error = "http.begin failed";
+            resp.transport = TransportResult::InternalError;
             return resp;
         }
 
@@ -90,11 +111,12 @@ private:
             code = http.POST(data, request.body.size());
         }
 
-        resp.statusCode = code;
-
         if (code > 0) {
+            resp.transport = TransportResult::Ok;
+            resp.statusCode = code;
             resp.body = http.getString().c_str();
         } else {
+            resp.transport = mapHttpClientError(code);
             resp.error = http.errorToString(code).c_str();
         }
 
