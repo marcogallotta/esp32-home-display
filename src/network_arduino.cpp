@@ -52,21 +52,11 @@ public:
     }
 
     HttpResponse request(const Request& request) override {
-        if (request.method == Method::Get) {
-            return performGet(request.url, request.pem);
-        }
-
-        return performPost(
-            request.url,
-            request.body,
-            request.pem,
-            request.contentType,
-            request.headers
-        );
+        return performRequest(request);
     }
 
 private:
-    HttpResponse performGet(const std::string& url, const std::string& pem) {
+    HttpResponse performRequest(const Request& request) {
         HttpResponse resp;
 
         if (!networkReady(5000)) {
@@ -75,60 +65,31 @@ private:
         }
 
         WiFiClientSecure client;
-        configureTlsClient(client, pem, *this, url);
+        configureTlsClient(client, request.pem, *this, request.url);
 
         HTTPClient http;
-        if (!http.begin(client, url.c_str())) {
+        if (!http.begin(client, request.url.c_str())) {
             resp.error = "http.begin failed";
             return resp;
         }
 
         http.setTimeout(15000);
 
-        const int code = http.GET();
-        resp.statusCode = code;
+        if (request.method == Method::Post) {
+            http.addHeader("Content-Type", request.contentType.c_str());
+            for (const auto& [key, value] : request.headers) {
+                http.addHeader(key.c_str(), value.c_str());
+            }
+        }
 
-        if (code > 0) {
-            resp.body = http.getString().c_str();
+        int code = 0;
+        if (request.method == Method::Get) {
+            code = http.GET();
         } else {
-            resp.error = http.errorToString(code).c_str();
+            auto* data = reinterpret_cast<uint8_t*>(const_cast<char*>(request.body.data()));
+            code = http.POST(data, request.body.size());
         }
 
-        http.end();
-        return resp;
-    }
-
-    HttpResponse performPost(
-        const std::string& url,
-        const std::string& body,
-        const std::string& pem,
-        const std::string& contentType,
-        const Headers& headers
-    ) {
-        HttpResponse resp;
-
-        if (!networkReady(5000)) {
-            resp.error = "WiFi not connected";
-            return resp;
-        }
-
-        WiFiClientSecure client;
-        configureTlsClient(client, pem, *this, url);
-
-        HTTPClient http;
-        if (!http.begin(client, url.c_str())) {
-            resp.error = "http.begin failed";
-            return resp;
-        }
-
-        http.setTimeout(15000);
-        http.addHeader("Content-Type", contentType.c_str());
-        for (const auto& [key, value] : headers) {
-            http.addHeader(key.c_str(), value.c_str());
-        }
-
-        auto* data = reinterpret_cast<uint8_t*>(const_cast<char*>(body.data()));
-        const int code = http.POST(data, body.size());
         resp.statusCode = code;
 
         if (code > 0) {
