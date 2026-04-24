@@ -23,7 +23,10 @@ TransportResult mapCurlCode(CURLcode rc) {
             return TransportResult::Ok;
 
         case CURLE_OPERATION_TIMEDOUT:
+        // Handle the newer constant only if it exists
+        #ifdef CURLE_CONNECT_TIMEOUT
         case CURLE_CONNECT_TIMEOUT:
+        #endif
             return TransportResult::Timeout;
 
         case CURLE_SSL_CONNECT_ERROR:

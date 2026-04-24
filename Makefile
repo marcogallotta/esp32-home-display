@@ -26,9 +26,9 @@ TEST_TARGET := $(BUILD_DIR)/tests
 COMMON_SRC := \
 	lib/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
+	src/api/buffer.cpp \
 	src/api/client.cpp \
 	src/api/payloads.cpp \
-	src/api/client.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
 	src/ble/desktop.cpp \
