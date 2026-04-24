@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 import switchbot as sb
@@ -39,6 +40,8 @@ def create_app(config: dict) -> FastAPI:
     app.state.config = config
     app.state.engine = engine
     app.state.session_factory = session_factory
+
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
     @app.exception_handler(BadRequestError)
     def handle_bad_request(_: Request, exc: BadRequestError):

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bed Sensor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 24px;
+      max-width: 1000px;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+    }
+
+    .meta {
+      color: #555;
+      margin-bottom: 24px;
+    }
+
+    .chart-block {
+      margin-bottom: 32px;
+    }
+
+    canvas {
+      width: 100%;
+      max-height: 320px;
+    }
+
+    .error {
+      color: #b00020;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Bed Sensor</h1>
+  <div class="meta">
+    MAC: <code>EC:2E:84:06:4E:9A</code>
+  </div>
+
+  <div class="chart-block">
+    <h2>Temperature (°C)</h2>
+    <canvas id="tempChart"></canvas>
+  </div>
+
+  <div class="chart-block">
+    <h2>Humidity (%)</h2>
+    <canvas id="humidityChart"></canvas>
+  </div>
+
+  <div id="error" class="error"></div>
+
+  <script>
+    const API_KEY = "happydevilelephantsmoking";
+    const SENSOR_MAC = "EC:2E:84:06:4E:9A";
+    const LIMIT = 100;
+
+    async function loadData() {
+      const url = `/switchbot/readings?mac=${encodeURIComponent(SENSOR_MAC)}&limit=${LIMIT}`;
+
+      const response = await fetch(url, {
+        headers: {
+          "X-api-key": API_KEY
+        }
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status}\n${text}`);
+      }
+
+      const rows = await response.json();
+
+      // API returns newest first; reverse for charting left->right.
+      rows.reverse();
+
+      return rows.map(row => ({
+        x: new Date(row.timestamp),
+        temperature_c: row.temperature_c,
+        humidity_pct: row.humidity_pct
+      }));
+    }
+
+    function makeChart(canvasId, label, points, valueKey) {
+      const ctx = document.getElementById(canvasId);
+
+      return new Chart(ctx, {
+        type: "line",
+        data: {
+          datasets: [
+            {
+              label,
+              data: points
+                .filter(p => p[valueKey] !== null && p[valueKey] !== undefined)
+                .map(p => ({
+                  x: p.x,
+                  y: p[valueKey]
+                })),
+              borderWidth: 2,
+              pointRadius: 2,
+              tension: 0.15
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          parsing: false,
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                tooltipFormat: "yyyy-MM-dd HH:mm:ss"
+              }
+            },
+            y: {
+              beginAtZero: false
+            }
+          }
+        }
+      });
+    }
+
+    async function main() {
+      try {
+        const points = await loadData();
+
+        makeChart("tempChart", "Temperature °C", points, "temperature_c");
+        makeChart("humidityChart", "Humidity %", points, "humidity_pct");
+      } catch (err) {
+        document.getElementById("error").textContent = String(err);
+        console.error(err);
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
