@@ -313,8 +313,9 @@ void renderUi(const AppContext& app, bool doFullDraw) {
 #endif
 }
 
-void syncOutputs(AppContext& app) {
+void syncOutputs(AppContext& app, std::time_t now) {
     syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
+    api::maybeDrainBuffer(app.apiState.buffer, now, app.config.api.buffer, app.apiClient);
 
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);
@@ -337,7 +338,7 @@ void tick(AppContext& app) {
 
     app.bleScanner.poll();
     updateDomainState(app, now);
-    syncOutputs(app);
+    syncOutputs(app, now);
     sleepUntilNextDue(app);
 }
 
