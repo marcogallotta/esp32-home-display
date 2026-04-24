@@ -23,17 +23,26 @@ TransportResult mapCurlCode(CURLcode rc) {
             return TransportResult::Ok;
 
         case CURLE_OPERATION_TIMEDOUT:
+        case CURLE_CONNECT_TIMEOUT:
             return TransportResult::Timeout;
 
         case CURLE_SSL_CONNECT_ERROR:
         case CURLE_PEER_FAILED_VERIFICATION:
         case CURLE_SSL_CERTPROBLEM:
         case CURLE_SSL_ISSUER_ERROR:
+        case CURLE_SSL_CACERT_BADFILE:
             return TransportResult::TlsError;
+
+        case CURLE_COULDNT_CONNECT:
+        case CURLE_COULDNT_RESOLVE_HOST:
+        case CURLE_SEND_ERROR:
+        case CURLE_RECV_ERROR:
+            return TransportResult::NetworkError;
 
         case CURLE_FAILED_INIT:
         case CURLE_URL_MALFORMAT:
         case CURLE_NOT_BUILT_IN:
+        case CURLE_OUT_OF_MEMORY:
             return TransportResult::InternalError;
 
         default:

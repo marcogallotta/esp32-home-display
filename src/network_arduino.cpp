@@ -23,19 +23,22 @@ TransportResult mapHttpClientError(int code) {
     switch (code) {
         case HTTPC_ERROR_CONNECTION_REFUSED:
         case HTTPC_ERROR_CONNECTION_LOST:
-        case HTTPC_ERROR_SEND_HEADER_FAILED:
-        case HTTPC_ERROR_SEND_PAYLOAD_FAILED:
         case HTTPC_ERROR_NOT_CONNECTED:
             return TransportResult::NetworkError;
 
         case HTTPC_ERROR_READ_TIMEOUT:
             return TransportResult::Timeout;
 
+        case HTTPS_ERROR_TLS_HANDSHAKE_FAILED:
+            return TransportResult::TlsError;
+
         case HTTPC_ERROR_ENCODING:
         case HTTPC_ERROR_TOO_LESS_RAM:
             return TransportResult::InternalError;
 
         default:
+            // If the code is negative but not handled above,
+            // it's usually a low-level stream error.
             return TransportResult::NetworkError;
     }
 }
