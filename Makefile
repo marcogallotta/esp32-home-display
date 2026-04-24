@@ -8,7 +8,7 @@ CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
 LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 
 ARDUINO_CLI := arduino-cli
-FQBN := esp32:esp32:esp32s3:PartitionScheme=min_spiffs
+FQBN := esp32:esp32:esp32s3:PartitionScheme=no_ota
 PORT ?= /dev/ttyACM0
 ESP32_BUILD_DIR := esp32-build
 ESP32_DATA_DIR := esp32-data
@@ -99,7 +99,7 @@ $(BUILD_DIR)/spiffs.bin: config.json certs
 	cp config.json $(ESP32_DATA_DIR)
 	cp -R certs $(ESP32_DATA_DIR)
 	mkdir -p $(BUILD_DIR)
-	mkspiffs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x20000 $(BUILD_DIR)/spiffs.bin
+	mkspiffs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x1E000 $(BUILD_DIR)/spiffs.bin
 
 esp32-compile:
 	$(ARDUINO_CLI) compile \
@@ -112,7 +112,7 @@ esp32-compile:
 		$(SKETCH_DIR)
 
 esp32-upload-config: $(BUILD_DIR)/spiffs.bin
-	esptool --chip esp32s3 --port $(PORT) write_flash 0x3D0000 $(BUILD_DIR)/spiffs.bin
+	esptool --chip esp32s3 --port $(PORT) write_flash 0x210000 $(BUILD_DIR)/spiffs.bin
 
 esp32-upload: esp32-compile
 	$(ARDUINO_CLI) upload \
