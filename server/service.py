@@ -1,12 +1,13 @@
 from datetime import datetime
+from math import ceil
 from typing import Any
 
 from psycopg.errors import UniqueViolation
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, extract, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func, literal_column
+from sqlalchemy.sql import literal_column
 
 from common import (
     normalize_timestamp_to_utc,
@@ -16,7 +17,7 @@ from common import (
 )
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import Sensor
-from sensor_spec import ReadingLike, SensorSpec
+from sensor_spec import DataField, SensorSpec
 
 
 def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
@@ -52,20 +53,17 @@ def is_expected_unique_conflict(exc: IntegrityError, constraint_name: str) -> bo
 
 
 def classify_existing_reading(
-    existing_values: dict[str, object] | None,
-    incoming: ReadingLike,
-    sensor: SensorSpec,
-) -> dict[str, object]:
+    existing_values: dict[str, Any] | None,
+    incoming: Any,
+    data_fields: tuple[DataField, ...],
+) -> dict[str, Any]:
     if existing_values is None:
-        return {
-            "status": "ok",
-            "result": "created",
-        }
+        return {"status": "ok", "result": "created"}
 
-    warnings: list[dict[str, object]] = []
+    warnings = []
     merged = False
 
-    for field in sensor.data_fields:
+    for field in data_fields:
         existing_value = existing_values[field.name]
         incoming_value = getattr(incoming, field.name)
 
@@ -87,36 +85,19 @@ def classify_existing_reading(
             )
 
     if warnings and merged:
-        return {
-            "status": "ok",
-            "result": "merged_with_conflict",
-            "warnings": warnings,
-        }
-
+        return {"status": "ok", "result": "merged_with_conflict", "warnings": warnings}
     if warnings:
-        return {
-            "status": "ok",
-            "result": "conflict",
-            "warnings": warnings,
-        }
-
+        return {"status": "ok", "result": "conflict", "warnings": warnings}
     if merged:
-        return {
-            "status": "ok",
-            "result": "merged",
-        }
-
-    return {
-        "status": "ok",
-        "result": "duplicate",
-    }
+        return {"status": "ok", "result": "merged"}
+    return {"status": "ok", "result": "duplicate"}
 
 
 def ingest_reading(
     db: Session,
-    reading: ReadingLike,
+    reading: Any,
     sensor: SensorSpec,
-) -> dict[str, object]:
+):
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
 
@@ -144,7 +125,6 @@ def ingest_reading(
     excluded = insert_stmt.excluded
 
     merge_needed_checks = []
-
     for field in sensor.data_fields:
         col = field.column
         excluded_col = getattr(excluded, field.name)
@@ -177,35 +157,43 @@ def ingest_reading(
         row = None
 
     if existing_values is None and row is not None and row.inserted:
-        return {
-            "status": "ok",
-            "result": "created",
-        }
+        return {"status": "ok", "result": "created"}
 
-    return classify_existing_reading(existing_values, reading, sensor)
+    return classify_existing_reading(existing_values, reading, sensor.data_fields)
 
 
-def fetch_readings(
+def choose_bucket_seconds(window_seconds: float, max_points: int) -> int:
+    target = max(1, ceil(window_seconds / max_points))
+    nice_steps = [
+        1, 5, 10, 15, 30,
+        60, 120, 300, 600, 900, 1800,
+        3600, 7200, 14400, 21600, 43200,
+        86400, 172800, 604800,
+    ]
+    for step in nice_steps:
+        if step >= target:
+            return step
+    return nice_steps[-1]
+
+
+def rows_to_models(rows, reading_out: Any, selected_fields: list[str]):
+    return [
+        reading_out(**{field: row._mapping[field] for field in selected_fields})
+        for row in rows
+    ]
+
+
+def fetch_raw_readings(
     db: Session,
     mac: str,
     limit: int,
     before: datetime | None,
     after: datetime | None,
     sensor: SensorSpec,
-) -> list[object]:
-    mac = validate_mac_address(mac)
-    before = validate_query_timestamp("before", before)
-    after = validate_query_timestamp("after", after)
-
-    if before is not None and after is not None and after > before:
-        raise BadRequestError("after must be <= before")
-
-    sensor_row = db.get(Sensor, mac)
-    if sensor_row is None:
-        return []
-
-    selected_field_names = ["timestamp", *(field.name for field in sensor.data_fields)]
-    columns = [sensor.reading_model.timestamp, *(field.column for field in sensor.data_fields)]
+):
+    data_field_names = [field.name for field in sensor.data_fields]
+    selected_fields = ["timestamp", *data_field_names]
+    columns = [getattr(sensor.reading_model, field).label(field) for field in selected_fields]
 
     stmt = (
         select(*columns)
@@ -221,8 +209,113 @@ def fetch_readings(
         stmt = stmt.where(sensor.reading_model.timestamp >= after)
 
     rows = db.execute(stmt).all()
+    return rows_to_models(rows, sensor.reading_out, selected_fields)
 
-    return [
-        sensor.reading_out(**{name: getattr(row, name) for name in selected_field_names})
-        for row in rows
-    ]
+
+def fetch_window_readings(
+    db: Session,
+    mac: str,
+    start_ts: datetime,
+    end_ts: datetime,
+    max_points: int | None,
+    sensor: SensorSpec,
+):
+    data_field_names = [field.name for field in sensor.data_fields]
+    selected_fields = ["timestamp", *data_field_names]
+    columns = [getattr(sensor.reading_model, field).label(field) for field in selected_fields]
+
+    base_where = (
+        sensor.reading_model.mac == mac,
+        sensor.reading_model.timestamp >= start_ts,
+        sensor.reading_model.timestamp <= end_ts,
+    )
+
+    if max_points is None:
+        stmt = (
+            select(*columns)
+            .where(*base_where)
+            .order_by(sensor.reading_model.timestamp.desc())
+        )
+        rows = db.execute(stmt).all()
+        return rows_to_models(rows, sensor.reading_out, selected_fields)
+
+    window_seconds = max(1.0, (end_ts - start_ts).total_seconds())
+    bucket_seconds = choose_bucket_seconds(window_seconds, max_points)
+
+    timestamp_col = sensor.reading_model.timestamp
+    bucket_expr = func.floor(extract("epoch", timestamp_col) / bucket_seconds) * bucket_seconds
+    row_number = func.row_number().over(
+        partition_by=bucket_expr,
+        order_by=timestamp_col.desc(),
+    ).label("rn")
+
+    subquery = (
+        select(*columns, row_number)
+        .where(*base_where)
+        .subquery()
+    )
+
+    stmt = (
+        select(*[subquery.c[field] for field in selected_fields])
+        .where(subquery.c.rn == 1)
+        .order_by(subquery.c.timestamp.desc())
+    )
+
+    rows = db.execute(stmt).all()
+    return rows_to_models(rows, sensor.reading_out, selected_fields)
+
+
+def fetch_readings(
+    db: Session,
+    mac: str,
+    limit: int,
+    before: datetime | None,
+    after: datetime | None,
+    start_ts: datetime | None,
+    end_ts: datetime | None,
+    max_points: int | None,
+    sensor: SensorSpec,
+):
+    mac = validate_mac_address(mac)
+    before = validate_query_timestamp("before", before)
+    after = validate_query_timestamp("after", after)
+    start_ts = validate_query_timestamp("start_ts", start_ts)
+    end_ts = validate_query_timestamp("end_ts", end_ts)
+
+    if before is not None and after is not None and after > before:
+        raise BadRequestError("after must be <= before")
+
+    if (start_ts is None) != (end_ts is None):
+        raise BadRequestError("start_ts and end_ts must be provided together")
+
+    if max_points is not None and start_ts is None:
+        raise BadRequestError("max_points requires start_ts and end_ts")
+
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise BadRequestError("start_ts must be <= end_ts")
+
+    if start_ts is not None and (before is not None or after is not None):
+        raise BadRequestError("start_ts/end_ts cannot be combined with before/after")
+
+    sensor_row = db.get(Sensor, mac)
+    if sensor_row is None:
+        return []
+
+    if start_ts is not None and end_ts is not None:
+        return fetch_window_readings(
+            db=db,
+            mac=mac,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            max_points=max_points,
+            sensor=sensor,
+        )
+
+    return fetch_raw_readings(
+        db=db,
+        mac=mac,
+        limit=limit,
+        before=before,
+        after=after,
+        sensor=sensor,
+    )
