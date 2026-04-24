@@ -1,5 +1,6 @@
 #include "update.h"
 
+#include <cstdio>
 #include <optional>
 #include <string>
 
@@ -8,6 +9,29 @@
 #include "network.h"
 #include "salah/service.h"
 #include "salah/state.h"
+
+namespace {
+
+std::string formatFloat1(float value) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%.1f", value);
+    return std::string(buf);
+}
+
+std::string formatDate(const std::tm& time) {
+    char buf[16];
+    std::snprintf(
+        buf,
+        sizeof(buf),
+        "%04d-%02d-%02d",
+        time.tm_year + 1900,
+        time.tm_mon + 1,
+        time.tm_mday
+    );
+    return std::string(buf);
+}
+
+} // namespace
 
 void updateSalahState(
     const Config& config,
@@ -28,7 +52,7 @@ void updateSalahState(
         tomorrow = newTomorrow;
         oldDay = localTime.tm_mday;
 
-        logLine(LogLevel::Info, "Salah schedule updated for day " + std::to_string(oldDay));
+        logLine(LogLevel::Info, "Salah schedule updated for " + formatDate(localTime));
     }
 
     state.salah =
@@ -81,7 +105,7 @@ void updateSwitchbotState(
         logLine(
             LogLevel::Info,
             "SwitchBot " + label +
-            ": " + std::to_string(*row.reading.temperatureC) + "C" +
+            ": " + formatFloat1(*row.reading.temperatureC) + "C" +
             ", " + std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%" +
             ", age " + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m" +
             ", RSSI " + std::to_string(*row.reading.rssi)
@@ -141,7 +165,7 @@ void updateXiaomiState(
         std::string msg = "Xiaomi " + label + ":";
 
         if (row.reading.temperatureC.has_value()) {
-            msg += " " + std::to_string(*row.reading.temperatureC) + "C";
+            msg += " " + formatFloat1(*row.reading.temperatureC) + "C";
         }
         if (row.reading.moisturePct.has_value()) {
             msg += ", moisture " + std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%";

@@ -37,7 +37,7 @@ TransportResult mapHttpClientError(int code) {
             return TransportResult::NetworkError;
 
         default:
-            logLine(LogLevel::Warn, "network.arduino.unmapped_error code=" + std::to_string(code));
+            logLine(LogLevel::Warn, "Unmapped Arduino HTTP error code: " + std::to_string(code));
             return TransportResult::NetworkError;
     }
 }
@@ -77,13 +77,13 @@ public:
         const uint32_t start = ::millis();
         while (WiFi.status() != WL_CONNECTED) {
             if (::millis() - start >= timeoutMs) {
-                logLine(LogLevel::Warn, "network.wifi.timeout");
+                logLine(LogLevel::Warn, "WiFi connection timed out");
                 return false;
             }
             delay(250);
         }
 
-        logLine(LogLevel::Info, "network.wifi.connected");
+        logLine(LogLevel::Info, "WiFi connected");
         return true;
     }
 
@@ -111,9 +111,9 @@ private:
 
             logLine(
                 LogLevel::Error,
-                "network.begin_failed method=" +
+                "Failed to begin HTTP request: " +
                 std::string(methodName(request.method)) +
-                " url=" + request.url
+                " " + request.url
             );
 
             return resp;
@@ -143,10 +143,10 @@ private:
 
             logLine(
                 LogLevel::Debug,
-                "network.response method=" +
+                "HTTP response: " +
                 std::string(methodName(request.method)) +
-                " status=" + std::to_string(code) +
-                " url=" + request.url
+                " " + request.url +
+                ", status " + std::to_string(code)
             );
         } else {
             resp.transport = mapHttpClientError(code);
@@ -154,12 +154,12 @@ private:
 
             logLine(
                 LogLevel::Warn,
-                "network.failure method=" +
+                "HTTP request failed: " +
                 std::string(methodName(request.method)) +
-                " code=" + std::to_string(code) +
-                " transport=" + transportResultName(resp.transport) +
-                " error=\"" + resp.error + "\"" +
-                " url=" + request.url
+                " " + request.url +
+                ", code " + std::to_string(code) +
+                ", " + transportResultName(resp.transport) +
+                ", " + resp.error
             );
         }
 
