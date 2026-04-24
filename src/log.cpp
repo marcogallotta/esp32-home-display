@@ -1,5 +1,8 @@
 #include "log.h"
 
+#include <ctime>
+#include <string>
+
 #include "platform.h"
 
 const char* logLevelName(LogLevel level) {
@@ -17,8 +20,32 @@ const char* logLevelName(LogLevel level) {
     return "UNKNOWN";
 }
 
+std::string logTimestamp() {
+    if (!platform::hasValidTime()) {
+        return "t=unknown";
+    }
+
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+
+    if (localtime_r(&now, &tm) == nullptr) {
+        return "t=invalid";
+    }
+
+    char buf[32];
+    if (std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm) == 0) {
+        return "t=invalid";
+    }
+
+    return std::string(buf);
+}
+
 void logLine(LogLevel level, const std::string& msg) {
-    platform::printLine(std::string("[") + logLevelName(level) + "] " + msg);
+    platform::printLine(
+        "[" + logTimestamp() + "] " +
+        "[" + logLevelName(level) + "] " +
+        msg
+    );
 }
 
 std::string transportResultName(network::TransportResult result) {
@@ -26,11 +53,11 @@ std::string transportResultName(network::TransportResult result) {
         case network::TransportResult::Ok:
             return "ok";
         case network::TransportResult::InternalError:
-            return "internal_error";
+            return "internal error";
         case network::TransportResult::NetworkError:
-            return "network_error";
+            return "network error";
         case network::TransportResult::TlsError:
-            return "tls_error";
+            return "TLS error";
         case network::TransportResult::Timeout:
             return "timeout";
     }

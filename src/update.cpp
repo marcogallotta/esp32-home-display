@@ -3,9 +3,9 @@
 #include <optional>
 #include <string>
 
-#include "network.h"
 #include "forecast/openmeteo.h"
-#include "platform.h"
+#include "log.h"
+#include "network.h"
 #include "salah/service.h"
 #include "salah/state.h"
 
@@ -21,12 +21,14 @@ void updateSalahState(
         salah::Schedule newToday;
         salah::Schedule newTomorrow;
         if (!salah::computeSchedules(localTime, config, newToday, newTomorrow)) {
-            platform::printLine("Error computing salah schedules");
+            logLine(LogLevel::Error, "Failed to compute salah schedule");
             return;
         }
         today = newToday;
         tomorrow = newTomorrow;
         oldDay = localTime.tm_mday;
+
+        logLine(LogLevel::Info, "Salah schedule updated for day " + std::to_string(oldDay));
     }
 
     state.salah =
@@ -64,34 +66,27 @@ void updateSwitchbotState(
         row.reading.rssi = reading.rssi;
     }
 
-    platform::printLine("Sensors:");
     for (const auto& row : state.switchbotSensors) {
-        if (!row.reading.hasCompleteReading()) {
 #ifdef ARDUINO
-            platform::printLine(row.identity.shortName + ": no reading yet");
-#else
-            platform::printLine(row.identity.name + ": no reading yet");
-#endif
-            continue;
-        }
-
-#ifdef ARDUINO
-        const std::string label = row.identity.shortName.empty()
-            ? "?"
-            : std::string(1, row.identity.shortName[0]);
+        const std::string label = row.identity.shortName;
 #else
         const std::string label = row.identity.name;
 #endif
 
-        platform::printLine(
-            label + ": " +
-            std::to_string(*row.reading.temperatureC) + "C, " +
-            std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%, " +
-            std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m, " +
-            "rssi=" + std::to_string(*row.reading.rssi)
+        if (!row.reading.hasCompleteReading()) {
+            logLine(LogLevel::Info, "SwitchBot " + label + " has no reading yet");
+            continue;
+        }
+
+        logLine(
+            LogLevel::Info,
+            "SwitchBot " + label +
+            ": " + std::to_string(*row.reading.temperatureC) + "C" +
+            ", " + std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%" +
+            ", age " + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m" +
+            ", RSSI " + std::to_string(*row.reading.rssi)
         );
     }
-    platform::printLine("");
 }
 
 void updateXiaomiState(
@@ -131,58 +126,41 @@ void updateXiaomiState(
         row.reading.rssi = reading.rssi;
     }
 
-    platform::printLine("Xiaomi:");
     for (const auto& row : state.xiaomiSensors) {
-        if (!row.reading.hasAnyValue()) {
 #ifdef ARDUINO
-            platform::printLine(row.identity.shortName + ": no reading yet");
-#else
-            platform::printLine(row.identity.name + ": no reading yet");
-#endif
-            continue;
-        }
-
-#ifdef ARDUINO
-        const std::string label = row.identity.shortName.empty()
-            ? "?"
-            : std::string(1, row.identity.shortName[0]);
+        const std::string label = row.identity.shortName;
 #else
         const std::string label = row.identity.name;
 #endif
 
-        std::string line = label + ": ";
-        bool first = true;
+        if (!row.reading.hasAnyValue()) {
+            logLine(LogLevel::Info, "Xiaomi " + label + " has no reading yet");
+            continue;
+        }
 
-        auto appendPart = [&](const std::string& part) {
-            if (!first) {
-                line += ", ";
-            }
-            line += part;
-            first = false;
-        };
+        std::string msg = "Xiaomi " + label + ":";
 
         if (row.reading.temperatureC.has_value()) {
-            appendPart(std::to_string(*row.reading.temperatureC) + "C");
+            msg += " " + std::to_string(*row.reading.temperatureC) + "C";
         }
         if (row.reading.moisturePct.has_value()) {
-            appendPart(std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%");
+            msg += ", moisture " + std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%";
         }
         if (row.reading.lux.has_value()) {
-            appendPart("lux=" + std::to_string(*row.reading.lux));
+            msg += ", lux " + std::to_string(*row.reading.lux);
         }
         if (row.reading.conductivityUsCm.has_value()) {
-            appendPart("cond=" + std::to_string(*row.reading.conductivityUsCm));
+            msg += ", conductivity " + std::to_string(*row.reading.conductivityUsCm);
         }
         if (row.reading.lastSeenEpochS.has_value()) {
-            appendPart(std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m");
+            msg += ", age " + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m";
         }
         if (row.reading.rssi.has_value()) {
-            appendPart("rssi=" + std::to_string(*row.reading.rssi));
+            msg += ", RSSI " + std::to_string(*row.reading.rssi);
         }
 
-        platform::printLine(line);
+        logLine(LogLevel::Info, msg);
     }
-    platform::printLine("");
 }
 
 bool updateForecastState(const Config& config, State& state) {
@@ -196,24 +174,31 @@ bool updateForecastState(const Config& config, State& state) {
     const auto r = p.request(request);
 
     if (r.transport != network::TransportResult::Ok) {
-        p.log("Forecast transport failed: error=" + r.error);
+        logLine(
+            LogLevel::Warn,
+            "Forecast request failed: " + transportResultName(r.transport) +
+            ", " + r.error
+        );
         return false;
     }
 
     if (r.statusCode != 200) {
-        p.log("Forecast HTTP failed: status=" + std::to_string(r.statusCode));
+        logLine(
+            LogLevel::Warn,
+            "Forecast request failed with HTTP " + std::to_string(r.statusCode)
+        );
         return false;
     }
 
     forecast::ForecastData data;
     if (!forecast::parseForecastJson(r.body, data)) {
-        p.log("Forecast JSON parse failed");
+        logLine(LogLevel::Warn, "Failed to parse forecast JSON");
         return false;
     }
 
-    p.log("Forecast OK: count=" + std::to_string(data.count));
-
     state.forecast = data;
     state.hasForecast = true;
+
+    logLine(LogLevel::Info, "Forecast updated: " + std::to_string(data.count) + " days");
     return true;
 }

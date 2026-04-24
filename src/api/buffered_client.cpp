@@ -90,12 +90,12 @@ WriteResult BufferedClient::postSwitchbotReading(
 ) {
     const auto payload = makeSwitchbotPayload(identity, reading);
     if (!payload.has_value()) {
-        logLine(LogLevel::Warn, "api.switchbot.drop_invalid_payload mac=" + identity.mac);
+        logLine(LogLevel::Warn, "Dropping SwitchBot reading: invalid payload for " + identity.mac);
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        logLine(LogLevel::Warn, "api.switchbot.drop_buffer_full mac=" + identity.mac);
+        logLine(LogLevel::Warn, "Dropping SwitchBot reading: buffer full for " + identity.mac);
         return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
@@ -111,12 +111,12 @@ WriteResult BufferedClient::postXiaomiReading(
 ) {
     const auto payload = makeXiaomiPayload(identity, reading);
     if (!payload.has_value()) {
-        logLine(LogLevel::Warn, "api.xiaomi.drop_invalid_payload mac=" + identity.mac);
+        logLine(LogLevel::Warn, "Dropping Xiaomi reading: invalid payload for " + identity.mac);
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        logLine(LogLevel::Warn, "api.xiaomi.drop_buffer_full mac=" + identity.mac);
+        logLine(LogLevel::Warn, "Dropping Xiaomi reading: buffer full for " + identity.mac);
         return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
@@ -132,10 +132,7 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
         const BufferInsertResult insertResult =
             bufferRequest(buffer_, std::move(request), config_.api.buffer);
 
-        logLine(
-            LogLevel::Debug,
-            "api.fresh.buffered_due_to_backlog path=" + path
-        );
+        logLine(LogLevel::Debug, "Buffered request because backlog exists: " + path);
 
         return makeWriteResult(mapBufferInsertResult(insertResult));
     }
@@ -146,10 +143,8 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
         case FreshRequestDecision::Sent:
             logLine(
                 LogLevel::Info,
-                "api.fresh.sent path=" + request.path +
-                " transport=" + transportResultName(response.transport) +
-                " status=" + std::to_string(response.statusCode) +
-                " body=\"" + response.body + "\""
+                "API request sent: " + request.path +
+                ", HTTP " + std::to_string(response.statusCode)
             );
 
             return makeWriteResult(
@@ -162,11 +157,10 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
         case FreshRequestDecision::DropPermanent:
             logLine(
                 LogLevel::Warn,
-                "api.fresh.drop_permanent path=" + request.path +
-                " transport=" + transportResultName(response.transport) +
-                " status=" + std::to_string(response.statusCode) +
-                " error=\"" + response.error + "\"" +
-                " body=\"" + response.body + "\""
+                "Dropping API request permanently: " + request.path +
+                ", " + transportResultName(response.transport) +
+                ", HTTP " + std::to_string(response.statusCode) +
+                ", " + response.error
             );
 
             return makeWriteResult(
@@ -179,10 +173,10 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
         case FreshRequestDecision::Buffer: {
             logLine(
                 LogLevel::Warn,
-                "api.fresh.buffer path=" + request.path +
-                " transport=" + transportResultName(response.transport) +
-                " status=" + std::to_string(response.statusCode) +
-                " error=\"" + response.error + "\""
+                "API request buffered: " + request.path +
+                ", " + transportResultName(response.transport) +
+                ", HTTP " + std::to_string(response.statusCode) +
+                ", " + response.error
             );
 
             const BufferInsertResult insertResult =

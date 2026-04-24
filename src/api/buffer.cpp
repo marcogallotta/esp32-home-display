@@ -69,12 +69,12 @@ void logDroppedBufferedRequest(
 ) {
     logLine(
         LogLevel::Warn,
-        "api.buffer.drop path=" + request.path +
-        " transport=" + transportResultName(response.transport) +
-        " status=" + std::to_string(response.statusCode) +
-        " timeout_retries=" + std::to_string(request.timeoutRetryCount) +
-        " tls_retries=" + std::to_string(request.tlsRetryCount) +
-        " error=\"" + response.error + "\""
+        "Dropping buffered request to " + request.path +
+        ": " + transportResultName(response.transport) +
+        ", HTTP " + std::to_string(response.statusCode) +
+        ", timeout retries " + std::to_string(request.timeoutRetryCount) +
+        ", TLS retries " + std::to_string(request.tlsRetryCount) +
+        ", " + response.error
     );
 }
 
@@ -88,9 +88,9 @@ BufferInsertResult bufferRequest(
     if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
         logLine(
             LogLevel::Warn,
-            "api.buffer.insert_drop_full size=" + std::to_string(buffer.requests.size()) +
-            " cap=" + std::to_string(config.inMemory) +
-            " path=" + request.path
+            "Buffer full; dropping new request to " + request.path +
+            " (" + std::to_string(buffer.requests.size()) +
+            "/" + std::to_string(config.inMemory) + ")"
         );
         return BufferInsertResult::DroppedNewRequestBufferFull;
     }
@@ -100,8 +100,8 @@ BufferInsertResult bufferRequest(
 
     logLine(
         LogLevel::Info,
-        "api.buffer.insert path=" + path +
-        " size=" + std::to_string(buffer.requests.size())
+        "Buffered request to " + path +
+        " (" + std::to_string(buffer.requests.size()) + " queued)"
     );
 
     return BufferInsertResult::Buffered;
@@ -123,8 +123,8 @@ BufferDrainResult maybeDrainBuffer(
     if (!buffer.requests.empty()) {
         logLine(
             LogLevel::Debug,
-            "api.buffer.drain_start size=" + std::to_string(buffer.requests.size()) +
-            " cap=" + std::to_string(config.drainRateCap)
+            "Draining API buffer: " + std::to_string(buffer.requests.size()) +
+            " queued, cap " + std::to_string(config.drainRateCap)
         );
     }
 
@@ -149,8 +149,8 @@ BufferDrainResult maybeDrainBuffer(
 
             logLine(
                 LogLevel::Info,
-                "api.buffer.sent path=" + path +
-                " remaining=" + std::to_string(buffer.requests.size())
+                "Sent buffered request to " + path +
+                " (" + std::to_string(buffer.requests.size()) + " remaining)"
             );
 
             continue;
@@ -162,12 +162,10 @@ BufferDrainResult maybeDrainBuffer(
 
             logLine(
                 LogLevel::Warn,
-                "api.buffer.blocked path=" + request.path +
-                " transport=" + transportResultName(response.transport) +
-                " status=" + std::to_string(response.statusCode) +
-                " timeout_retries=" + std::to_string(request.timeoutRetryCount) +
-                " tls_retries=" + std::to_string(request.tlsRetryCount) +
-                " error=\"" + response.error + "\""
+                "Buffered request blocked: " + request.path +
+                ", " + transportResultName(response.transport) +
+                ", HTTP " + std::to_string(response.statusCode) +
+                ", " + response.error
             );
 
             result.blockedByRetryableFailure = true;

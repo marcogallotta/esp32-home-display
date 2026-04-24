@@ -15,6 +15,62 @@ bool isAccepted(api::BackendWriteResult result) {
            result == api::BackendWriteResult::Merged;
 }
 
+const char* writeStatusName(api::WriteStatus status) {
+    switch (status) {
+        case api::WriteStatus::Sent:
+            return "sent";
+        case api::WriteStatus::Buffered:
+            return "buffered";
+        case api::WriteStatus::DroppedPermanent:
+            return "dropped permanently";
+        case api::WriteStatus::DroppedBufferFull:
+            return "dropped because buffer is full";
+    }
+
+    return "unknown";
+}
+
+const char* backendWriteResultName(api::BackendWriteResult result) {
+    switch (result) {
+        case api::BackendWriteResult::Failed:
+            return "failed";
+        case api::BackendWriteResult::Created:
+            return "created";
+        case api::BackendWriteResult::Duplicate:
+            return "duplicate";
+        case api::BackendWriteResult::Merged:
+            return "merged";
+        case api::BackendWriteResult::Conflict:
+            return "conflict";
+    }
+
+    return "unknown";
+}
+
+void logApiWriteResult(
+    const char* sensorType,
+    const SensorIdentity& identity,
+    const api::WriteResult& response
+) {
+    const LogLevel level =
+        response.status == api::WriteStatus::DroppedPermanent ||
+        response.status == api::WriteStatus::DroppedBufferFull ||
+        response.backendResult == api::BackendWriteResult::Conflict ||
+        response.backendResult == api::BackendWriteResult::Failed
+            ? LogLevel::Warn
+            : LogLevel::Info;
+
+    logLine(
+        level,
+        std::string("API write result for ") +
+        sensorType +
+        " " + identity.name +
+        ": " + writeStatusName(response.status) +
+        ", backend " + backendWriteResultName(response.backendResult) +
+        ", HTTP " + std::to_string(response.httpStatusCode)
+    );
+}
+
 void logConflict(
     const char* sensorType,
     const SensorIdentity& identity,
@@ -22,12 +78,12 @@ void logConflict(
 ) {
     logLine(
         LogLevel::Warn,
-        std::string("api.conflict sensor_type=") +
+        std::string("API conflict for ") +
         sensorType +
-        " name=\"" + identity.name + "\"" +
-        " mac=" + identity.mac +
-        " status=" + std::to_string(response.httpStatusCode) +
-        " body=\"" + response.body + "\""
+        " " + identity.name +
+        " (" + identity.mac + ")" +
+        ": HTTP " + std::to_string(response.httpStatusCode) +
+        ", body: " + response.body
     );
 }
 
@@ -75,6 +131,8 @@ void syncApiState(
         const api::WriteResult response =
             client.postSwitchbotReading(sensor.identity, current);
 
+        logApiWriteResult("SwitchBot", sensor.identity, response);
+
         if (response.status != api::WriteStatus::Sent) {
             continue;
         }
@@ -82,7 +140,7 @@ void syncApiState(
         if (isAccepted(response.backendResult)) {
             lastSent = current;
         } else if (response.backendResult == api::BackendWriteResult::Conflict) {
-            logConflict("switchbot", sensor.identity, response);
+            logConflict("SwitchBot", sensor.identity, response);
             lastSent = SwitchbotReading{};
         }
     }
@@ -121,6 +179,8 @@ void syncApiState(
         const api::WriteResult response =
             client.postXiaomiReading(sensor.identity, pending.reading);
 
+        logApiWriteResult("Xiaomi", sensor.identity, response);
+
         if (response.status != api::WriteStatus::Sent) {
             continue;
         }
@@ -129,7 +189,7 @@ void syncApiState(
             lastSent = pending.reading;
             resetPending(pending);
         } else if (response.backendResult == api::BackendWriteResult::Conflict) {
-            logConflict("xiaomi", sensor.identity, response);
+            logConflict("Xiaomi", sensor.identity, response);
             lastSent = XiaomiReading{};
             resetPending(pending);
         }
