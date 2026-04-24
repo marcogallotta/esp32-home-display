@@ -14,6 +14,7 @@ class Client;
 
 struct BufferedRequest {
     std::string path;
+    std::string mac;
     std::string body;
     int timeoutRetryCount = 0;
     int tlsRetryCount = 0;

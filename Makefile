@@ -29,6 +29,7 @@ COMMON_SRC := \
 	src/api/buffer.cpp \
 	src/api/buffered_client.cpp \
 	src/api/client.cpp \
+	src/api/dropped_log.cpp \
 	src/api/payloads.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
@@ -99,7 +100,7 @@ $(BUILD_DIR)/littlefs.bin: config.json certs
 	cp config.json $(ESP32_DATA_DIR)
 	cp -R certs $(ESP32_DATA_DIR)
 	mkdir -p $(BUILD_DIR)
-	mklittlefs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x10E000 $(BUILD_DIR)/littlefs.bin
+	mklittlefs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x1E0000 $(BUILD_DIR)/littlefs.bin
 
 esp32-compile:
 	$(ARDUINO_CLI) compile \

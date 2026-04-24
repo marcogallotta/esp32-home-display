@@ -3,8 +3,9 @@
 #include <cstddef>
 #include <utility>
 
-#include "payloads.h"
 #include "../log.h"
+#include "dropped_log.h"
+#include "payloads.h"
 
 namespace api {
 namespace {
@@ -72,6 +73,61 @@ WriteResult makeWriteResult(
     return result;
 }
 
+void logDroppedFreshRequest(
+    const BufferedRequest& request,
+    const network::HttpResponse& response
+) {
+    logLine(
+        LogLevel::Warn,
+        "Dropping API request permanently: " + request.path +
+        " for " + request.mac +
+        ", " + transportResultName(response.transport) +
+        ", HTTP " + std::to_string(response.statusCode) +
+        ", " + response.error
+    );
+
+    std::string reason;
+    if (response.transport == network::TransportResult::InternalError) {
+        reason = "transport_internal_error";
+    } else if (response.transport == network::TransportResult::Ok) {
+        reason = "http_" + std::to_string(response.statusCode);
+    } else {
+        reason = "dropped";
+    }
+
+    dropped_log::appendDroppedRequest(
+        reason,
+        request.path,
+        request.mac,
+        request.body,
+        response.statusCode,
+        static_cast<int>(response.transport),
+        response.error,
+        request.timeoutRetryCount,
+        request.tlsRetryCount
+    );
+}
+
+void logDroppedBufferFullRequest(const BufferedRequest& request) {
+    logLine(
+        LogLevel::Warn,
+        "Dropping request because buffer is full: " + request.path +
+        " for " + request.mac
+    );
+
+    dropped_log::appendDroppedRequest(
+        "buffer_full",
+        request.path,
+        request.mac,
+        request.body,
+        0,
+        -1,
+        "",
+        request.timeoutRetryCount,
+        request.tlsRetryCount
+    );
+}
+
 } // namespace
 
 BufferedClient::BufferedClient(
@@ -95,12 +151,17 @@ WriteResult BufferedClient::postSwitchbotReading(
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        logLine(LogLevel::Warn, "Dropping SwitchBot reading: buffer full for " + identity.mac);
+        logDroppedBufferFullRequest(BufferedRequest{
+            "/switchbot/reading",
+            identity.mac,
+            toJson(*payload),
+        });
         return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
     return postBufferedRequest(BufferedRequest{
         "/switchbot/reading",
+        identity.mac,
         toJson(*payload),
     });
 }
@@ -116,12 +177,17 @@ WriteResult BufferedClient::postXiaomiReading(
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        logLine(LogLevel::Warn, "Dropping Xiaomi reading: buffer full for " + identity.mac);
+        logDroppedBufferFullRequest(BufferedRequest{
+            "/xiaomi/reading",
+            identity.mac,
+            toJson(*payload),
+        });
         return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
     return postBufferedRequest(BufferedRequest{
         "/xiaomi/reading",
+        identity.mac,
         toJson(*payload),
     });
 }
@@ -146,14 +212,7 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
             );
 
         case FreshRequestDecision::DropPermanent:
-            logLine(
-                LogLevel::Warn,
-                "Dropping API request permanently: " + request.path +
-                ", " + transportResultName(response.transport) +
-                ", HTTP " + std::to_string(response.statusCode) +
-                ", " + response.error
-            );
-
+            logDroppedFreshRequest(request, response);
             return makeWriteResult(
                 WriteStatus::DroppedPermanent,
                 BackendWriteResult::Failed,

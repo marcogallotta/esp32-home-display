@@ -2,8 +2,9 @@
 
 #include <utility>
 
-#include "client.h"
 #include "../log.h"
+#include "client.h"
+#include "dropped_log.h"
 
 namespace api {
 namespace {
@@ -63,6 +64,37 @@ BufferDecision decideBufferedResponse(
     return BufferDecision::Drop;
 }
 
+std::string droppedReason(
+    const BufferedRequest& request,
+    const network::HttpResponse& response
+) {
+    if (response.transport == network::TransportResult::Timeout) {
+        return request.timeoutRetryCount >= 2
+            ? "transport_timeout_retries_exhausted"
+            : "transport_timeout";
+    }
+
+    if (response.transport == network::TransportResult::TlsError) {
+        return request.tlsRetryCount >= 2
+            ? "transport_tls_retries_exhausted"
+            : "transport_tls_error";
+    }
+
+    if (response.transport == network::TransportResult::InternalError) {
+        return "transport_internal_error";
+    }
+
+    if (response.transport == network::TransportResult::NetworkError) {
+        return "transport_network_error";
+    }
+
+    if (response.transport == network::TransportResult::Ok) {
+        return "http_" + std::to_string(response.statusCode);
+    }
+
+    return "dropped";
+}
+
 void logDroppedBufferedRequest(
     const BufferedRequest& request,
     const network::HttpResponse& response
@@ -70,11 +102,24 @@ void logDroppedBufferedRequest(
     logLine(
         LogLevel::Warn,
         "Dropping buffered request to " + request.path +
+        " for " + request.mac +
         ": " + transportResultName(response.transport) +
         ", HTTP " + std::to_string(response.statusCode) +
         ", timeout retries " + std::to_string(request.timeoutRetryCount) +
         ", TLS retries " + std::to_string(request.tlsRetryCount) +
         ", " + response.error
+    );
+
+    dropped_log::appendDroppedRequest(
+        droppedReason(request, response),
+        request.path,
+        request.mac,
+        request.body,
+        response.statusCode,
+        static_cast<int>(response.transport),
+        response.error,
+        request.timeoutRetryCount,
+        request.tlsRetryCount
     );
 }
 
@@ -87,6 +132,7 @@ void logDrainPaused(
     logLine(
         LogLevel::Warn,
         "Buffer drain paused at " + request.path +
+        " for " + request.mac +
         ": " + transportResultName(response.transport) +
         ", HTTP " + std::to_string(response.statusCode) +
         ", " + response.error +
@@ -120,6 +166,7 @@ BufferInsertResult bufferRequest(
         logLine(
             LogLevel::Warn,
             "Buffer full; dropping new request to " + request.path +
+            " for " + request.mac +
             " (" + std::to_string(buffer.requests.size()) +
             "/" + std::to_string(config.inMemory) + ")"
         );
