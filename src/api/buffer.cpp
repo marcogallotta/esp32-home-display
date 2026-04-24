@@ -78,6 +78,37 @@ void logDroppedBufferedRequest(
     );
 }
 
+void logDrainPaused(
+    const BufferedRequest& request,
+    const network::HttpResponse& response,
+    const BufferDrainResult& result,
+    const BufferState& buffer
+) {
+    logLine(
+        LogLevel::Warn,
+        "Buffer drain paused at " + request.path +
+        ": " + transportResultName(response.transport) +
+        ", HTTP " + std::to_string(response.statusCode) +
+        ", " + response.error +
+        ". Sent " + std::to_string(result.sent) +
+        ", dropped " + std::to_string(result.dropped) +
+        ", remaining " + std::to_string(buffer.requests.size())
+    );
+}
+
+void logDrainSummary(const BufferDrainResult& result, const BufferState& buffer) {
+    if (result.attempted == 0) {
+        return;
+    }
+
+    logLine(
+        LogLevel::Info,
+        "Buffer drain complete: sent " + std::to_string(result.sent) +
+        ", dropped " + std::to_string(result.dropped) +
+        ", remaining " + std::to_string(buffer.requests.size())
+    );
+}
+
 } // namespace
 
 BufferInsertResult bufferRequest(
@@ -95,14 +126,17 @@ BufferInsertResult bufferRequest(
         return BufferInsertResult::DroppedNewRequestBufferFull;
     }
 
-    const std::string path = request.path;
+    const bool wasEmpty = buffer.requests.empty();
     buffer.requests.push_back(std::move(request));
 
-    logLine(
-        LogLevel::Info,
-        "Buffered request to " + path +
-        " (" + std::to_string(buffer.requests.size()) + " queued)"
-    );
+    if (wasEmpty) {
+        logLine(
+            LogLevel::Warn,
+            "Network issue; buffering API requests (" +
+            std::to_string(buffer.requests.size()) +
+            "/" + std::to_string(config.inMemory) + " queued)"
+        );
+    }
 
     return BufferInsertResult::Buffered;
 }
@@ -120,13 +154,15 @@ BufferDrainResult maybeDrainBuffer(
         return result;
     }
 
-    if (!buffer.requests.empty()) {
-        logLine(
-            LogLevel::Debug,
-            "Draining API buffer: " + std::to_string(buffer.requests.size()) +
-            " queued, cap " + std::to_string(config.drainRateCap)
-        );
+    if (buffer.requests.empty()) {
+        return result;
     }
+
+    logLine(
+        LogLevel::Info,
+        "Draining API buffer: " + std::to_string(buffer.requests.size()) +
+        " queued"
+    );
 
     buffer.nextDrainAllowedAtEpochS =
         now + static_cast<std::time_t>(config.drainRateTickS);
@@ -143,16 +179,8 @@ BufferDrainResult maybeDrainBuffer(
         const BufferDecision decision = decideBufferedResponse(request, response);
 
         if (decision == BufferDecision::Sent) {
-            const std::string path = request.path;
             buffer.requests.pop_front();
             result.sent += 1;
-
-            logLine(
-                LogLevel::Info,
-                "Sent buffered request to " + path +
-                " (" + std::to_string(buffer.requests.size()) + " remaining)"
-            );
-
             continue;
         }
 
@@ -160,16 +188,9 @@ BufferDrainResult maybeDrainBuffer(
             buffer.nextDrainAllowedAtEpochS =
                 now + static_cast<std::time_t>(config.drainRateTickS);
 
-            logLine(
-                LogLevel::Warn,
-                "Buffered request blocked: " + request.path +
-                ", " + transportResultName(response.transport) +
-                ", HTTP " + std::to_string(response.statusCode) +
-                ", " + response.error
-            );
-
             result.blockedByRetryableFailure = true;
-            break;
+            logDrainPaused(request, response, result, buffer);
+            return result;
         }
 
         logDroppedBufferedRequest(request, response);
@@ -177,6 +198,7 @@ BufferDrainResult maybeDrainBuffer(
         result.dropped += 1;
     }
 
+    logDrainSummary(result, buffer);
     return result;
 }
 

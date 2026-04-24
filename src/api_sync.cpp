@@ -47,11 +47,23 @@ const char* backendWriteResultName(api::BackendWriteResult result) {
     return "unknown";
 }
 
+bool shouldLogApiWriteResult(const api::WriteResult& response) {
+    if (response.status == api::WriteStatus::Buffered) {
+        return false;
+    }
+
+    return true;
+}
+
 void logApiWriteResult(
     const char* sensorType,
     const SensorIdentity& identity,
     const api::WriteResult& response
 ) {
+    if (!shouldLogApiWriteResult(response)) {
+        return;
+    }
+
     const LogLevel level =
         response.status == api::WriteStatus::DroppedPermanent ||
         response.status == api::WriteStatus::DroppedBufferFull ||

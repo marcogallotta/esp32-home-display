@@ -259,12 +259,40 @@ void updateUiDirtyState(AppContext& app, bool& doFullDraw) {
     app.currentUiState.dirty = computeDirtyRegions(app.previousState, app.currentState);
 }
 
-std::string dirtyRowList(const AppContext& app) {
+std::string dirtyParts(const DirtyRegions& dirty) {
     std::string out;
     bool first = true;
 
-    for (std::size_t i = 0; i < app.currentUiState.dirty.sensorRows.size(); ++i) {
-        if (!app.currentUiState.dirty.sensorRows[i]) {
+    auto append = [&](const char* part) {
+        if (!first) {
+            out += ", ";
+        }
+        out += part;
+        first = false;
+    };
+
+    if (dirty.salahName) {
+        append("salah");
+    }
+    if (dirty.minutes) {
+        append("minutes");
+    }
+    if (dirty.sensorsAny) {
+        append("sensors");
+    }
+    if (dirty.forecast) {
+        append("forecast");
+    }
+
+    return out.empty() ? "none" : out;
+}
+
+std::string dirtyRowList(const DirtyRegions& dirty) {
+    std::string out;
+    bool first = true;
+
+    for (std::size_t i = 0; i < dirty.sensorRows.size(); ++i) {
+        if (!dirty.sensorRows[i]) {
             continue;
         }
 
@@ -279,14 +307,11 @@ std::string dirtyRowList(const AppContext& app) {
 }
 
 void logDirtyRegions(const AppContext& app) {
+    const DirtyRegions& dirty = app.currentUiState.dirty;
+
     logLine(
         LogLevel::Debug,
-        std::string("Dirty UI: ") +
-        "salah=" + (app.currentUiState.dirty.salahName ? "yes" : "no") +
-        ", minutes=" + (app.currentUiState.dirty.minutes ? "yes" : "no") +
-        ", sensors=" + (app.currentUiState.dirty.sensorsAny ? "yes" : "no") +
-        ", forecast=" + (app.currentUiState.dirty.forecast ? "yes" : "no") +
-        ", rows=" + dirtyRowList(app)
+        "UI update: [" + dirtyParts(dirty) + "], rows=" + dirtyRowList(dirty)
     );
 }
 

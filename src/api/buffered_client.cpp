@@ -128,11 +128,8 @@ WriteResult BufferedClient::postXiaomiReading(
 
 WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
     if (hasBacklog(buffer_)) {
-        const std::string path = request.path;
         const BufferInsertResult insertResult =
             bufferRequest(buffer_, std::move(request), config_.api.buffer);
-
-        logLine(LogLevel::Debug, "Buffered request because backlog exists: " + path);
 
         return makeWriteResult(mapBufferInsertResult(insertResult));
     }
@@ -165,14 +162,6 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
             );
 
         case FreshRequestDecision::Buffer: {
-            logLine(
-                LogLevel::Warn,
-                "API request buffered: " + request.path +
-                ", " + transportResultName(response.transport) +
-                ", HTTP " + std::to_string(response.statusCode) +
-                ", " + response.error
-            );
-
             const BufferInsertResult insertResult =
                 bufferRequest(buffer_, std::move(request), config_.api.buffer);
 
