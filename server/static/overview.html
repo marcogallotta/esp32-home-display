@@ -284,18 +284,6 @@
   <script type="text/babel">
     const API_KEY = 'happydevilelephantsmoking';
 
-    const SENSOR_CONFIG = {
-      switchbot: [
-        { id: 'bed', name: 'Bed', mac: 'EC:2E:84:06:4E:9A' },
-        { id: 'south', name: 'South', mac: 'D5:3A:42:86:2C:63' },
-        { id: 'south-wall', name: 'South wall', mac: 'ED:2E:86:06:58:94' },
-        { id: 'west', name: 'West', mac: 'EC:2E:85:46:3D:30' },
-      ],
-      xiaomi: [
-        { id: 'cilantro', name: 'Cilantro', mac: '5C:85:7E:14:43:45' },
-      ],
-    };
-
     const RANGE_CONFIG = {
       '24h': { hours: 24, maxPoints: 96 },
       '3d':  { hours: 72, maxPoints: 144 },
@@ -367,6 +355,7 @@
 
     function SensorCard({ sensor, kind, selected, onClick, clickable = true }) {
       const stale = isStale(sensor.latestTimestamp);
+
       return (
         <Card
           className={`sensor-card ${selected ? 'selected' : ''} ${clickable ? '' : 'static'}`}
@@ -404,11 +393,15 @@
               <>
                 <div className="metric">
                   <div className="metric-label">Moisture</div>
-                  <div className="metric-value">{sensor.latestMoisture == null ? '—' : `${Math.round(sensor.latestMoisture)}%`}</div>
+                  <div className="metric-value">
+                    {sensor.latestMoisture == null ? '—' : `${Math.round(sensor.latestMoisture)}%`}
+                  </div>
                 </div>
                 <div className="metric">
                   <div className="metric-label">Lux</div>
-                  <div className="metric-value">{sensor.latestLux == null ? '—' : sensor.latestLux}</div>
+                  <div className="metric-value">
+                    {sensor.latestLux == null ? '—' : sensor.latestLux}
+                  </div>
                 </div>
               </>
             )}
@@ -442,12 +435,15 @@
 
     function App() {
       const [range, setRange] = React.useState('24h');
-      const [selectedSensor, setSelectedSensor] = React.useState('all');
+      const [selectedSensorId, setSelectedSensorId] = React.useState('all');
       const [xiaomiMetric, setXiaomiMetric] = React.useState('moisture_pct');
       const [showDerivedCharts, setShowDerivedCharts] = React.useState(false);
-      const [data, setData] = React.useState({ switchbot: {}, xiaomi: {} });
+
+      const [sensors, setSensors] = React.useState([]);
+      const [data, setData] = React.useState({});
       const [loading, setLoading] = React.useState(true);
       const [error, setError] = React.useState('');
+
       const [rangeWindow, setRangeWindow] = React.useState(() => {
         const cfg = RANGE_CONFIG['24h'];
         const endMs = Date.now();
@@ -467,8 +463,42 @@
       const vpdChart = React.useRef(null);
       const xiaomiChart = React.useRef(null);
 
+      const switchbotSensors = React.useMemo(
+        () => sensors.filter(sensor => sensor.type === 'switchbot'),
+        [sensors]
+      );
+
+      const xiaomiSensors = React.useMemo(
+        () => sensors.filter(sensor => sensor.type === 'xiaomi'),
+        [sensors]
+      );
+
+      const selectedSwitchbotSensor = React.useMemo(() => {
+        if (selectedSensorId === 'all') return null;
+        return switchbotSensors.find(sensor => sensor.id === selectedSensorId) || null;
+      }, [selectedSensorId, switchbotSensors]);
+
       React.useEffect(() => {
-        async function load() {
+        async function loadSensors() {
+          setLoading(true);
+          setError('');
+          try {
+            const loadedSensors = await fetchJson('/sensors');
+            setSensors(loadedSensors);
+          } catch (err) {
+            setError(String(err));
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        loadSensors();
+      }, []);
+
+      React.useEffect(() => {
+        if (sensors.length === 0) return;
+
+        async function loadReadings() {
           setLoading(true);
           setError('');
 
@@ -478,39 +508,22 @@
             const startMs = endMs - cfg.hours * 60 * 60 * 1000;
             const startTs = new Date(startMs).toISOString();
             const endTs = new Date(endMs).toISOString();
-            const maxPoints = cfg.maxPoints;
 
-            const switchbotEntries = await Promise.all(
-              SENSOR_CONFIG.switchbot.map(async (sensor) => {
+            const entries = await Promise.all(
+              sensors.map(async (sensor) => {
                 const params = new URLSearchParams({
-                  mac: sensor.mac,
                   start_ts: startTs,
                   end_ts: endTs,
-                  max_points: String(maxPoints),
+                  max_points: String(cfg.maxPoints),
                 });
-                const rows = await fetchJson(`/switchbot/readings?${params.toString()}`);
-                return [sensor.id, rows.slice().reverse()];
-              })
-            );
 
-            const xiaomiEntries = await Promise.all(
-              SENSOR_CONFIG.xiaomi.map(async (sensor) => {
-                const params = new URLSearchParams({
-                  mac: sensor.mac,
-                  start_ts: startTs,
-                  end_ts: endTs,
-                  max_points: String(maxPoints),
-                });
-                const rows = await fetchJson(`/xiaomi/readings?${params.toString()}`);
+                const rows = await fetchJson(`/sensors/${encodeURIComponent(sensor.id)}/readings?${params.toString()}`);
                 return [sensor.id, rows.slice().reverse()];
               })
             );
 
             setRangeWindow({ startMs, endMs });
-            setData({
-              switchbot: Object.fromEntries(switchbotEntries),
-              xiaomi: Object.fromEntries(xiaomiEntries),
-            });
+            setData(Object.fromEntries(entries));
           } catch (err) {
             setError(String(err));
           } finally {
@@ -518,12 +531,12 @@
           }
         }
 
-        load();
-      }, [range]);
+        loadReadings();
+      }, [range, sensors]);
 
       const switchbotSummary = React.useMemo(() => {
-        return SENSOR_CONFIG.switchbot.map((sensor) => {
-          const rows = data.switchbot[sensor.id] || [];
+        return switchbotSensors.map((sensor) => {
+          const rows = data[sensor.id] || [];
           const latest = rows[rows.length - 1];
           const latestTemp = latest?.temperature_c ?? null;
           const latestHumidity = latest?.humidity_pct ?? null;
@@ -539,11 +552,11 @@
             latestVpdText: formatVpd(latestVpd),
           };
         });
-      }, [data.switchbot]);
+      }, [switchbotSensors, data]);
 
       const xiaomiSummary = React.useMemo(() => {
-        return SENSOR_CONFIG.xiaomi.map((sensor) => {
-          const rows = data.xiaomi[sensor.id] || [];
+        return xiaomiSensors.map((sensor) => {
+          const rows = data[sensor.id] || [];
           const latest = rows[rows.length - 1];
           return {
             ...sensor,
@@ -552,19 +565,17 @@
             latestLux: latest?.light_lux ?? null,
           };
         });
-      }, [data.xiaomi]);
+      }, [xiaomiSensors, data]);
 
       React.useEffect(() => {
         if (!tempCanvas.current) return;
         if (tempChart.current) tempChart.current.destroy();
 
-        const sensors = selectedSensor === 'all'
-          ? SENSOR_CONFIG.switchbot
-          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
 
-        const datasets = sensors.map((sensor) => ({
+        const datasets = sensorsToPlot.map((sensor) => ({
           label: sensor.name,
-          data: (data.switchbot[sensor.id] || [])
+          data: (data[sensor.id] || [])
             .filter(r => r.temperature_c != null)
             .map(r => ({ x: new Date(r.timestamp), y: round1(r.temperature_c) })),
           borderWidth: 2,
@@ -587,19 +598,17 @@
             }
           }
         });
-      }, [data.switchbot, selectedSensor, rangeWindow]);
+      }, [switchbotSensors, selectedSwitchbotSensor, data, rangeWindow]);
 
       React.useEffect(() => {
         if (!humidityCanvas.current) return;
         if (humidityChart.current) humidityChart.current.destroy();
 
-        const sensors = selectedSensor === 'all'
-          ? SENSOR_CONFIG.switchbot
-          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
 
-        const datasets = sensors.map((sensor) => ({
+        const datasets = sensorsToPlot.map((sensor) => ({
           label: sensor.name,
-          data: (data.switchbot[sensor.id] || [])
+          data: (data[sensor.id] || [])
             .filter(r => r.humidity_pct != null)
             .map(r => ({ x: new Date(r.timestamp), y: Math.round(r.humidity_pct) })),
           borderWidth: 2,
@@ -622,19 +631,17 @@
             }
           }
         });
-      }, [data.switchbot, selectedSensor, rangeWindow]);
+      }, [switchbotSensors, selectedSwitchbotSensor, data, rangeWindow]);
 
       React.useEffect(() => {
         if (!showDerivedCharts || !absHumidityCanvas.current) return;
         if (absHumidityChart.current) absHumidityChart.current.destroy();
 
-        const sensors = selectedSensor === 'all'
-          ? SENSOR_CONFIG.switchbot
-          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
 
-        const datasets = sensors.map((sensor) => ({
+        const datasets = sensorsToPlot.map((sensor) => ({
           label: sensor.name,
-          data: (data.switchbot[sensor.id] || [])
+          data: (data[sensor.id] || [])
             .filter(r => r.temperature_c != null && r.humidity_pct != null)
             .map(r => ({
               x: new Date(r.timestamp),
@@ -660,19 +667,17 @@
             }
           }
         });
-      }, [data.switchbot, selectedSensor, showDerivedCharts, rangeWindow]);
+      }, [switchbotSensors, selectedSwitchbotSensor, data, showDerivedCharts, rangeWindow]);
 
       React.useEffect(() => {
         if (!showDerivedCharts || !vpdCanvas.current) return;
         if (vpdChart.current) vpdChart.current.destroy();
 
-        const sensors = selectedSensor === 'all'
-          ? SENSOR_CONFIG.switchbot
-          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
 
-        const datasets = sensors.map((sensor) => ({
+        const datasets = sensorsToPlot.map((sensor) => ({
           label: sensor.name,
-          data: (data.switchbot[sensor.id] || [])
+          data: (data[sensor.id] || [])
             .filter(r => r.temperature_c != null && r.humidity_pct != null)
             .map(r => ({
               x: new Date(r.timestamp),
@@ -698,16 +703,18 @@
             }
           }
         });
-      }, [data.switchbot, selectedSensor, showDerivedCharts, rangeWindow]);
+      }, [switchbotSensors, selectedSwitchbotSensor, data, showDerivedCharts, rangeWindow]);
 
       React.useEffect(() => {
         if (!xiaomiCanvas.current) return;
         if (xiaomiChart.current) xiaomiChart.current.destroy();
+        if (xiaomiSensors.length === 0) return;
 
-        const sensor = SENSOR_CONFIG.xiaomi[0];
+        const sensor = xiaomiSensors[0];
+
         const datasets = [{
           label: `${sensor.name} ${xiaomiMetric.replaceAll('_', ' ')}`,
-          data: (data.xiaomi[sensor.id] || [])
+          data: (data[sensor.id] || [])
             .filter(r => r[xiaomiMetric] != null)
             .map(r => ({ x: new Date(r.timestamp), y: r[xiaomiMetric] })),
           borderWidth: 2,
@@ -730,7 +737,7 @@
             }
           }
         });
-      }, [data.xiaomi, xiaomiMetric, rangeWindow]);
+      }, [xiaomiSensors, data, xiaomiMetric, rangeWindow]);
 
       return (
         <div className="wrap">
@@ -753,9 +760,12 @@
                 ))}
               </div>
 
-              <select value={selectedSensor} onChange={(e) => setSelectedSensor(e.target.value)}>
+              <select
+                value={selectedSensorId}
+                onChange={(e) => setSelectedSensorId(e.target.value)}
+              >
                 <option value="all">All SwitchBot</option>
-                {SENSOR_CONFIG.switchbot.map((sensor) => (
+                {switchbotSensors.map((sensor) => (
                   <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
                 ))}
               </select>
@@ -772,8 +782,8 @@
                 key={sensor.id}
                 sensor={sensor}
                 kind="switchbot"
-                selected={selectedSensor === sensor.id}
-                onClick={() => setSelectedSensor(selectedSensor === sensor.id ? 'all' : sensor.id)}
+                selected={selectedSensorId === sensor.id}
+                onClick={() => setSelectedSensorId(selectedSensorId === sensor.id ? 'all' : sensor.id)}
                 clickable={true}
               />
             ))}
@@ -826,18 +836,20 @@
               </>
             )}
 
-            <ChartCard
-              title="Xiaomi Detail"
-              right={
-                <select value={xiaomiMetric} onChange={(e) => setXiaomiMetric(e.target.value)}>
-                  <option value="moisture_pct">Moisture</option>
-                  <option value="light_lux">Lux</option>
-                  <option value="conductivity_us_cm">Conductivity</option>
-                  <option value="temperature_c">Temperature</option>
-                </select>
-              }
-              canvasRef={xiaomiCanvas}
-            />
+            {xiaomiSensors.length > 0 && (
+              <ChartCard
+                title="Xiaomi Detail"
+                right={
+                  <select value={xiaomiMetric} onChange={(e) => setXiaomiMetric(e.target.value)}>
+                    <option value="moisture_pct">Moisture</option>
+                    <option value="light_lux">Lux</option>
+                    <option value="conductivity_us_cm">Conductivity</option>
+                    <option value="temperature_c">Temperature</option>
+                  </select>
+                }
+                canvasRef={xiaomiCanvas}
+              />
+            )}
           </div>
         </div>
       );
