@@ -1,6 +1,7 @@
 from datetime import datetime
 from math import ceil
 from typing import Any
+from uuid import UUID
 
 from psycopg.errors import UniqueViolation
 from sqlalchemy import and_, extract, func, or_, select
@@ -27,21 +28,36 @@ def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
         raise UnauthorizedError("unauthorized")
 
 
-def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int):
-    sensor = db.get(Sensor, mac)
+def get_sensor_by_mac(db: Session, mac: str) -> Sensor | None:
+    return db.execute(select(Sensor).where(Sensor.mac == mac)).scalar_one_or_none()
+
+
+def get_sensor_by_id(db: Session, sensor_id: UUID) -> Sensor | None:
+    return db.execute(select(Sensor).where(Sensor.id == sensor_id)).scalar_one_or_none()
+
+
+def list_sensors(db: Session) -> list[Sensor]:
+    return db.execute(select(Sensor).order_by(Sensor.name)).scalars().all()
+
+
+def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int) -> Sensor:
+    sensor = get_sensor_by_mac(db, mac)
 
     if sensor is None:
         if name is None:
             raise BadRequestError("name required for unknown sensor")
-        db.add(Sensor(mac=mac, name=name, type=sensor_type))
+        sensor = Sensor(mac=mac, name=name, type=sensor_type)
+        db.add(sensor)
         db.flush()
-        return
+        return sensor
 
     if sensor.type != sensor_type:
         raise BadRequestError("sensor type does not match existing sensor")
 
     if name is not None and sensor.name != name:
         raise BadRequestError("sensor name does not match existing sensor")
+
+    return sensor
 
 
 def is_expected_unique_conflict(exc: IntegrityError, constraint_name: str) -> bool:
@@ -102,7 +118,7 @@ def ingest_reading(
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
 
     warn_soft_ranges(reading, sensor.soft_ranges)
-    ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
+    sensor_row = ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
 
     existing = db.execute(
         select(sensor.reading_model).where(
@@ -119,6 +135,7 @@ def ingest_reading(
         }
 
     values = reading.model_dump(exclude={"name"})
+    values["sensor_id"] = sensor_row.id
 
     table = sensor.reading_model.__table__
     insert_stmt = insert(table).values(**values)
@@ -163,17 +180,7 @@ def ingest_reading(
 
 
 def choose_bucket_seconds(window_seconds: float, max_points: int) -> int:
-    target = max(1, ceil(window_seconds / max_points))
-    nice_steps = [
-        1, 5, 10, 15, 30,
-        60, 120, 300, 600, 900, 1800,
-        3600, 7200, 14400, 21600, 43200,
-        86400, 172800, 604800,
-    ]
-    for step in nice_steps:
-        if step >= target:
-            return step
-    return nice_steps[-1]
+    return max(1, ceil(window_seconds / max_points))
 
 
 def rows_to_models(rows, reading_out: Any, selected_fields: list[str]):
@@ -297,8 +304,7 @@ def fetch_readings(
     if start_ts is not None and (before is not None or after is not None):
         raise BadRequestError("start_ts/end_ts cannot be combined with before/after")
 
-    sensor_row = db.get(Sensor, mac)
-    if sensor_row is None:
+    if get_sensor_by_mac(db, mac) is None:
         return []
 
     if start_ts is not None and end_ts is not None:

@@ -1,9 +1,11 @@
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import switchbot as sb
@@ -12,7 +14,31 @@ from common import READINGS_DEFAULT_LIMIT, READINGS_MAX_LIMIT
 from config import load_config
 from db import build_engine, build_session_factory
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
-from service import fetch_readings, ingest_reading, verify_api_key
+from models import SWITCHBOT_TYPE, XIAOMI_TYPE
+from service import (
+    fetch_readings,
+    get_sensor_by_id,
+    ingest_reading,
+    list_sensors,
+    verify_api_key,
+)
+
+
+class SensorOut(BaseModel):
+    id: UUID
+    name: str
+    type: str
+
+
+SENSOR_SPECS = {
+    SWITCHBOT_TYPE: sb.SENSOR,
+    XIAOMI_TYPE: xm.SENSOR,
+}
+
+SENSOR_TYPE_NAMES = {
+    SWITCHBOT_TYPE: "switchbot",
+    XIAOMI_TYPE: "xiaomi",
+}
 
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)):
@@ -60,6 +86,44 @@ def create_app(config: dict) -> FastAPI:
     @app.get("/health")
     def health():
         return {"ok": True}
+
+    @protected.get("/sensors", response_model=list[SensorOut])
+    def get_sensors(db: Session = Depends(get_db)):
+        return [
+            SensorOut(
+                id=sensor.id,
+                name=sensor.name,
+                type=SENSOR_TYPE_NAMES[sensor.type],
+            )
+            for sensor in list_sensors(db)
+        ]
+
+    @protected.get("/sensors/{sensor_id}/readings")
+    def get_sensor_readings(
+        sensor_id: UUID,
+        limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
+        before: datetime | None = None,
+        after: datetime | None = None,
+        start_ts: datetime | None = None,
+        end_ts: datetime | None = None,
+        max_points: Annotated[int | None, Query(gt=0, le=5000)] = None,
+        db: Session = Depends(get_db),
+    ):
+        sensor_row = get_sensor_by_id(db, sensor_id)
+        if sensor_row is None:
+            return []
+
+        return fetch_readings(
+            db=db,
+            mac=sensor_row.mac,
+            limit=limit,
+            before=before,
+            after=after,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            max_points=max_points,
+            sensor=SENSOR_SPECS[sensor_row.type],
+        )
 
     @protected.post("/switchbot/reading")
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
