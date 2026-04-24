@@ -366,7 +366,7 @@ void syncOutputs(AppContext& app, std::time_t now) {
 
 void sleepUntilNextDue(AppContext& app) {
     const int delayMs = computeSleepMs(std::time(nullptr), app.timing);
-    logLine(LogLevel::Debug, "Sleeping for " + std::to_string(delayMs / 1000) + " seconds");
+    logLine(LogLevel::Debug, "Next update check in " + std::to_string(delayMs / 1000) + " seconds");
     platform::delayMs(delayMs);
 }
 
