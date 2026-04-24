@@ -94,12 +94,12 @@ run: $(MAIN_TARGET)
 run-tests: $(TEST_TARGET)
 	$/$(TEST_TARGET)
 
-$(BUILD_DIR)/spiffs.bin: config.json certs
+$(BUILD_DIR)/littlefs.bin: config.json certs
 	mkdir -p $(ESP32_DATA_DIR)
 	cp config.json $(ESP32_DATA_DIR)
 	cp -R certs $(ESP32_DATA_DIR)
 	mkdir -p $(BUILD_DIR)
-	mkspiffs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x1E000 $(BUILD_DIR)/spiffs.bin
+	mklittlefs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x10E000 $(BUILD_DIR)/littlefs.bin
 
 esp32-compile:
 	$(ARDUINO_CLI) compile \
@@ -111,8 +111,8 @@ esp32-compile:
 		--build-property compiler.c.extra_flags="$(ESP32_EXTRA_INCLUDES)" \
 		$(SKETCH_DIR)
 
-esp32-upload-config: $(BUILD_DIR)/spiffs.bin
-	esptool --chip esp32s3 --port $(PORT) write_flash 0x210000 $(BUILD_DIR)/spiffs.bin
+esp32-upload-config: $(BUILD_DIR)/littlefs.bin
+	esptool --chip esp32s3 --port $(PORT) write_flash 0x210000 $(BUILD_DIR)/littlefs.bin
 
 esp32-upload: esp32-compile
 	$(ARDUINO_CLI) upload \

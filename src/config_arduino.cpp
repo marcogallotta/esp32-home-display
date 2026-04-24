@@ -2,12 +2,12 @@
 #include "config.h"
 #include "platform.h"
 
-#include <SPIFFS.h>
+#include <LittleFS.h>
 
 namespace {
 
 bool readTextFile(const std::string& path, std::string& out) {
-    File fin = SPIFFS.open(path.c_str(), "r");
+    File fin = LittleFS.open(path.c_str(), "r");
     if (!fin) {
         return false;
     }
@@ -26,7 +26,7 @@ bool loadPemFiles(Config& config) {
 } // namespace
 
 bool loadConfig(Config& config) {
-    if (!SPIFFS.begin(false)) {
+    if (!LittleFS.begin(false)) {
         return false;
     }
 
