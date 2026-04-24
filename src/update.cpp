@@ -31,6 +31,100 @@ std::string formatDate(const std::tm& time) {
     return std::string(buf);
 }
 
+std::string switchbotLabel(const SwitchbotSensorState& row) {
+#ifdef ARDUINO
+    return row.identity.shortName;
+#else
+    return row.identity.name;
+#endif
+}
+
+std::string xiaomiLabel(const XiaomiSensorState& row) {
+#ifdef ARDUINO
+    return row.identity.shortName;
+#else
+    return row.identity.name;
+#endif
+}
+
+void logSwitchbotSummary(const State& state, std::time_t now) {
+    int missing = 0;
+    std::string msg = "SwitchBot readings:";
+
+    for (const auto& row : state.switchbotSensors) {
+        const std::string label = switchbotLabel(row);
+
+        if (!row.reading.hasCompleteReading()) {
+            missing += 1;
+            continue;
+        }
+
+        msg += " " + label +
+            "=" + formatFloat1(*row.reading.temperatureC) + "C/" +
+            std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%" +
+            "/" + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m" +
+            "/RSSI " + std::to_string(*row.reading.rssi) + ";";
+    }
+
+    if (missing > 0) {
+        msg += " missing " + std::to_string(missing);
+    }
+
+    logLine(LogLevel::Info, msg);
+}
+
+void logXiaomiSummary(const State& state, std::time_t now) {
+    int missing = 0;
+    std::string msg = "Xiaomi readings:";
+
+    for (const auto& row : state.xiaomiSensors) {
+        const std::string label = xiaomiLabel(row);
+
+        if (!row.reading.hasAnyValue()) {
+            missing += 1;
+            continue;
+        }
+
+        msg += " " + label + "=";
+
+        bool first = true;
+        auto appendPart = [&](const std::string& part) {
+            if (!first) {
+                msg += "/";
+            }
+            msg += part;
+            first = false;
+        };
+
+        if (row.reading.temperatureC.has_value()) {
+            appendPart(formatFloat1(*row.reading.temperatureC) + "C");
+        }
+        if (row.reading.moisturePct.has_value()) {
+            appendPart("moisture " + std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%");
+        }
+        if (row.reading.lux.has_value()) {
+            appendPart("lux " + std::to_string(*row.reading.lux));
+        }
+        if (row.reading.conductivityUsCm.has_value()) {
+            appendPart("cond " + std::to_string(*row.reading.conductivityUsCm));
+        }
+        if (row.reading.lastSeenEpochS.has_value()) {
+            appendPart(std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m");
+        }
+        if (row.reading.rssi.has_value()) {
+            appendPart("RSSI " + std::to_string(*row.reading.rssi));
+        }
+
+        msg += ";";
+    }
+
+    if (missing > 0) {
+        msg += " missing " + std::to_string(missing);
+    }
+
+    logLine(LogLevel::Info, msg);
+}
+
 } // namespace
 
 void updateSalahState(
@@ -90,27 +184,7 @@ void updateSwitchbotState(
         row.reading.rssi = reading.rssi;
     }
 
-    for (const auto& row : state.switchbotSensors) {
-#ifdef ARDUINO
-        const std::string label = row.identity.shortName;
-#else
-        const std::string label = row.identity.name;
-#endif
-
-        if (!row.reading.hasCompleteReading()) {
-            logLine(LogLevel::Info, "SwitchBot " + label + " has no reading yet");
-            continue;
-        }
-
-        logLine(
-            LogLevel::Info,
-            "SwitchBot " + label +
-            ": " + formatFloat1(*row.reading.temperatureC) + "C" +
-            ", " + std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%" +
-            ", age " + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m" +
-            ", RSSI " + std::to_string(*row.reading.rssi)
-        );
-    }
+    logSwitchbotSummary(state, now);
 }
 
 void updateXiaomiState(
@@ -150,41 +224,7 @@ void updateXiaomiState(
         row.reading.rssi = reading.rssi;
     }
 
-    for (const auto& row : state.xiaomiSensors) {
-#ifdef ARDUINO
-        const std::string label = row.identity.shortName;
-#else
-        const std::string label = row.identity.name;
-#endif
-
-        if (!row.reading.hasAnyValue()) {
-            logLine(LogLevel::Info, "Xiaomi " + label + " has no reading yet");
-            continue;
-        }
-
-        std::string msg = "Xiaomi " + label + ":";
-
-        if (row.reading.temperatureC.has_value()) {
-            msg += " " + formatFloat1(*row.reading.temperatureC) + "C";
-        }
-        if (row.reading.moisturePct.has_value()) {
-            msg += ", moisture " + std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%";
-        }
-        if (row.reading.lux.has_value()) {
-            msg += ", lux " + std::to_string(*row.reading.lux);
-        }
-        if (row.reading.conductivityUsCm.has_value()) {
-            msg += ", conductivity " + std::to_string(*row.reading.conductivityUsCm);
-        }
-        if (row.reading.lastSeenEpochS.has_value()) {
-            msg += ", age " + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m";
-        }
-        if (row.reading.rssi.has_value()) {
-            msg += ", RSSI " + std::to_string(*row.reading.rssi);
-        }
-
-        logLine(LogLevel::Info, msg);
-    }
+    logXiaomiSummary(state, now);
 }
 
 bool updateForecastState(const Config& config, State& state) {

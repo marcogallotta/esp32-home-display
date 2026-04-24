@@ -259,6 +259,25 @@ void updateUiDirtyState(AppContext& app, bool& doFullDraw) {
     app.currentUiState.dirty = computeDirtyRegions(app.previousState, app.currentState);
 }
 
+std::string dirtyRowList(const AppContext& app) {
+    std::string out;
+    bool first = true;
+
+    for (std::size_t i = 0; i < app.currentUiState.dirty.sensorRows.size(); ++i) {
+        if (!app.currentUiState.dirty.sensorRows[i]) {
+            continue;
+        }
+
+        if (!first) {
+            out += ",";
+        }
+        out += std::to_string(i);
+        first = false;
+    }
+
+    return out.empty() ? "none" : out;
+}
+
 void logDirtyRegions(const AppContext& app) {
     logLine(
         LogLevel::Debug,
@@ -266,16 +285,9 @@ void logDirtyRegions(const AppContext& app) {
         "salah=" + (app.currentUiState.dirty.salahName ? "yes" : "no") +
         ", minutes=" + (app.currentUiState.dirty.minutes ? "yes" : "no") +
         ", sensors=" + (app.currentUiState.dirty.sensorsAny ? "yes" : "no") +
-        ", forecast=" + (app.currentUiState.dirty.forecast ? "yes" : "no")
+        ", forecast=" + (app.currentUiState.dirty.forecast ? "yes" : "no") +
+        ", rows=" + dirtyRowList(app)
     );
-
-    for (std::size_t i = 0; i < app.currentState.switchbotSensors.size(); ++i) {
-        logLine(
-            LogLevel::Debug,
-            "Dirty sensor row " + std::to_string(i) + ": " +
-            (app.currentUiState.dirty.sensorRows[i] ? "yes" : "no")
-        );
-    }
 }
 
 void renderUi(const AppContext& app, bool doFullDraw) {

@@ -141,12 +141,6 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
 
     switch (classifyFreshResponse(response)) {
         case FreshRequestDecision::Sent:
-            logLine(
-                LogLevel::Info,
-                "API request sent: " + request.path +
-                ", HTTP " + std::to_string(response.statusCode)
-            );
-
             return makeWriteResult(
                 WriteStatus::Sent,
                 parseBackendWriteResult(response),
