@@ -5,12 +5,14 @@
 #include <string>
 #include <utility>
 
+#include "api/buffered_client.h"
 #include "api/client.h"
 #include "api/state.h"
 #include "api_sync.h"
 #include "ble/scanner.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
+#include "log.h"
 #include "platform.h"
 #include "salah/types.h"
 #include "state.h"
@@ -57,6 +59,7 @@ struct AppContext {
 
     api::State apiState;
     api::Client apiClient;
+    api::BufferedClient bufferedApiClient;
 
     UiState currentUiState;
     bool hasPreviousState = false;
@@ -71,6 +74,7 @@ struct AppContext {
     explicit AppContext(const Config& cfg)
         : config(cfg),
           apiClient(config),
+          bufferedApiClient(config, apiState.buffer, apiClient),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
           bleScanner([this](const ble::AdvertisementEvent& event) {
@@ -83,7 +87,7 @@ struct AppContext {
 bool validateConfig([[maybe_unused]] const Config& config) {
 #ifdef ARDUINO
     if (config.switchbot.sensors.size() > kMaxVisibleSensorRows) {
-        platform::printLine("Config error: OLED supports at most 4 sensors");
+        logLine(LogLevel::Error, "Config error: OLED supports at most 4 SwitchBot sensor rows");
         return false;
     }
 #endif
@@ -164,7 +168,7 @@ void updateSalahIfDue(AppContext& app, std::time_t now) {
     if (!app.hasValidTime) {
         app.hasValidTime = platform::initTime(app.config);
         if (!app.hasValidTime) {
-            platform::printLine("Time sync failed");
+            logLine(LogLevel::Warn, "Time sync failed");
             markSalahUpdated(now, app.timing);
             return;
         }
@@ -203,8 +207,8 @@ void updateXiaomiIfDue(AppContext& app, std::time_t now) {
     if (allXiaomiRowsComplete(app.currentState)) {
         markXiaomiUpdated(now, app.config, app.timing);
     } else {
-        // TODO: change this retry from 1 minute to 5 minutes after debugging.
         app.timing.nextXiaomiDueEpochS = now + 60;
+        logLine(LogLevel::Debug, "Xiaomi reading incomplete; retrying in 60 seconds");
     }
 }
 
@@ -218,6 +222,7 @@ void updateForecastIfDue(AppContext& app, std::time_t now) {
             if (app.hasLastForecastData) {
                 app.currentState.forecast = app.lastForecastData;
                 app.currentState.hasForecast = true;
+                logLine(LogLevel::Info, "Using cached forecast");
             }
             markForecastUpdatedFailure(now, app.timing);
         }
@@ -254,21 +259,60 @@ void updateUiDirtyState(AppContext& app, bool& doFullDraw) {
     app.currentUiState.dirty = computeDirtyRegions(app.previousState, app.currentState);
 }
 
-void logDirtyRegions(const AppContext& app) {
-    platform::printLine("Dirty:");
-    platform::printLine(std::string("  salahName=") + (app.currentUiState.dirty.salahName ? "yes" : "no"));
-    platform::printLine(std::string("  minutes=") + (app.currentUiState.dirty.minutes ? "yes" : "no"));
-    platform::printLine(std::string("  sensorsAny=") + (app.currentUiState.dirty.sensorsAny ? "yes" : "no"));
-    platform::printLine(std::string("  forecast=") + (app.currentUiState.dirty.forecast ? "yes" : "no"));
+std::string dirtyParts(const DirtyRegions& dirty) {
+    std::string out;
+    bool first = true;
 
-    for (std::size_t i = 0; i < app.currentState.switchbotSensors.size(); ++i) {
-        platform::printLine(
-            "  sensor[" + std::to_string(i) + "]=" +
-            (app.currentUiState.dirty.sensorRows[i] ? "yes" : "no")
-        );
+    auto append = [&](const char* part) {
+        if (!first) {
+            out += ", ";
+        }
+        out += part;
+        first = false;
+    };
+
+    if (dirty.salahName) {
+        append("salah");
+    }
+    if (dirty.minutes) {
+        append("minutes");
+    }
+    if (dirty.sensorsAny) {
+        append("sensors");
+    }
+    if (dirty.forecast) {
+        append("forecast");
     }
 
-    platform::printLine("");
+    return out.empty() ? "none" : out;
+}
+
+std::string dirtyRowList(const DirtyRegions& dirty) {
+    std::string out;
+    bool first = true;
+
+    for (std::size_t i = 0; i < dirty.sensorRows.size(); ++i) {
+        if (!dirty.sensorRows[i]) {
+            continue;
+        }
+
+        if (!first) {
+            out += ",";
+        }
+        out += std::to_string(i);
+        first = false;
+    }
+
+    return out.empty() ? "none" : out;
+}
+
+void logDirtyRegions(const AppContext& app) {
+    const DirtyRegions& dirty = app.currentUiState.dirty;
+
+    logLine(
+        LogLevel::Debug,
+        "UI update: [" + dirtyParts(dirty) + "], rows=" + dirtyRowList(dirty)
+    );
 }
 
 void renderUi(const AppContext& app, bool doFullDraw) {
@@ -310,8 +354,9 @@ void renderUi(const AppContext& app, bool doFullDraw) {
 #endif
 }
 
-void syncOutputs(AppContext& app) {
-    syncApiState(app.currentState, app.apiState, app.apiClient);
+void syncOutputs(AppContext& app, std::time_t now) {
+    syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
+    api::maybeDrainBuffer(app.apiState.buffer, now, app.config.api.buffer, app.apiClient);
 
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);
@@ -321,8 +366,7 @@ void syncOutputs(AppContext& app) {
 
 void sleepUntilNextDue(AppContext& app) {
     const int delayMs = computeSleepMs(std::time(nullptr), app.timing);
-    platform::printLine("Sleeping for " + std::to_string(delayMs / 1000) + " seconds...");
-    platform::printLine("");
+    logLine(LogLevel::Debug, "Next update check in " + std::to_string(delayMs / 1000) + " seconds");
     platform::delayMs(delayMs);
 }
 
@@ -334,7 +378,7 @@ void tick(AppContext& app) {
 
     app.bleScanner.poll();
     updateDomainState(app, now);
-    syncOutputs(app);
+    syncOutputs(app, now);
     sleepUntilNextDue(app);
 }
 
@@ -343,7 +387,7 @@ void tick(AppContext& app) {
 void run() {
     Config tmpConfig;
     if (!loadConfig(tmpConfig)) {
-        platform::printLine("Failed to load config");
+        logLine(LogLevel::Error, "Failed to load config");
         return;
     }
 

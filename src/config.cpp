@@ -7,7 +7,7 @@
 bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     // Using a fixed-size for simplicity. You might need to adjust this based on your
     // expected config size and available memory.
-    StaticJsonDocument<2048> json;
+    StaticJsonDocument<4096> json;
     const DeserializationError err = deserializeJson(json, text.c_str(), text.size());
     if (err) {
         if (logErrors) {
@@ -54,9 +54,36 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("api.pem_file is not a string");
     }
 
+    const JsonObject apiBuffer = api["buffer"];
+    if (apiBuffer.isNull()) {
+        return fail("api.buffer is not an object");
+    }
+    if (!apiBuffer["in_memory"].is<int>()) {
+        return fail("api.buffer.in_memory is not an int");
+    }
+    if (!apiBuffer["drain_rate_cap"].is<int>()) {
+        return fail("api.buffer.drain_rate_cap is not an int");
+    }
+    if (!apiBuffer["drain_rate_tick_s"].is<int>()) {
+        return fail("api.buffer.drain_rate_tick_s is not an int");
+    }
+
     const char* apiBaseUrl = api["base_url"].as<const char*>();
     const char* apiKey = api["api_key"].as<const char*>();
     const char* apiPemFile = api["pem_file"].as<const char*>();
+    const int apiBufferInMemory = apiBuffer["in_memory"].as<int>();
+    const int apiBufferDrainRateCap = apiBuffer["drain_rate_cap"].as<int>();
+    const int apiBufferDrainRateTickS = apiBuffer["drain_rate_tick_s"].as<int>();
+
+    if (apiBufferInMemory <= 0) {
+        return fail("api.buffer.in_memory must be > 0");
+    }
+    if (apiBufferDrainRateCap <= 0) {
+        return fail("api.buffer.drain_rate_cap must be > 0");
+    }
+    if (apiBufferDrainRateTickS <= 0) {
+        return fail("api.buffer.drain_rate_tick_s must be > 0");
+    }
 
     const JsonObject location = json["location"];
     if (location.isNull()) {
@@ -211,6 +238,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.api.apiKey = apiKey;
     config.api.pemFile = apiPemFile;
     config.api.pem.clear();
+    config.api.buffer.inMemory = apiBufferInMemory;
+    config.api.buffer.drainRateCap = apiBufferDrainRateCap;
+    config.api.buffer.drainRateTickS = apiBufferDrainRateTickS;
 
     config.location.latitude = latitude;
     config.location.longitude = longitude;

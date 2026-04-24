@@ -9,11 +9,18 @@ struct ForecastConfig {
     int updateIntervalMinutes;
 };
 
+struct ApiBufferConfig {
+    int inMemory;
+    int drainRateCap;
+    int drainRateTickS;
+};
+
 struct ApiConfig {
     std::string baseUrl;
     std::string apiKey;
     std::string pemFile;
     std::string pem;
+    ApiBufferConfig buffer;
 };
 
 struct LocationConfig {

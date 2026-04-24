@@ -8,7 +8,7 @@ CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
 LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 
 ARDUINO_CLI := arduino-cli
-FQBN := esp32:esp32:esp32s3:PartitionScheme=min_spiffs
+FQBN := esp32:esp32:esp32s3:PartitionScheme=no_ota
 PORT ?= /dev/ttyACM0
 ESP32_BUILD_DIR := esp32-build
 ESP32_DATA_DIR := esp32-data
@@ -26,15 +26,18 @@ TEST_TARGET := $(BUILD_DIR)/tests
 COMMON_SRC := \
 	lib/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
+	src/api/buffer.cpp \
+	src/api/buffered_client.cpp \
 	src/api/client.cpp \
+	src/api/dropped_log.cpp \
 	src/api/payloads.cpp \
-	src/api/client.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
 	src/ble/desktop.cpp \
 	src/config.cpp \
 	src/config_desktop.cpp \
 	src/forecast/openmeteo.cpp \
+	src/log.cpp \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
 	src/salah/state.cpp \
@@ -92,14 +95,14 @@ run: $(MAIN_TARGET)
 run-tests: $(TEST_TARGET)
 	$/$(TEST_TARGET)
 
-$(BUILD_DIR)/spiffs.bin: config.json certs
+$(BUILD_DIR)/littlefs.bin: config.json certs
 	mkdir -p $(ESP32_DATA_DIR)
 	cp config.json $(ESP32_DATA_DIR)
 	cp -R certs $(ESP32_DATA_DIR)
 	mkdir -p $(BUILD_DIR)
-	mkspiffs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x20000 $(BUILD_DIR)/spiffs.bin
+	mklittlefs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x1E0000 $(BUILD_DIR)/littlefs.bin
 
-esp32-compile: $(BUILD_DIR)/spiffs.bin
+esp32-compile:
 	$(ARDUINO_CLI) compile \
 		--fqbn $(FQBN) \
 		--library $(CURDIR)/lib/PrayerTimes \
@@ -109,13 +112,15 @@ esp32-compile: $(BUILD_DIR)/spiffs.bin
 		--build-property compiler.c.extra_flags="$(ESP32_EXTRA_INCLUDES)" \
 		$(SKETCH_DIR)
 
+esp32-upload-config: $(BUILD_DIR)/littlefs.bin
+	esptool --chip esp32s3 --port $(PORT) write_flash 0x210000 $(BUILD_DIR)/littlefs.bin
+
 esp32-upload: esp32-compile
 	$(ARDUINO_CLI) upload \
 		-p $(PORT) \
 		--fqbn $(FQBN) \
 		$(SKETCH_DIR) \
 		--input-dir $(ESP32_BUILD_DIR)
-	esptool --chip esp32s3 --port $(PORT) write_flash 0x3D0000 $(BUILD_DIR)/spiffs.bin
 
 esp32-monitor:
 	$(ARDUINO_CLI) monitor -p $(PORT) -c baudrate=115200

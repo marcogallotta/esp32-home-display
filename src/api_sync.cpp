@@ -1,13 +1,10 @@
 #include "api_sync.h"
 
-#include <ctime>
 #include <cstdint>
+#include <ctime>
 #include <string>
 
-#include "api/backend_result.h"
-#include "api/payloads.h"
-#include "network.h"
-#include "platform.h"
+#include "log.h"
 
 namespace {
 constexpr std::int64_t kXiaomiBufferWindowSeconds = 60;
@@ -18,19 +15,87 @@ bool isAccepted(api::BackendWriteResult result) {
            result == api::BackendWriteResult::Merged;
 }
 
+const char* writeStatusName(api::WriteStatus status) {
+    switch (status) {
+        case api::WriteStatus::Sent:
+            return "sent";
+        case api::WriteStatus::Buffered:
+            return "buffered";
+        case api::WriteStatus::DroppedPermanent:
+            return "dropped permanently";
+        case api::WriteStatus::DroppedBufferFull:
+            return "dropped because buffer is full";
+    }
+
+    return "unknown";
+}
+
+const char* backendWriteResultName(api::BackendWriteResult result) {
+    switch (result) {
+        case api::BackendWriteResult::Failed:
+            return "failed";
+        case api::BackendWriteResult::Created:
+            return "created";
+        case api::BackendWriteResult::Duplicate:
+            return "duplicate";
+        case api::BackendWriteResult::Merged:
+            return "merged";
+        case api::BackendWriteResult::Conflict:
+            return "conflict";
+    }
+
+    return "unknown";
+}
+
+bool shouldLogApiWriteResult(const api::WriteResult& response) {
+    if (response.status == api::WriteStatus::Buffered) {
+        return false;
+    }
+
+    return true;
+}
+
+void logApiWriteResult(
+    const char* sensorType,
+    const SensorIdentity& identity,
+    const api::WriteResult& response
+) {
+    if (!shouldLogApiWriteResult(response)) {
+        return;
+    }
+
+    const LogLevel level =
+        response.status == api::WriteStatus::DroppedPermanent ||
+        response.status == api::WriteStatus::DroppedBufferFull ||
+        response.backendResult == api::BackendWriteResult::Conflict ||
+        response.backendResult == api::BackendWriteResult::Failed
+            ? LogLevel::Warn
+            : LogLevel::Info;
+
+    logLine(
+        level,
+        std::string("API write result for ") +
+        sensorType +
+        " " + identity.name +
+        ": " + writeStatusName(response.status) +
+        ", backend " + backendWriteResultName(response.backendResult) +
+        ", HTTP " + std::to_string(response.httpStatusCode)
+    );
+}
+
 void logConflict(
     const char* sensorType,
     const SensorIdentity& identity,
-    const network::HttpResponse& response
+    const api::WriteResult& response
 ) {
-    platform::printLine(
-        std::string("WARNING: API conflict for ") +
+    logLine(
+        LogLevel::Warn,
+        std::string("API conflict for ") +
         sensorType +
-        " sensor " +
-        identity.name +
+        " " + identity.name +
         " (" + identity.mac + ")" +
-        " status=" + std::to_string(response.statusCode) +
-        " body=" + response.body
+        ": HTTP " + std::to_string(response.httpStatusCode) +
+        ", body: " + response.body
     );
 }
 
@@ -64,7 +129,7 @@ void resetPending(api::XiaomiBufferedState& pending) {
 void syncApiState(
     const State& appState,
     api::State& apiState,
-    const api::Client& client
+    api::BufferedClient& client
 ) {
     for (std::size_t i = 0; i < appState.switchbotSensors.size(); ++i) {
         const auto& sensor = appState.switchbotSensors[i];
@@ -75,27 +140,19 @@ void syncApiState(
             continue;
         }
 
-        const auto payload = api::makeSwitchbotPayload(sensor.identity, current);
-        if (!payload.has_value()) {
+        const api::WriteResult response =
+            client.postSwitchbotReading(sensor.identity, current);
+
+        logApiWriteResult("SwitchBot", sensor.identity, response);
+
+        if (response.status != api::WriteStatus::Sent) {
             continue;
         }
 
-        const network::HttpResponse response = client.postSwitchbotReading(*payload);
-
-        if (response.transport != network::TransportResult::Ok) {
-            continue;
-        }
-
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-            continue;
-        }
-
-        const api::BackendWriteResult result = api::parseBackendWriteResult(response);
-
-        if (isAccepted(result)) {
+        if (isAccepted(response.backendResult)) {
             lastSent = current;
-        } else if (result == api::BackendWriteResult::Conflict) {
-            logConflict("switchbot", sensor.identity, response);
+        } else if (response.backendResult == api::BackendWriteResult::Conflict) {
+            logConflict("SwitchBot", sensor.identity, response);
             lastSent = SwitchbotReading{};
         }
     }
@@ -131,28 +188,20 @@ void syncApiState(
             continue;
         }
 
-        const auto payload = api::makeXiaomiPayload(sensor.identity, pending.reading);
-        if (!payload.has_value()) {
+        const api::WriteResult response =
+            client.postXiaomiReading(sensor.identity, pending.reading);
+
+        logApiWriteResult("Xiaomi", sensor.identity, response);
+
+        if (response.status != api::WriteStatus::Sent) {
             continue;
         }
 
-        const network::HttpResponse response = client.postXiaomiReading(*payload);
-
-        if (response.transport != network::TransportResult::Ok) {
-            continue;
-        }
-
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-            continue;
-        }
-
-        const api::BackendWriteResult result = api::parseBackendWriteResult(response);
-
-        if (isAccepted(result)) {
+        if (isAccepted(response.backendResult)) {
             lastSent = pending.reading;
             resetPending(pending);
-        } else if (result == api::BackendWriteResult::Conflict) {
-            logConflict("xiaomi", sensor.identity, response);
+        } else if (response.backendResult == api::BackendWriteResult::Conflict) {
+            logConflict("Xiaomi", sensor.identity, response);
             lastSent = XiaomiReading{};
             resetPending(pending);
         }
