@@ -133,52 +133,6 @@ def create_app(config: dict) -> FastAPI:
     def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 
-    @protected.get("/switchbot/readings", response_model=list[sb.ReadingOut])
-    def get_switchbot_readings(
-        mac: str,
-        limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
-        before: datetime | None = None,
-        after: datetime | None = None,
-        start_ts: datetime | None = None,
-        end_ts: datetime | None = None,
-        max_points: Annotated[int | None, Query(gt=0, le=5000)] = None,
-        db: Session = Depends(get_db),
-    ):
-        return fetch_readings(
-            db=db,
-            mac=mac,
-            limit=limit,
-            before=before,
-            after=after,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            max_points=max_points,
-            sensor=sb.SENSOR,
-        )
-
-    @protected.get("/xiaomi/readings", response_model=list[xm.ReadingOut])
-    def get_xiaomi_readings(
-        mac: str,
-        limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
-        before: datetime | None = None,
-        after: datetime | None = None,
-        start_ts: datetime | None = None,
-        end_ts: datetime | None = None,
-        max_points: Annotated[int | None, Query(gt=0, le=5000)] = None,
-        db: Session = Depends(get_db),
-    ):
-        return fetch_readings(
-            db=db,
-            mac=mac,
-            limit=limit,
-            before=before,
-            after=after,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            max_points=max_points,
-            sensor=xm.SENSOR,
-        )
-
     app.include_router(protected)
     return app
 
