@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ESP32 Sensor Overview</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --border: #e3e6eb;
+      --text: #13161a;
+      --muted: #667085;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --danger: #b42318;
+      --warning: #b54708;
+      --ok: #027a48;
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .topbar {
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      font-size: 32px;
+      line-height: 1.1;
+      margin: 0 0 6px;
+    }
+    .sub {
+      color: var(--muted);
+      margin: 0;
+      font-size: 14px;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .seg {
+      display: inline-flex;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 4px;
+      box-shadow: var(--shadow);
+    }
+    .seg button {
+      border: 0;
+      background: transparent;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .seg button.active {
+      background: var(--accent);
+      color: white;
+    }
+    select {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: white;
+      padding: 10px 12px;
+      font-size: 14px;
+      box-shadow: var(--shadow);
+    }
+    .section-title {
+      margin: 22px 0 10px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+    }
+    .sensor-card {
+      padding: 16px;
+      cursor: pointer;
+      transition: 140ms ease;
+    }
+    .sensor-card:hover {
+      transform: translateY(-1px);
+    }
+    .sensor-card.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .sensor-name {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 4px;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pill {
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .pill.ok { background: #ecfdf3; color: var(--ok); }
+    .pill.warn { background: #fff7ed; color: var(--warning); }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px;
+      background: #fcfcfd;
+    }
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .metric-value {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .charts {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 6px;
+    }
+    .ghost-btn {
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--muted);
+      border-radius: 12px;
+      padding: 8px 12px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      font-size: 14px;
+    }
+    .ghost-btn:hover {
+      color: var(--text);
+    }
+    .chart-card {
+      padding: 16px;
+    }
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .chart-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0;
+    }
+    .chart-box {
+      height: 320px;
+      position: relative;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    @media (max-width: 700px) {
+      .wrap { padding: 12px; }
+      h1 { font-size: 26px; }
+      .chart-box { height: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const SENSOR_CONFIG = {
+      switchbot: [
+        { id: 'bed', name: 'Bed', mac: 'EC:2E:84:06:4E:9A' },
+        { id: 'south', name: 'South', mac: 'D5:3A:42:86:2C:63' },
+        { id: 'south-wall', name: 'South wall', mac: 'ED:2E:86:06:58:94' },
+        { id: 'west', name: 'West', mac: 'EC:2E:85:46:3D:30' },
+      ],
+      xiaomi: [
+        { id: 'cilantro', name: 'Cilantro', mac: '5C:85:7E:14:43:45' },
+      ],
+    };
+
+    const API_KEY = 'happydevilelephantsmoking';
+
+    function round1(value) {
+      return value == null ? null : Math.round(value * 10) / 10;
+    }
+
+    function formatTemp(value) {
+      return value == null ? '—' : `${round1(value).toFixed(1)}°C`;
+    }
+
+    function formatPct(value) {
+      return value == null ? '—' : `${Math.round(value)}%`;
+    }
+
+    function calcAbsoluteHumidity(tempC, rhPct) {
+      if (tempC == null || rhPct == null) return null;
+      const svp = 6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5));
+      const avp = svp * (rhPct / 100);
+      return (2.1674 * avp) / (273.15 + tempC) * 100;
+    }
+
+    function calcVpd(tempC, rhPct) {
+      if (tempC == null || rhPct == null) return null;
+      const svp = 0.6108 * Math.exp((17.27 * tempC) / (tempC + 237.3));
+      return svp * (1 - rhPct / 100);
+    }
+
+    function formatAbsoluteHumidity(value) {
+      return value == null ? '—' : `${round1(value).toFixed(1)} g/m³`;
+    }
+
+    function formatVpd(value) {
+      return value == null ? '—' : `${round1(value).toFixed(1)} kPa`;
+    }
+
+    function formatAgo(ts) {
+      if (!ts) return 'No data';
+      const diffMin = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
+      if (diffMin < 1) return 'just now';
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const h = Math.round(diffMin / 60);
+      if (h < 48) return `${h}h ago`;
+      return `${Math.round(h / 24)}d ago`;
+    }
+
+    function isStale(ts) {
+      if (!ts) return true;
+      return (Date.now() - new Date(ts).getTime()) > 2 * 60 * 60 * 1000;
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url, { headers: { 'X-api-key': API_KEY } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      return res.json();
+    }
+
+    function Card({ className = '', children, onClick }) {
+      return <div className={`card ${className}`} onClick={onClick}>{children}</div>;
+    }
+
+    function SensorCard({ sensor, kind, selected, onClick }) {
+      const stale = isStale(sensor.latestTimestamp);
+      return (
+        <Card className={`sensor-card ${selected ? 'selected' : ''}`} onClick={onClick}>
+          <div className="row">
+            <div>
+              <div className="sensor-name">{sensor.name}</div>
+              <div className="muted">Updated {formatAgo(sensor.latestTimestamp)}</div>
+            </div>
+            <div className={`pill ${stale ? 'warn' : 'ok'}`}>{stale ? 'Stale' : 'Live'}</div>
+          </div>
+
+          <div className="metric-grid">
+            {kind === 'switchbot' ? (
+              <>
+                <div className="metric">
+                  <div className="metric-label">Temp</div>
+                  <div className="metric-value">{sensor.latestTempText}</div>
+                </div>
+                <div className="metric">
+                  <div className="metric-label">Humidity</div>
+                  <div className="metric-value">{sensor.latestHumidityText}</div>
+                </div>
+                <div className="metric">
+                  <div className="metric-label">Abs humidity</div>
+                  <div className="metric-value">{sensor.latestAbsoluteHumidityText}</div>
+                </div>
+                <div className="metric">
+                  <div className="metric-label">VPD</div>
+                  <div className="metric-value">{sensor.latestVpdText}</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="metric">
+                  <div className="metric-label">Moisture</div>
+                  <div className="metric-value">{sensor.latestMoisture ?? '—'}{sensor.latestMoisture != null ? '%' : ''}</div>
+                </div>
+                <div className="metric">
+                  <div className="metric-label">Lux</div>
+                  <div className="metric-value">{sensor.latestLux ?? '—'}</div>
+                </div>
+              </>
+            )}
+          </div>
+        </Card>
+      );
+    }
+
+    function ChartCard({ title, right, canvasRef }) {
+      return (
+        <Card className="chart-card">
+          <div className="chart-head">
+            <h3 className="chart-title">{title}</h3>
+            {right}
+          </div>
+          <div className="chart-box">
+            <canvas ref={canvasRef}></canvas>
+          </div>
+        </Card>
+      );
+    }
+
+    function App() {
+      const [range, setRange] = React.useState('24h');
+      const [selectedSensor, setSelectedSensor] = React.useState('all');
+      const [xiaomiMetric, setXiaomiMetric] = React.useState('moisture_pct');
+      const [showDerivedCharts, setShowDerivedCharts] = React.useState(false);
+      const [data, setData] = React.useState({ switchbot: {}, xiaomi: {} });
+      const [loading, setLoading] = React.useState(true);
+      const [error, setError] = React.useState('');
+
+      const tempCanvas = React.useRef(null);
+      const humidityCanvas = React.useRef(null);
+      const absHumidityCanvas = React.useRef(null);
+      const vpdCanvas = React.useRef(null);
+      const xiaomiCanvas = React.useRef(null);
+      const tempChart = React.useRef(null);
+      const humidityChart = React.useRef(null);
+      const absHumidityChart = React.useRef(null);
+      const vpdChart = React.useRef(null);
+      const xiaomiChart = React.useRef(null);
+
+      const rangeToLimit = { '24h': 100, '3d': 300, '7d': 700, '30d': 1000 };
+
+      React.useEffect(() => {
+        async function load() {
+          setLoading(true);
+          setError('');
+          try {
+            const switchbotEntries = await Promise.all(
+              SENSOR_CONFIG.switchbot.map(async (sensor) => {
+                const rows = await fetchJson(`/switchbot/readings?mac=${encodeURIComponent(sensor.mac)}&limit=${rangeToLimit[range]}`);
+                return [sensor.id, rows.slice().reverse()];
+              })
+            );
+
+            const xiaomiEntries = await Promise.all(
+              SENSOR_CONFIG.xiaomi.map(async (sensor) => {
+                const rows = await fetchJson(`/xiaomi/readings?mac=${encodeURIComponent(sensor.mac)}&limit=${rangeToLimit[range]}`);
+                return [sensor.id, rows.slice().reverse()];
+              })
+            );
+
+            setData({
+              switchbot: Object.fromEntries(switchbotEntries),
+              xiaomi: Object.fromEntries(xiaomiEntries),
+            });
+          } catch (err) {
+            setError(String(err));
+          } finally {
+            setLoading(false);
+          }
+        }
+        load();
+      }, [range]);
+
+      const switchbotSummary = React.useMemo(() => {
+        return SENSOR_CONFIG.switchbot.map((sensor) => {
+          const rows = data.switchbot[sensor.id] || [];
+          const latest = rows[rows.length - 1];
+          const latestTemp = latest?.temperature_c ?? null;
+          const latestHumidity = latest?.humidity_pct ?? null;
+          const latestAbsoluteHumidity = calcAbsoluteHumidity(latestTemp, latestHumidity);
+          const latestVpd = calcVpd(latestTemp, latestHumidity);
+          return {
+            ...sensor,
+            latestTimestamp: latest?.timestamp,
+            latestTemp,
+            latestHumidity,
+            latestAbsoluteHumidity,
+            latestVpd,
+            latestTempText: formatTemp(latestTemp),
+            latestHumidityText: formatPct(latestHumidity),
+            latestAbsoluteHumidityText: formatAbsoluteHumidity(latestAbsoluteHumidity),
+            latestVpdText: formatVpd(latestVpd),
+          };
+        });
+      }, [data.switchbot]);
+
+      const xiaomiSummary = React.useMemo(() => {
+        return SENSOR_CONFIG.xiaomi.map((sensor) => {
+          const rows = data.xiaomi[sensor.id] || [];
+          const latest = rows[rows.length - 1];
+          return {
+            ...sensor,
+            latestTimestamp: latest?.timestamp,
+            latestTemp: latest?.temperature_c ?? null,
+            latestMoisture: latest?.moisture_pct ?? null,
+            latestLux: latest?.light_lux ?? null,
+            latestConductivity: latest?.conductivity_us_cm ?? null,
+          };
+        });
+      }, [data.xiaomi]);
+
+      React.useEffect(() => {
+        if (!tempCanvas.current) return;
+        if (tempChart.current) tempChart.current.destroy();
+
+        const sensors = selectedSensor === 'all'
+          ? SENSOR_CONFIG.switchbot
+          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+
+        const datasets = sensors.map((sensor) => ({
+          label: sensor.name,
+          data: (data.switchbot[sensor.id] || [])
+            .filter(r => r.temperature_c != null)
+            .map(r => ({ x: new Date(r.timestamp), y: round1(r.temperature_c) })),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+        }));
+
+        tempChart.current = new Chart(tempCanvas.current, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              y: { title: { display: true, text: '°C' } }
+            }
+          }
+        });
+      }, [data.switchbot, selectedSensor]);
+
+      React.useEffect(() => {
+        if (!humidityCanvas.current) return;
+        if (humidityChart.current) humidityChart.current.destroy();
+
+        const sensors = selectedSensor === 'all'
+          ? SENSOR_CONFIG.switchbot
+          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+
+        const datasets = sensors.map((sensor) => ({
+          label: sensor.name,
+          data: (data.switchbot[sensor.id] || [])
+            .filter(r => r.humidity_pct != null)
+            .map(r => ({ x: new Date(r.timestamp), y: Math.round(r.humidity_pct) })),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+        }));
+
+        humidityChart.current = new Chart(humidityCanvas.current, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              y: { title: { display: true, text: '%' } }
+            }
+          }
+        });
+      }, [data.switchbot, selectedSensor]);
+
+      React.useEffect(() => {
+        if (!absHumidityCanvas.current) return;
+        if (absHumidityChart.current) absHumidityChart.current.destroy();
+
+        const sensors = selectedSensor === 'all'
+          ? SENSOR_CONFIG.switchbot
+          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+
+        const datasets = sensors.map((sensor) => ({
+          label: sensor.name,
+          data: (data.switchbot[sensor.id] || [])
+            .filter(r => r.temperature_c != null && r.humidity_pct != null)
+            .map(r => ({ x: new Date(r.timestamp), y: round1(calcAbsoluteHumidity(r.temperature_c, r.humidity_pct)) })),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+        }));
+
+        absHumidityChart.current = new Chart(absHumidityCanvas.current, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              y: { title: { display: true, text: 'g/m³' } }
+            }
+          }
+        });
+      }, [data.switchbot, selectedSensor, showDerivedCharts]);
+
+      React.useEffect(() => {
+        if (!vpdCanvas.current) return;
+        if (vpdChart.current) vpdChart.current.destroy();
+
+        const sensors = selectedSensor === 'all'
+          ? SENSOR_CONFIG.switchbot
+          : SENSOR_CONFIG.switchbot.filter(s => s.id === selectedSensor);
+
+        const datasets = sensors.map((sensor) => ({
+          label: sensor.name,
+          data: (data.switchbot[sensor.id] || [])
+            .filter(r => r.temperature_c != null && r.humidity_pct != null)
+            .map(r => ({ x: new Date(r.timestamp), y: round1(calcVpd(r.temperature_c, r.humidity_pct)) })),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+        }));
+
+        vpdChart.current = new Chart(vpdCanvas.current, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              y: { title: { display: true, text: 'kPa' } }
+            }
+          }
+        });
+      }, [data.switchbot, selectedSensor, showDerivedCharts]);
+
+      React.useEffect(() => {
+        if (!xiaomiCanvas.current) return;
+        if (xiaomiChart.current) xiaomiChart.current.destroy();
+
+        const sensor = SENSOR_CONFIG.xiaomi[0];
+        const datasets = [{
+          label: `${sensor.name} ${xiaomiMetric.replace('_', ' ')}`,
+          data: (data.xiaomi[sensor.id] || [])
+            .filter(r => r[xiaomiMetric] != null)
+            .map(r => ({ x: new Date(r.timestamp), y: r[xiaomiMetric] })),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+        }];
+
+        xiaomiChart.current = new Chart(xiaomiCanvas.current, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              y: { title: { display: true, text: xiaomiMetric } }
+            }
+          }
+        });
+      }, [data.xiaomi, xiaomiMetric]);
+
+      return (
+        <div className="wrap">
+          <div className="topbar">
+            <div>
+              <h1>Sensor Overview</h1>
+              <p className="sub">Cheap insight first. Decisions later.</p>
+            </div>
+            <div className="controls">
+              <div className="seg">
+                {['24h', '3d', '7d', '30d'].map((value) => (
+                  <button
+                    key={value}
+                    className={range === value ? 'active' : ''}
+                    onClick={() => setRange(value)}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+              <select value={selectedSensor} onChange={(e) => setSelectedSensor(e.target.value)}>
+                <option value="all">All SwitchBot</option>
+                {SENSOR_CONFIG.switchbot.map((sensor) => (
+                  <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {error && <div className="card" style={{padding:16, color:'var(--danger)', marginBottom:14}}>{error}</div>}
+          {loading && <div className="card" style={{padding:16, marginBottom:14}}>Loading…</div>}
+
+          <div className="section-title">SwitchBot</div>
+          <div className="sensor-grid">
+            {switchbotSummary.map((sensor) => (
+              <SensorCard
+                key={sensor.id}
+                sensor={sensor}
+                kind="switchbot"
+                selected={selectedSensor === sensor.id}
+                onClick={() => setSelectedSensor(selectedSensor === sensor.id ? 'all' : sensor.id)}
+              />
+            ))}
+          </div>
+
+          <div className="section-title">Xiaomi</div>
+          <div className="sensor-grid">
+            {xiaomiSummary.map((sensor) => (
+              <SensorCard
+                key={sensor.id}
+                sensor={sensor}
+                kind="xiaomi"
+                selected={false}
+                onClick={() => {}}
+              />
+            ))}
+          </div>
+
+          <div className="charts">
+            <ChartCard
+              title="Temperature"
+              right={<div className="hint">Overlay view for SwitchBot sensors</div>}
+              canvasRef={tempCanvas}
+            />
+            <ChartCard
+              title="Humidity"
+              right={<div className="hint">Overlay view for SwitchBot sensors</div>}
+              canvasRef={humidityCanvas}
+            />
+            <div className="toggle-row">
+              <button className="ghost-btn" onClick={() => setShowDerivedCharts(v => !v)}>
+                {showDerivedCharts ? 'Hide derived charts' : 'Show derived charts'}
+              </button>
+            </div>
+            {showDerivedCharts && (
+              <>
+                <ChartCard
+                  title="Absolute Humidity"
+                  right={<div className="hint">Derived from air temp + RH</div>}
+                  canvasRef={absHumidityCanvas}
+                />
+                <ChartCard
+                  title="Air VPD"
+                  right={<div className="hint">Derived from air temp + RH</div>}
+                  canvasRef={vpdCanvas}
+                />
+              </>
+            )}
+            <ChartCard
+              title="Xiaomi Detail"
+              right={
+                <select value={xiaomiMetric} onChange={(e) => setXiaomiMetric(e.target.value)}>
+                  <option value="moisture_pct">Moisture</option>
+                  <option value="light_lux">Lux</option>
+                  <option value="conductivity_us_cm">Conductivity</option>
+                  <option value="temperature_c">Temperature</option>
+                </select>
+              }
+              canvasRef={xiaomiCanvas}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
