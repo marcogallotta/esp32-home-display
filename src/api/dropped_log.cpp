@@ -26,6 +26,14 @@ constexpr const char* kDroppedLogPath = "/dropped_requests.jsonl";
 constexpr const char* kDroppedLogPath = "dropped_requests.jsonl";
 #endif
 
+struct UsageWarningState {
+    bool loggedAt1Pct = false;
+    bool loggedAt2Pct = false;
+    bool loggedAt10Pct = false;
+};
+
+UsageWarningState gUsageWarningState;
+
 std::string buildLogLine(
     const std::string& reason,
     const std::string& path,
@@ -53,6 +61,64 @@ std::string buildLogLine(
     std::string line;
     serializeJson(doc, line);
     return line;
+}
+
+int usagePercent(std::size_t bytesUsed) {
+    if (kMaxDroppedLogBytes == 0) {
+        return 0;
+    }
+
+    return static_cast<int>((100 * bytesUsed) / kMaxDroppedLogBytes);
+}
+
+void maybeLogUsageWarning(std::size_t bytesUsedAfterAppend) {
+    const int pct = usagePercent(bytesUsedAfterAppend);
+
+    if (!gUsageWarningState.loggedAt1Pct && pct >= 1) {
+        gUsageWarningState.loggedAt1Pct = true;
+        logLine(
+            LogLevel::Info,
+            "Dropped request log usage reached " + std::to_string(pct) + "% (" +
+            std::to_string(bytesUsedAfterAppend) + "/" +
+            std::to_string(kMaxDroppedLogBytes) + " bytes)"
+        );
+    }
+
+    if (!gUsageWarningState.loggedAt2Pct && pct >= 2) {
+        gUsageWarningState.loggedAt2Pct = true;
+        logLine(
+            LogLevel::Warn,
+            "Dropped request log usage reached " + std::to_string(pct) + "% (" +
+            std::to_string(bytesUsedAfterAppend) + "/" +
+            std::to_string(kMaxDroppedLogBytes) + " bytes)"
+        );
+    }
+
+    if (!gUsageWarningState.loggedAt10Pct && pct >= 10) {
+        gUsageWarningState.loggedAt10Pct = true;
+        logLine(
+            LogLevel::Error,
+            "Dropped request log usage reached " + std::to_string(pct) + "% (" +
+            std::to_string(bytesUsedAfterAppend) + "/" +
+            std::to_string(kMaxDroppedLogBytes) + " bytes)"
+        );
+    }
+
+    if (pct > 90) {
+        logLine(
+            LogLevel::Error,
+            "Dropped request log is above 90% full (" +
+            std::to_string(bytesUsedAfterAppend) + "/" +
+            std::to_string(kMaxDroppedLogBytes) + " bytes)"
+        );
+    } else if (pct > 50) {
+        logLine(
+            LogLevel::Warn,
+            "Dropped request log is above 50% full (" +
+            std::to_string(bytesUsedAfterAppend) + "/" +
+            std::to_string(kMaxDroppedLogBytes) + " bytes)"
+        );
+    }
 }
 
 #ifdef ARDUINO
@@ -86,7 +152,9 @@ void appendLine(const std::string& line) {
     }
 
     const std::size_t currentSize = currentLogFileSize();
-    if (currentSize + line.size() + 1 > kMaxDroppedLogBytes) {
+    const std::size_t sizeAfterAppend = currentSize + line.size() + 1;
+
+    if (sizeAfterAppend > kMaxDroppedLogBytes) {
         logLine(LogLevel::Warn, "Dropped request log full; discarding record");
         return;
     }
@@ -99,6 +167,8 @@ void appendLine(const std::string& line) {
 
     file.println(line.c_str());
     file.close();
+
+    maybeLogUsageWarning(sizeAfterAppend);
 }
 #else
 std::size_t currentLogFileSize() {
@@ -112,7 +182,9 @@ std::size_t currentLogFileSize() {
 
 void appendLine(const std::string& line) {
     const std::size_t currentSize = currentLogFileSize();
-    if (currentSize + line.size() + 1 > kMaxDroppedLogBytes) {
+    const std::size_t sizeAfterAppend = currentSize + line.size() + 1;
+
+    if (sizeAfterAppend > kMaxDroppedLogBytes) {
         logLine(LogLevel::Warn, "Dropped request log full; discarding record");
         return;
     }
@@ -124,6 +196,9 @@ void appendLine(const std::string& line) {
     }
 
     out << line << '\n';
+    out.close();
+
+    maybeLogUsageWarning(sizeAfterAppend);
 }
 #endif
 
