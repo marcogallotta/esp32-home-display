@@ -68,11 +68,19 @@ public:
 
     bool networkReady(unsigned long timeoutMs = 15000) override {
         if (WiFi.status() == WL_CONNECTED) {
+            wifiConnectStarted_ = false;
             return true;
         }
 
         WiFi.mode(WIFI_STA);
-        WiFi.begin(wifiConfig().ssid.c_str(), wifiConfig().password.c_str());
+
+        if (!wifiConnectStarted_) {
+            logLine(LogLevel::Debug, "Starting WiFi connection");
+            WiFi.begin(wifiConfig().ssid.c_str(), wifiConfig().password.c_str());
+            wifiConnectStarted_ = true;
+        } else {
+            logLine(LogLevel::Debug, "WiFi connection already in progress");
+        }
 
         const uint32_t start = ::millis();
         while (WiFi.status() != WL_CONNECTED) {
@@ -83,6 +91,7 @@ public:
             delay(250);
         }
 
+        wifiConnectStarted_ = false;
         logLine(LogLevel::Info, "WiFi connected");
         return true;
     }
@@ -92,6 +101,8 @@ public:
     }
 
 private:
+    bool wifiConnectStarted_ = false;
+
     HttpResponse performRequest(const Request& request) {
         HttpResponse resp;
 

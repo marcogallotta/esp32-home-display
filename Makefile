@@ -101,7 +101,7 @@ $(BUILD_DIR)/spiffs.bin: config.json certs
 	mkdir -p $(BUILD_DIR)
 	mkspiffs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x20000 $(BUILD_DIR)/spiffs.bin
 
-esp32-compile: $(BUILD_DIR)/spiffs.bin
+esp32-compile:
 	$(ARDUINO_CLI) compile \
 		--fqbn $(FQBN) \
 		--library $(CURDIR)/lib/PrayerTimes \
@@ -111,13 +111,15 @@ esp32-compile: $(BUILD_DIR)/spiffs.bin
 		--build-property compiler.c.extra_flags="$(ESP32_EXTRA_INCLUDES)" \
 		$(SKETCH_DIR)
 
+esp32-upload-config: $(BUILD_DIR)/spiffs.bin
+	esptool --chip esp32s3 --port $(PORT) write_flash 0x3D0000 $(BUILD_DIR)/spiffs.bin
+
 esp32-upload: esp32-compile
 	$(ARDUINO_CLI) upload \
 		-p $(PORT) \
 		--fqbn $(FQBN) \
 		$(SKETCH_DIR) \
 		--input-dir $(ESP32_BUILD_DIR)
-	esptool --chip esp32s3 --port $(PORT) write_flash 0x3D0000 $(BUILD_DIR)/spiffs.bin
 
 esp32-monitor:
 	$(ARDUINO_CLI) monitor -p $(PORT) -c baudrate=115200
