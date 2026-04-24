@@ -4,11 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ESP32 Sensor Overview</title>
+
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+
   <style>
     :root {
       --bg: #f6f7f9;
@@ -25,17 +28,20 @@
     }
 
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
     }
+
     .wrap {
       max-width: 1380px;
       margin: 0 auto;
       padding: 20px;
     }
+
     .topbar {
       display: flex;
       gap: 16px;
@@ -44,22 +50,26 @@
       margin-bottom: 18px;
       flex-wrap: wrap;
     }
+
     h1 {
       font-size: 32px;
       line-height: 1.1;
       margin: 0 0 6px;
     }
+
     .sub {
       color: var(--muted);
       margin: 0;
       font-size: 14px;
     }
+
     .controls {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
       align-items: center;
     }
+
     .seg {
       display: inline-flex;
       background: #fff;
@@ -68,6 +78,7 @@
       padding: 4px;
       box-shadow: var(--shadow);
     }
+
     .seg button {
       border: 0;
       background: transparent;
@@ -77,10 +88,12 @@
       cursor: pointer;
       color: var(--muted);
     }
+
     .seg button.active {
       background: var(--accent);
       color: white;
     }
+
     select {
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -89,6 +102,7 @@
       font-size: 14px;
       box-shadow: var(--shadow);
     }
+
     .section-title {
       margin: 22px 0 10px;
       font-size: 14px;
@@ -97,44 +111,61 @@
       color: var(--muted);
       text-transform: uppercase;
     }
+
     .sensor-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
       gap: 14px;
     }
+
     .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 20px;
       box-shadow: var(--shadow);
     }
+
     .sensor-card {
       padding: 16px;
       cursor: pointer;
       transition: 140ms ease;
     }
+
     .sensor-card:hover {
       transform: translateY(-1px);
     }
+
     .sensor-card.selected {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
     }
+
+    .sensor-card.static {
+      cursor: default;
+    }
+
+    .sensor-card.static:hover {
+      transform: none;
+    }
+
     .row {
       display: flex;
       justify-content: space-between;
       gap: 12px;
       align-items: flex-start;
     }
+
     .sensor-name {
       font-size: 18px;
       font-weight: 700;
       margin: 0 0 4px;
     }
+
     .muted {
       color: var(--muted);
       font-size: 13px;
     }
+
     .pill {
       border-radius: 999px;
       padding: 4px 9px;
@@ -142,40 +173,77 @@
       font-weight: 700;
       white-space: nowrap;
     }
+
     .pill.ok { background: #ecfdf3; color: var(--ok); }
     .pill.warn { background: #fff7ed; color: var(--warning); }
+
     .metric-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
       margin-top: 14px;
     }
+
     .metric {
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 12px;
       background: #fcfcfd;
     }
+
     .metric-label {
       color: var(--muted);
       font-size: 12px;
       margin-bottom: 4px;
     }
+
     .metric-value {
       font-size: 24px;
       font-weight: 700;
-      line-height: 1;
+      line-height: 1.1;
     }
+
     .charts {
       display: grid;
       gap: 14px;
       margin-top: 18px;
     }
+
+    .chart-card {
+      padding: 16px;
+    }
+
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .chart-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .chart-box {
+      height: 320px;
+      position: relative;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     .toggle-row {
       display: flex;
       justify-content: flex-end;
       margin-top: 6px;
     }
+
     .ghost-btn {
       border: 1px solid var(--border);
       background: white;
@@ -186,33 +254,23 @@
       box-shadow: var(--shadow);
       font-size: 14px;
     }
+
     .ghost-btn:hover {
       color: var(--text);
     }
-    .chart-card {
+
+    .error-card {
       padding: 16px;
+      color: var(--danger);
+      margin-bottom: 14px;
+      white-space: pre-wrap;
     }
-    .chart-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 12px;
-      flex-wrap: wrap;
+
+    .loading-card {
+      padding: 16px;
+      margin-bottom: 14px;
     }
-    .chart-title {
-      font-size: 18px;
-      font-weight: 700;
-      margin: 0;
-    }
-    .chart-box {
-      height: 320px;
-      position: relative;
-    }
-    .hint {
-      font-size: 12px;
-      color: var(--muted);
-    }
+
     @media (max-width: 700px) {
       .wrap { padding: 12px; }
       h1 { font-size: 26px; }
@@ -224,6 +282,8 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    const API_KEY = 'happydevilelephantsmoking';
+
     const SENSOR_CONFIG = {
       switchbot: [
         { id: 'bed', name: 'Bed', mac: 'EC:2E:84:06:4E:9A' },
@@ -236,7 +296,12 @@
       ],
     };
 
-    const API_KEY = 'happydevilelephantsmoking';
+    const RANGE_CONFIG = {
+      '24h': { hours: 24, maxPoints: 96 },
+      '3d':  { hours: 72, maxPoints: 144 },
+      '7d':  { hours: 24 * 7, maxPoints: 196 },
+      '30d': { hours: 24 * 30, maxPoints: 300 },
+    };
 
     function round1(value) {
       return value == null ? null : Math.round(value * 10) / 10;
@@ -250,6 +315,14 @@
       return value == null ? '—' : `${Math.round(value)}%`;
     }
 
+    function formatAbsHumidity(value) {
+      return value == null ? '—' : `${round1(value).toFixed(1)} g/m³`;
+    }
+
+    function formatVpd(value) {
+      return value == null ? '—' : `${round1(value).toFixed(1)} kPa`;
+    }
+
     function calcAbsoluteHumidity(tempC, rhPct) {
       if (tempC == null || rhPct == null) return null;
       const svp = 6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5));
@@ -261,14 +334,6 @@
       if (tempC == null || rhPct == null) return null;
       const svp = 0.6108 * Math.exp((17.27 * tempC) / (tempC + 237.3));
       return svp * (1 - rhPct / 100);
-    }
-
-    function formatAbsoluteHumidity(value) {
-      return value == null ? '—' : `${round1(value).toFixed(1)} g/m³`;
-    }
-
-    function formatVpd(value) {
-      return value == null ? '—' : `${round1(value).toFixed(1)} kPa`;
     }
 
     function formatAgo(ts) {
@@ -287,8 +352,12 @@
     }
 
     async function fetchJson(url) {
-      const res = await fetch(url, { headers: { 'X-api-key': API_KEY } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const res = await fetch(url, {
+        headers: { 'X-api-key': API_KEY }
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      }
       return res.json();
     }
 
@@ -296,10 +365,13 @@
       return <div className={`card ${className}`} onClick={onClick}>{children}</div>;
     }
 
-    function SensorCard({ sensor, kind, selected, onClick }) {
+    function SensorCard({ sensor, kind, selected, onClick, clickable = true }) {
       const stale = isStale(sensor.latestTimestamp);
       return (
-        <Card className={`sensor-card ${selected ? 'selected' : ''}`} onClick={onClick}>
+        <Card
+          className={`sensor-card ${selected ? 'selected' : ''} ${clickable ? '' : 'static'}`}
+          onClick={clickable ? onClick : undefined}
+        >
           <div className="row">
             <div>
               <div className="sensor-name">{sensor.name}</div>
@@ -332,11 +404,11 @@
               <>
                 <div className="metric">
                   <div className="metric-label">Moisture</div>
-                  <div className="metric-value">{sensor.latestMoisture ?? '—'}{sensor.latestMoisture != null ? '%' : ''}</div>
+                  <div className="metric-value">{sensor.latestMoisture == null ? '—' : `${Math.round(sensor.latestMoisture)}%`}</div>
                 </div>
                 <div className="metric">
                   <div className="metric-label">Lux</div>
-                  <div className="metric-value">{sensor.latestLux ?? '—'}</div>
+                  <div className="metric-value">{sensor.latestLux == null ? '—' : sensor.latestLux}</div>
                 </div>
               </>
             )}
@@ -359,6 +431,15 @@
       );
     }
 
+    function makeTimeScale(rangeWindow) {
+      return {
+        type: 'time',
+        min: rangeWindow.startMs,
+        max: rangeWindow.endMs,
+        time: { tooltipFormat: 'yyyy-MM-dd HH:mm' }
+      };
+    }
+
     function App() {
       const [range, setRange] = React.useState('24h');
       const [selectedSensor, setSelectedSensor] = React.useState('all');
@@ -367,39 +448,65 @@
       const [data, setData] = React.useState({ switchbot: {}, xiaomi: {} });
       const [loading, setLoading] = React.useState(true);
       const [error, setError] = React.useState('');
+      const [rangeWindow, setRangeWindow] = React.useState(() => {
+        const cfg = RANGE_CONFIG['24h'];
+        const endMs = Date.now();
+        const startMs = endMs - cfg.hours * 60 * 60 * 1000;
+        return { startMs, endMs };
+      });
 
       const tempCanvas = React.useRef(null);
       const humidityCanvas = React.useRef(null);
       const absHumidityCanvas = React.useRef(null);
       const vpdCanvas = React.useRef(null);
       const xiaomiCanvas = React.useRef(null);
+
       const tempChart = React.useRef(null);
       const humidityChart = React.useRef(null);
       const absHumidityChart = React.useRef(null);
       const vpdChart = React.useRef(null);
       const xiaomiChart = React.useRef(null);
 
-      const rangeToLimit = { '24h': 100, '3d': 300, '7d': 700, '30d': 1000 };
-
       React.useEffect(() => {
         async function load() {
           setLoading(true);
           setError('');
+
           try {
+            const cfg = RANGE_CONFIG[range] || RANGE_CONFIG['24h'];
+            const endMs = Date.now();
+            const startMs = endMs - cfg.hours * 60 * 60 * 1000;
+            const startTs = new Date(startMs).toISOString();
+            const endTs = new Date(endMs).toISOString();
+            const maxPoints = cfg.maxPoints;
+
             const switchbotEntries = await Promise.all(
               SENSOR_CONFIG.switchbot.map(async (sensor) => {
-                const rows = await fetchJson(`/switchbot/readings?mac=${encodeURIComponent(sensor.mac)}&limit=${rangeToLimit[range]}`);
+                const params = new URLSearchParams({
+                  mac: sensor.mac,
+                  start_ts: startTs,
+                  end_ts: endTs,
+                  max_points: String(maxPoints),
+                });
+                const rows = await fetchJson(`/switchbot/readings?${params.toString()}`);
                 return [sensor.id, rows.slice().reverse()];
               })
             );
 
             const xiaomiEntries = await Promise.all(
               SENSOR_CONFIG.xiaomi.map(async (sensor) => {
-                const rows = await fetchJson(`/xiaomi/readings?mac=${encodeURIComponent(sensor.mac)}&limit=${rangeToLimit[range]}`);
+                const params = new URLSearchParams({
+                  mac: sensor.mac,
+                  start_ts: startTs,
+                  end_ts: endTs,
+                  max_points: String(maxPoints),
+                });
+                const rows = await fetchJson(`/xiaomi/readings?${params.toString()}`);
                 return [sensor.id, rows.slice().reverse()];
               })
             );
 
+            setRangeWindow({ startMs, endMs });
             setData({
               switchbot: Object.fromEntries(switchbotEntries),
               xiaomi: Object.fromEntries(xiaomiEntries),
@@ -410,6 +517,7 @@
             setLoading(false);
           }
         }
+
         load();
       }, [range]);
 
@@ -421,16 +529,13 @@
           const latestHumidity = latest?.humidity_pct ?? null;
           const latestAbsoluteHumidity = calcAbsoluteHumidity(latestTemp, latestHumidity);
           const latestVpd = calcVpd(latestTemp, latestHumidity);
+
           return {
             ...sensor,
             latestTimestamp: latest?.timestamp,
-            latestTemp,
-            latestHumidity,
-            latestAbsoluteHumidity,
-            latestVpd,
             latestTempText: formatTemp(latestTemp),
             latestHumidityText: formatPct(latestHumidity),
-            latestAbsoluteHumidityText: formatAbsoluteHumidity(latestAbsoluteHumidity),
+            latestAbsoluteHumidityText: formatAbsHumidity(latestAbsoluteHumidity),
             latestVpdText: formatVpd(latestVpd),
           };
         });
@@ -443,10 +548,8 @@
           return {
             ...sensor,
             latestTimestamp: latest?.timestamp,
-            latestTemp: latest?.temperature_c ?? null,
             latestMoisture: latest?.moisture_pct ?? null,
             latestLux: latest?.light_lux ?? null,
-            latestConductivity: latest?.conductivity_us_cm ?? null,
           };
         });
       }, [data.xiaomi]);
@@ -479,12 +582,12 @@
             interaction: { mode: 'nearest', intersect: false },
             plugins: { legend: { display: true } },
             scales: {
-              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              x: makeTimeScale(rangeWindow),
               y: { title: { display: true, text: '°C' } }
             }
           }
         });
-      }, [data.switchbot, selectedSensor]);
+      }, [data.switchbot, selectedSensor, rangeWindow]);
 
       React.useEffect(() => {
         if (!humidityCanvas.current) return;
@@ -514,15 +617,15 @@
             interaction: { mode: 'nearest', intersect: false },
             plugins: { legend: { display: true } },
             scales: {
-              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              x: makeTimeScale(rangeWindow),
               y: { title: { display: true, text: '%' } }
             }
           }
         });
-      }, [data.switchbot, selectedSensor]);
+      }, [data.switchbot, selectedSensor, rangeWindow]);
 
       React.useEffect(() => {
-        if (!absHumidityCanvas.current) return;
+        if (!showDerivedCharts || !absHumidityCanvas.current) return;
         if (absHumidityChart.current) absHumidityChart.current.destroy();
 
         const sensors = selectedSensor === 'all'
@@ -533,7 +636,10 @@
           label: sensor.name,
           data: (data.switchbot[sensor.id] || [])
             .filter(r => r.temperature_c != null && r.humidity_pct != null)
-            .map(r => ({ x: new Date(r.timestamp), y: round1(calcAbsoluteHumidity(r.temperature_c, r.humidity_pct)) })),
+            .map(r => ({
+              x: new Date(r.timestamp),
+              y: round1(calcAbsoluteHumidity(r.temperature_c, r.humidity_pct))
+            })),
           borderWidth: 2,
           pointRadius: 0,
           tension: 0.15,
@@ -549,15 +655,15 @@
             interaction: { mode: 'nearest', intersect: false },
             plugins: { legend: { display: true } },
             scales: {
-              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              x: makeTimeScale(rangeWindow),
               y: { title: { display: true, text: 'g/m³' } }
             }
           }
         });
-      }, [data.switchbot, selectedSensor, showDerivedCharts]);
+      }, [data.switchbot, selectedSensor, showDerivedCharts, rangeWindow]);
 
       React.useEffect(() => {
-        if (!vpdCanvas.current) return;
+        if (!showDerivedCharts || !vpdCanvas.current) return;
         if (vpdChart.current) vpdChart.current.destroy();
 
         const sensors = selectedSensor === 'all'
@@ -568,7 +674,10 @@
           label: sensor.name,
           data: (data.switchbot[sensor.id] || [])
             .filter(r => r.temperature_c != null && r.humidity_pct != null)
-            .map(r => ({ x: new Date(r.timestamp), y: round1(calcVpd(r.temperature_c, r.humidity_pct)) })),
+            .map(r => ({
+              x: new Date(r.timestamp),
+              y: round1(calcVpd(r.temperature_c, r.humidity_pct))
+            })),
           borderWidth: 2,
           pointRadius: 0,
           tension: 0.15,
@@ -584,12 +693,12 @@
             interaction: { mode: 'nearest', intersect: false },
             plugins: { legend: { display: true } },
             scales: {
-              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              x: makeTimeScale(rangeWindow),
               y: { title: { display: true, text: 'kPa' } }
             }
           }
         });
-      }, [data.switchbot, selectedSensor, showDerivedCharts]);
+      }, [data.switchbot, selectedSensor, showDerivedCharts, rangeWindow]);
 
       React.useEffect(() => {
         if (!xiaomiCanvas.current) return;
@@ -597,7 +706,7 @@
 
         const sensor = SENSOR_CONFIG.xiaomi[0];
         const datasets = [{
-          label: `${sensor.name} ${xiaomiMetric.replace('_', ' ')}`,
+          label: `${sensor.name} ${xiaomiMetric.replaceAll('_', ' ')}`,
           data: (data.xiaomi[sensor.id] || [])
             .filter(r => r[xiaomiMetric] != null)
             .map(r => ({ x: new Date(r.timestamp), y: r[xiaomiMetric] })),
@@ -616,12 +725,12 @@
             interaction: { mode: 'nearest', intersect: false },
             plugins: { legend: { display: true } },
             scales: {
-              x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm' } },
+              x: makeTimeScale(rangeWindow),
               y: { title: { display: true, text: xiaomiMetric } }
             }
           }
         });
-      }, [data.xiaomi, xiaomiMetric]);
+      }, [data.xiaomi, xiaomiMetric, rangeWindow]);
 
       return (
         <div className="wrap">
@@ -630,6 +739,7 @@
               <h1>Sensor Overview</h1>
               <p className="sub">Cheap insight first. Decisions later.</p>
             </div>
+
             <div className="controls">
               <div className="seg">
                 {['24h', '3d', '7d', '30d'].map((value) => (
@@ -642,6 +752,7 @@
                   </button>
                 ))}
               </div>
+
               <select value={selectedSensor} onChange={(e) => setSelectedSensor(e.target.value)}>
                 <option value="all">All SwitchBot</option>
                 {SENSOR_CONFIG.switchbot.map((sensor) => (
@@ -651,8 +762,8 @@
             </div>
           </div>
 
-          {error && <div className="card" style={{padding:16, color:'var(--danger)', marginBottom:14}}>{error}</div>}
-          {loading && <div className="card" style={{padding:16, marginBottom:14}}>Loading…</div>}
+          {error && <div className="card error-card">{error}</div>}
+          {loading && <div className="card loading-card">Loading…</div>}
 
           <div className="section-title">SwitchBot</div>
           <div className="sensor-grid">
@@ -663,6 +774,7 @@
                 kind="switchbot"
                 selected={selectedSensor === sensor.id}
                 onClick={() => setSelectedSensor(selectedSensor === sensor.id ? 'all' : sensor.id)}
+                clickable={true}
               />
             ))}
           </div>
@@ -675,7 +787,7 @@
                 sensor={sensor}
                 kind="xiaomi"
                 selected={false}
-                onClick={() => {}}
+                clickable={false}
               />
             ))}
           </div>
@@ -686,16 +798,19 @@
               right={<div className="hint">Overlay view for SwitchBot sensors</div>}
               canvasRef={tempCanvas}
             />
+
             <ChartCard
               title="Humidity"
               right={<div className="hint">Overlay view for SwitchBot sensors</div>}
               canvasRef={humidityCanvas}
             />
+
             <div className="toggle-row">
               <button className="ghost-btn" onClick={() => setShowDerivedCharts(v => !v)}>
                 {showDerivedCharts ? 'Hide derived charts' : 'Show derived charts'}
               </button>
             </div>
+
             {showDerivedCharts && (
               <>
                 <ChartCard
@@ -710,6 +825,7 @@
                 />
               </>
             )}
+
             <ChartCard
               title="Xiaomi Detail"
               right={
