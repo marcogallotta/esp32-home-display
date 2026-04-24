@@ -2,10 +2,12 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <string>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 
 #include "network.h"
+#include "platform.h"
 
 namespace network {
 namespace {
@@ -21,22 +23,20 @@ void configureTlsClient(WiFiClientSecure& client, const std::string& pem, Platfo
 
 TransportResult mapHttpClientError(int code) {
     switch (code) {
-        case HTTPC_ERROR_CONNECTION_REFUSED:
-        case HTTPC_ERROR_CONNECTION_LOST:
-        case HTTPC_ERROR_NOT_CONNECTED:
-            return TransportResult::NetworkError;
-
         case HTTPC_ERROR_READ_TIMEOUT:
             return TransportResult::Timeout;
-
-        case HTTPS_ERROR_TLS_HANDSHAKE_FAILED:
-            return TransportResult::TlsError;
 
         case HTTPC_ERROR_ENCODING:
         case HTTPC_ERROR_TOO_LESS_RAM:
             return TransportResult::InternalError;
 
+        case HTTPC_ERROR_CONNECTION_REFUSED:
+        case HTTPC_ERROR_CONNECTION_LOST:
+        case HTTPC_ERROR_NOT_CONNECTED:
+            return TransportResult::NetworkError;
+
         default:
+            platform::printLine("default network error, code: " + std::to_string(code));
             // If the code is negative but not handled above,
             // it's usually a low-level stream error.
             return TransportResult::NetworkError;
