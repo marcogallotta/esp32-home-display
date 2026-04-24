@@ -14,18 +14,22 @@ enum class FreshRequestDecision {
     DropPermanent,
 };
 
-bool isBufferFull(const BufferState& buffer, const ApiBufferConfig& config) {
-    return buffer.requests.size() >= static_cast<std::size_t>(config.inMemory);
-}
-
 bool hasBacklog(const BufferState& buffer) {
     return !buffer.requests.empty();
 }
 
+bool isBufferFull(const BufferState& buffer, const ApiBufferConfig& config) {
+    return buffer.requests.size() >= static_cast<std::size_t>(config.inMemory);
+}
+
+bool isAcceptedHttp(const network::HttpResponse& response) {
+    return response.transport == network::TransportResult::Ok &&
+           response.statusCode >= 200 &&
+           response.statusCode < 300;
+}
+
 FreshRequestDecision classifyFreshResponse(const network::HttpResponse& response) {
-    if (response.transport == network::TransportResult::Ok &&
-        response.statusCode >= 200 &&
-        response.statusCode < 300) {
+    if (isAcceptedHttp(response)) {
         return FreshRequestDecision::Sent;
     }
 
@@ -53,6 +57,20 @@ WriteStatus mapBufferInsertResult(BufferInsertResult result) {
         : WriteStatus::DroppedBufferFull;
 }
 
+WriteResult makeWriteResult(
+    WriteStatus status,
+    BackendWriteResult backendResult = BackendWriteResult::Failed,
+    int httpStatusCode = 0,
+    std::string body = ""
+) {
+    WriteResult result;
+    result.status = status;
+    result.backendResult = backendResult;
+    result.httpStatusCode = httpStatusCode;
+    result.body = std::move(body);
+    return result;
+}
+
 } // namespace
 
 BufferedClient::BufferedClient(
@@ -71,11 +89,11 @@ WriteResult BufferedClient::postSwitchbotReading(
 ) {
     const auto payload = makeSwitchbotPayload(identity, reading);
     if (!payload.has_value()) {
-        return WriteResult{WriteStatus::DroppedPermanent, 0};
+        return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        return WriteResult{WriteStatus::DroppedBufferFull, 0};
+        return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
     return postBufferedRequest(BufferedRequest{
@@ -90,11 +108,11 @@ WriteResult BufferedClient::postXiaomiReading(
 ) {
     const auto payload = makeXiaomiPayload(identity, reading);
     if (!payload.has_value()) {
-        return WriteResult{WriteStatus::DroppedPermanent, 0};
+        return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        return WriteResult{WriteStatus::DroppedBufferFull, 0};
+        return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
     return postBufferedRequest(BufferedRequest{
@@ -107,31 +125,41 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
     if (hasBacklog(buffer_)) {
         const BufferInsertResult insertResult =
             bufferRequest(buffer_, std::move(request), config_.api.buffer);
-
-        return WriteResult{mapBufferInsertResult(insertResult), 0};
+        return makeWriteResult(mapBufferInsertResult(insertResult));
     }
 
     const network::HttpResponse response = client_.postJson(request.path, request.body);
 
     switch (classifyFreshResponse(response)) {
         case FreshRequestDecision::Sent:
-            return WriteResult{WriteStatus::Sent, response.statusCode};
+            return makeWriteResult(
+                WriteStatus::Sent,
+                parseBackendWriteResult(response),
+                response.statusCode,
+                response.body
+            );
 
         case FreshRequestDecision::DropPermanent:
-            return WriteResult{WriteStatus::DroppedPermanent, response.statusCode};
+            return makeWriteResult(
+                WriteStatus::DroppedPermanent,
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body
+            );
 
         case FreshRequestDecision::Buffer: {
             const BufferInsertResult insertResult =
                 bufferRequest(buffer_, std::move(request), config_.api.buffer);
-
-            return WriteResult{
+            return makeWriteResult(
                 mapBufferInsertResult(insertResult),
-                response.statusCode
-            };
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body
+            );
         }
     }
 
-    return WriteResult{WriteStatus::DroppedPermanent, response.statusCode};
+    return makeWriteResult(WriteStatus::DroppedPermanent);
 }
 
 } // namespace api

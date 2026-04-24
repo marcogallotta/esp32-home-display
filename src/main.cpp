@@ -314,7 +314,7 @@ void renderUi(const AppContext& app, bool doFullDraw) {
 }
 
 void syncOutputs(AppContext& app) {
-    syncApiState(app.currentState, app.apiState, app.apiClient);
+    syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
 
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);

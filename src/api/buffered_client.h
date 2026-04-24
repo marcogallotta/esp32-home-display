@@ -1,10 +1,12 @@
 #pragma once
 
+#include <string>
+
 #include "../config.h"
 #include "../sensor_readings.h"
+#include "backend_result.h"
 #include "buffer.h"
 #include "client.h"
-#include "payloads.h"
 
 namespace api {
 
@@ -17,7 +19,9 @@ enum class WriteStatus {
 
 struct WriteResult {
     WriteStatus status = WriteStatus::DroppedPermanent;
+    BackendWriteResult backendResult = BackendWriteResult::Failed;
     int httpStatusCode = 0;
+    std::string body;
 };
 
 class BufferedClient {

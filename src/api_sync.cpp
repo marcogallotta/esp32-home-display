@@ -1,12 +1,9 @@
 #include "api_sync.h"
 
-#include <ctime>
 #include <cstdint>
+#include <ctime>
 #include <string>
 
-#include "api/backend_result.h"
-#include "api/payloads.h"
-#include "network.h"
 #include "platform.h"
 
 namespace {
@@ -21,7 +18,7 @@ bool isAccepted(api::BackendWriteResult result) {
 void logConflict(
     const char* sensorType,
     const SensorIdentity& identity,
-    const network::HttpResponse& response
+    const api::WriteResult& response
 ) {
     platform::printLine(
         std::string("WARNING: API conflict for ") +
@@ -29,7 +26,7 @@ void logConflict(
         " sensor " +
         identity.name +
         " (" + identity.mac + ")" +
-        " status=" + std::to_string(response.statusCode) +
+        " status=" + std::to_string(response.httpStatusCode) +
         " body=" + response.body
     );
 }
@@ -64,7 +61,7 @@ void resetPending(api::XiaomiBufferedState& pending) {
 void syncApiState(
     const State& appState,
     api::State& apiState,
-    const api::Client& client
+    api::BufferedClient& client
 ) {
     for (std::size_t i = 0; i < appState.switchbotSensors.size(); ++i) {
         const auto& sensor = appState.switchbotSensors[i];
@@ -75,26 +72,16 @@ void syncApiState(
             continue;
         }
 
-        const auto payload = api::makeSwitchbotPayload(sensor.identity, current);
-        if (!payload.has_value()) {
+        const api::WriteResult response =
+            client.postSwitchbotReading(sensor.identity, current);
+
+        if (response.status != api::WriteStatus::Sent) {
             continue;
         }
 
-        const network::HttpResponse response = client.postSwitchbotReading(*payload);
-
-        if (response.transport != network::TransportResult::Ok) {
-            continue;
-        }
-
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-            continue;
-        }
-
-        const api::BackendWriteResult result = api::parseBackendWriteResult(response);
-
-        if (isAccepted(result)) {
+        if (isAccepted(response.backendResult)) {
             lastSent = current;
-        } else if (result == api::BackendWriteResult::Conflict) {
+        } else if (response.backendResult == api::BackendWriteResult::Conflict) {
             logConflict("switchbot", sensor.identity, response);
             lastSent = SwitchbotReading{};
         }
@@ -131,27 +118,17 @@ void syncApiState(
             continue;
         }
 
-        const auto payload = api::makeXiaomiPayload(sensor.identity, pending.reading);
-        if (!payload.has_value()) {
+        const api::WriteResult response =
+            client.postXiaomiReading(sensor.identity, pending.reading);
+
+        if (response.status != api::WriteStatus::Sent) {
             continue;
         }
 
-        const network::HttpResponse response = client.postXiaomiReading(*payload);
-
-        if (response.transport != network::TransportResult::Ok) {
-            continue;
-        }
-
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-            continue;
-        }
-
-        const api::BackendWriteResult result = api::parseBackendWriteResult(response);
-
-        if (isAccepted(result)) {
+        if (isAccepted(response.backendResult)) {
             lastSent = pending.reading;
             resetPending(pending);
-        } else if (result == api::BackendWriteResult::Conflict) {
+        } else if (response.backendResult == api::BackendWriteResult::Conflict) {
             logConflict("xiaomi", sensor.identity, response);
             lastSent = XiaomiReading{};
             resetPending(pending);
