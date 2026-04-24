@@ -27,7 +27,7 @@ struct XiaomiApiState {
 struct State {
     SwitchbotApiState switchbot;
     XiaomiApiState xiaomi;
-    BufferState queue;
+    BufferState buffer;
 };
 
 void initState(const ::State& appState, State& apiState);

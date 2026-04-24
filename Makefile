@@ -27,6 +27,7 @@ COMMON_SRC := \
 	lib/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
 	src/api/buffer.cpp \
+	src/api/buffered_client.cpp \
 	src/api/client.cpp \
 	src/api/payloads.cpp \
 	src/api/state.cpp \
