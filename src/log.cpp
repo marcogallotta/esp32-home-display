@@ -5,6 +5,35 @@
 
 #include "platform.h"
 
+namespace {
+
+constexpr bool kUseAnsiColours = true;
+
+const char* logLevelColour(LogLevel level) {
+    if (!kUseAnsiColours) {
+        return "";
+    }
+
+    switch (level) {
+        case LogLevel::Debug:
+            return "\033[36m"; // cyan
+        case LogLevel::Info:
+            return "\033[32m"; // green
+        case LogLevel::Warn:
+            return "\033[33m"; // yellow
+        case LogLevel::Error:
+            return "\033[31m"; // red
+    }
+
+    return "";
+}
+
+const char* resetColour() {
+    return kUseAnsiColours ? "\033[0m" : "";
+}
+
+} // namespace
+
 const char* logLevelName(LogLevel level) {
     switch (level) {
         case LogLevel::Debug:
@@ -42,9 +71,11 @@ std::string logTimestamp() {
 
 void logLine(LogLevel level, const std::string& msg) {
     platform::printLine(
+        std::string(logLevelColour(level)) +
         "[" + logTimestamp() + "] " +
         "[" + logLevelName(level) + "] " +
-        msg
+        msg +
+        resetColour()
     );
 }
 
