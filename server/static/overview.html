@@ -28,20 +28,17 @@
     }
 
     * { box-sizing: border-box; }
-
     body {
       margin: 0;
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
     }
-
     .wrap {
       max-width: 1380px;
       margin: 0 auto;
       padding: 20px;
     }
-
     .topbar {
       display: flex;
       gap: 16px;
@@ -50,26 +47,22 @@
       margin-bottom: 18px;
       flex-wrap: wrap;
     }
-
     h1 {
       font-size: 32px;
       line-height: 1.1;
       margin: 0 0 6px;
     }
-
     .sub {
       color: var(--muted);
       margin: 0;
       font-size: 14px;
     }
-
     .controls {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
       align-items: center;
     }
-
     .seg {
       display: inline-flex;
       background: #fff;
@@ -78,7 +71,6 @@
       padding: 4px;
       box-shadow: var(--shadow);
     }
-
     .seg button {
       border: 0;
       background: transparent;
@@ -88,12 +80,10 @@
       cursor: pointer;
       color: var(--muted);
     }
-
     .seg button.active {
       background: var(--accent);
       color: white;
     }
-
     select {
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -102,7 +92,6 @@
       font-size: 14px;
       box-shadow: var(--shadow);
     }
-
     .section-title {
       margin: 22px 0 10px;
       font-size: 14px;
@@ -111,61 +100,50 @@
       color: var(--muted);
       text-transform: uppercase;
     }
-
     .sensor-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
       gap: 14px;
     }
-
     .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 20px;
       box-shadow: var(--shadow);
     }
-
     .sensor-card {
       padding: 16px;
       cursor: pointer;
       transition: 140ms ease;
     }
-
     .sensor-card:hover {
       transform: translateY(-1px);
     }
-
     .sensor-card.selected {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
     }
-
     .sensor-card.static {
       cursor: default;
     }
-
     .sensor-card.static:hover {
       transform: none;
     }
-
     .row {
       display: flex;
       justify-content: space-between;
       gap: 12px;
       align-items: flex-start;
     }
-
     .sensor-name {
       font-size: 18px;
       font-weight: 700;
       margin: 0 0 4px;
     }
-
     .muted {
       color: var(--muted);
       font-size: 13px;
     }
-
     .pill {
       border-radius: 999px;
       padding: 4px 9px;
@@ -173,46 +151,38 @@
       font-weight: 700;
       white-space: nowrap;
     }
-
     .pill.ok { background: #ecfdf3; color: var(--ok); }
     .pill.warn { background: #fff7ed; color: var(--warning); }
-
     .metric-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
       margin-top: 14px;
     }
-
     .metric {
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 12px;
       background: #fcfcfd;
     }
-
     .metric-label {
       color: var(--muted);
       font-size: 12px;
       margin-bottom: 4px;
     }
-
     .metric-value {
       font-size: 24px;
       font-weight: 700;
       line-height: 1.1;
     }
-
     .charts {
       display: grid;
       gap: 14px;
       margin-top: 18px;
     }
-
     .chart-card {
       padding: 16px;
     }
-
     .chart-head {
       display: flex;
       justify-content: space-between;
@@ -221,29 +191,24 @@
       margin-bottom: 12px;
       flex-wrap: wrap;
     }
-
     .chart-title {
       font-size: 18px;
       font-weight: 700;
       margin: 0;
     }
-
     .chart-box {
       height: 320px;
       position: relative;
     }
-
     .hint {
       font-size: 12px;
       color: var(--muted);
     }
-
     .toggle-row {
       display: flex;
       justify-content: flex-end;
       margin-top: 6px;
     }
-
     .ghost-btn {
       border: 1px solid var(--border);
       background: white;
@@ -254,23 +219,19 @@
       box-shadow: var(--shadow);
       font-size: 14px;
     }
-
     .ghost-btn:hover {
       color: var(--text);
     }
-
     .error-card {
       padding: 16px;
       color: var(--danger);
       margin-bottom: 14px;
       white-space: pre-wrap;
     }
-
     .loading-card {
       padding: 16px;
       margin-bottom: 14px;
     }
-
     @media (max-width: 700px) {
       .wrap { padding: 12px; }
       h1 { font-size: 26px; }
@@ -282,79 +243,218 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const API_KEY = 'happydevilelephantsmoking';
-
-    const RANGE_CONFIG = {
-      '24h': { hours: 24, maxPoints: 96 },
-      '3d':  { hours: 72, maxPoints: 144 },
-      '7d':  { hours: 24 * 7, maxPoints: 196 },
-      '30d': { hours: 24 * 30, maxPoints: 300 },
+    // -------------------- config --------------------
+    const CONFIG = {
+      apiKey: 'happydevilelephantsmoking',
+      staleAfterMs: 2 * 60 * 60 * 1000,
+      rangeConfig: {
+        '24h': { hours: 24, maxPoints: 96 },
+        '3d':  { hours: 72, maxPoints: 144 },
+        '7d':  { hours: 24 * 7, maxPoints: 196 },
+        '30d': { hours: 24 * 30, maxPoints: 300 },
+      },
+      sensorTypeMeta: {
+        switchbot: {
+          latestFields: ['temperature_c', 'humidity_pct', 'absolute_humidity', 'vpd_air'],
+          xMetricLabel: 'SwitchBot',
+        },
+        xiaomi: {
+          latestFields: ['moisture_pct', 'light_lux'],
+          xMetricLabel: 'Xiaomi',
+        },
+      },
     };
 
-    function round1(value) {
-      return value == null ? null : Math.round(value * 10) / 10;
-    }
+    // -------------------- api --------------------
+    const api = {
+      async fetchJson(url) {
+        const res = await fetch(url, {
+          headers: { 'X-api-key': CONFIG.apiKey }
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        }
+        return res.json();
+      },
 
-    function formatTemp(value) {
-      return value == null ? '—' : `${round1(value).toFixed(1)}°C`;
-    }
+      async fetchSensors() {
+        return this.fetchJson('/sensors');
+      },
 
-    function formatPct(value) {
-      return value == null ? '—' : `${Math.round(value)}%`;
-    }
+      async fetchSensorReadings(sensorId, { startTs, endTs, maxPoints }) {
+        const params = new URLSearchParams({
+          start_ts: startTs,
+          end_ts: endTs,
+          max_points: String(maxPoints),
+        });
+        return this.fetchJson(`/sensors/${encodeURIComponent(sensorId)}/readings?${params.toString()}`);
+      },
+    };
 
-    function formatAbsHumidity(value) {
-      return value == null ? '—' : `${round1(value).toFixed(1)} g/m³`;
-    }
+    // -------------------- metrics --------------------
+    const metrics = {
+      round1(value) {
+        return value == null ? null : Math.round(value * 10) / 10;
+      },
 
-    function formatVpd(value) {
-      return value == null ? '—' : `${round1(value).toFixed(1)} kPa`;
-    }
+      calcAbsoluteHumidity(tempC, rhPct) {
+        if (tempC == null || rhPct == null) return null;
+        const svp = 6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5));
+        const avp = svp * (rhPct / 100);
+        return (2.1674 * avp) / (273.15 + tempC) * 100;
+      },
 
-    function calcAbsoluteHumidity(tempC, rhPct) {
-      if (tempC == null || rhPct == null) return null;
-      const svp = 6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5));
-      const avp = svp * (rhPct / 100);
-      return (2.1674 * avp) / (273.15 + tempC) * 100;
-    }
+      calcVpd(tempC, rhPct) {
+        if (tempC == null || rhPct == null) return null;
+        const svp = 0.6108 * Math.exp((17.27 * tempC) / (tempC + 237.3));
+        return svp * (1 - rhPct / 100);
+      },
 
-    function calcVpd(tempC, rhPct) {
-      if (tempC == null || rhPct == null) return null;
-      const svp = 0.6108 * Math.exp((17.27 * tempC) / (tempC + 237.3));
-      return svp * (1 - rhPct / 100);
-    }
+      formatTemp(value) {
+        return value == null ? '—' : `${metrics.round1(value).toFixed(1)}°C`;
+      },
 
-    function formatAgo(ts) {
-      if (!ts) return 'No data';
-      const diffMin = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
-      if (diffMin < 1) return 'just now';
-      if (diffMin < 60) return `${diffMin}m ago`;
-      const h = Math.round(diffMin / 60);
-      if (h < 48) return `${h}h ago`;
-      return `${Math.round(h / 24)}d ago`;
-    }
+      formatPct(value) {
+        return value == null ? '—' : `${Math.round(value)}%`;
+      },
 
-    function isStale(ts) {
-      if (!ts) return true;
-      return (Date.now() - new Date(ts).getTime()) > 2 * 60 * 60 * 1000;
-    }
+      formatAbsHumidity(value) {
+        return value == null ? '—' : `${metrics.round1(value).toFixed(1)} g/m³`;
+      },
 
-    async function fetchJson(url) {
-      const res = await fetch(url, {
-        headers: { 'X-api-key': API_KEY }
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-      }
-      return res.json();
-    }
+      formatVpd(value) {
+        return value == null ? '—' : `${metrics.round1(value).toFixed(1)} kPa`;
+      },
 
+      formatAgo(ts) {
+        if (!ts) return 'No data';
+        const diffMin = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
+        if (diffMin < 1) return 'just now';
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const h = Math.round(diffMin / 60);
+        if (h < 48) return `${h}h ago`;
+        return `${Math.round(h / 24)}d ago`;
+      },
+
+      isStale(ts) {
+        if (!ts) return true;
+        return (Date.now() - new Date(ts).getTime()) > CONFIG.staleAfterMs;
+      },
+    };
+
+    // -------------------- sensor model --------------------
+    const sensorModel = {
+      splitByType(sensors) {
+        return {
+          switchbot: sensors.filter(sensor => sensor.type === 'switchbot'),
+          xiaomi: sensors.filter(sensor => sensor.type === 'xiaomi'),
+        };
+      },
+
+      buildRangeWindow(range) {
+        const cfg = CONFIG.rangeConfig[range] || CONFIG.rangeConfig['24h'];
+        const endMs = Date.now();
+        const startMs = endMs - cfg.hours * 60 * 60 * 1000;
+        return {
+          startMs,
+          endMs,
+          startTs: new Date(startMs).toISOString(),
+          endTs: new Date(endMs).toISOString(),
+          maxPoints: cfg.maxPoints,
+        };
+      },
+
+      normalizeReadings(rows) {
+        return rows.slice().reverse();
+      },
+
+      buildSwitchbotSummary(sensor, rows) {
+        const latest = rows[rows.length - 1];
+        const latestTemp = latest?.temperature_c ?? null;
+        const latestHumidity = latest?.humidity_pct ?? null;
+        const latestAbsoluteHumidity = metrics.calcAbsoluteHumidity(latestTemp, latestHumidity);
+        const latestVpd = metrics.calcVpd(latestTemp, latestHumidity);
+
+        return {
+          ...sensor,
+          latestTimestamp: latest?.timestamp,
+          latestTempText: metrics.formatTemp(latestTemp),
+          latestHumidityText: metrics.formatPct(latestHumidity),
+          latestAbsoluteHumidityText: metrics.formatAbsHumidity(latestAbsoluteHumidity),
+          latestVpdText: metrics.formatVpd(latestVpd),
+        };
+      },
+
+      buildXiaomiSummary(sensor, rows) {
+        const latest = rows[rows.length - 1];
+        return {
+          ...sensor,
+          latestTimestamp: latest?.timestamp,
+          latestMoisture: latest?.moisture_pct ?? null,
+          latestLux: latest?.light_lux ?? null,
+        };
+      },
+    };
+
+    // -------------------- chart factory --------------------
+    const chartFactory = {
+      makeTimeScale(rangeWindow) {
+        return {
+          type: 'time',
+          min: rangeWindow.startMs,
+          max: rangeWindow.endMs,
+          time: { tooltipFormat: 'yyyy-MM-dd HH:mm' }
+        };
+      },
+
+      destroy(chartRef) {
+        if (chartRef.current) {
+          chartRef.current.destroy();
+          chartRef.current = null;
+        }
+      },
+
+      lineChart(canvas, chartRef, datasets, yLabel, rangeWindow) {
+        this.destroy(chartRef);
+        if (!canvas) return;
+
+        chartRef.current = new Chart(canvas, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+              x: this.makeTimeScale(rangeWindow),
+              y: { title: { display: true, text: yLabel } },
+            },
+          },
+        });
+      },
+
+      timeSeriesDataset(label, rows, valueGetter) {
+        return {
+          label,
+          data: rows
+            .map(row => ({ x: new Date(row.timestamp), y: valueGetter(row) }))
+            .filter(point => point.y != null),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+        };
+      },
+    };
+
+    // -------------------- components --------------------
     function Card({ className = '', children, onClick }) {
       return <div className={`card ${className}`} onClick={onClick}>{children}</div>;
     }
 
     function SensorCard({ sensor, kind, selected, onClick, clickable = true }) {
-      const stale = isStale(sensor.latestTimestamp);
+      const stale = metrics.isStale(sensor.latestTimestamp);
 
       return (
         <Card
@@ -364,7 +464,7 @@
           <div className="row">
             <div>
               <div className="sensor-name">{sensor.name}</div>
-              <div className="muted">Updated {formatAgo(sensor.latestTimestamp)}</div>
+              <div className="muted">Updated {metrics.formatAgo(sensor.latestTimestamp)}</div>
             </div>
             <div className={`pill ${stale ? 'warn' : 'ok'}`}>{stale ? 'Stale' : 'Live'}</div>
           </div>
@@ -424,15 +524,7 @@
       );
     }
 
-    function makeTimeScale(rangeWindow) {
-      return {
-        type: 'time',
-        min: rangeWindow.startMs,
-        max: rangeWindow.endMs,
-        time: { tooltipFormat: 'yyyy-MM-dd HH:mm' }
-      };
-    }
-
+    // -------------------- app --------------------
     function App() {
       const [range, setRange] = React.useState('24h');
       const [selectedSensorId, setSelectedSensorId] = React.useState('all');
@@ -440,16 +532,12 @@
       const [showDerivedCharts, setShowDerivedCharts] = React.useState(false);
 
       const [sensors, setSensors] = React.useState([]);
-      const [data, setData] = React.useState({});
-      const [loading, setLoading] = React.useState(true);
-      const [error, setError] = React.useState('');
-
-      const [rangeWindow, setRangeWindow] = React.useState(() => {
-        const cfg = RANGE_CONFIG['24h'];
-        const endMs = Date.now();
-        const startMs = endMs - cfg.hours * 60 * 60 * 1000;
-        return { startMs, endMs };
-      });
+      const [historyBySensorId, setHistoryBySensorId] = React.useState({});
+      const [loadingSensors, setLoadingSensors] = React.useState(true);
+      const [loadingHistory, setLoadingHistory] = React.useState(false);
+      const [sensorError, setSensorError] = React.useState('');
+      const [historyError, setHistoryError] = React.useState('');
+      const [rangeWindow, setRangeWindow] = React.useState(sensorModel.buildRangeWindow('24h'));
 
       const tempCanvas = React.useRef(null);
       const humidityCanvas = React.useRef(null);
@@ -463,15 +551,9 @@
       const vpdChart = React.useRef(null);
       const xiaomiChart = React.useRef(null);
 
-      const switchbotSensors = React.useMemo(
-        () => sensors.filter(sensor => sensor.type === 'switchbot'),
-        [sensors]
-      );
-
-      const xiaomiSensors = React.useMemo(
-        () => sensors.filter(sensor => sensor.type === 'xiaomi'),
-        [sensors]
-      );
+      const sensorGroups = React.useMemo(() => sensorModel.splitByType(sensors), [sensors]);
+      const switchbotSensors = sensorGroups.switchbot;
+      const xiaomiSensors = sensorGroups.xiaomi;
 
       const selectedSwitchbotSensor = React.useMemo(() => {
         if (selectedSensorId === 'all') return null;
@@ -480,15 +562,15 @@
 
       React.useEffect(() => {
         async function loadSensors() {
-          setLoading(true);
-          setError('');
+          setLoadingSensors(true);
+          setSensorError('');
           try {
-            const loadedSensors = await fetchJson('/sensors');
+            const loadedSensors = await api.fetchSensors();
             setSensors(loadedSensors);
           } catch (err) {
-            setError(String(err));
+            setSensorError(String(err));
           } finally {
-            setLoading(false);
+            setLoadingSensors(false);
           }
         }
 
@@ -498,246 +580,114 @@
       React.useEffect(() => {
         if (sensors.length === 0) return;
 
-        async function loadReadings() {
-          setLoading(true);
-          setError('');
+        async function loadHistory() {
+          const nextRangeWindow = sensorModel.buildRangeWindow(range);
+          setLoadingHistory(true);
+          setHistoryError('');
 
           try {
-            const cfg = RANGE_CONFIG[range] || RANGE_CONFIG['24h'];
-            const endMs = Date.now();
-            const startMs = endMs - cfg.hours * 60 * 60 * 1000;
-            const startTs = new Date(startMs).toISOString();
-            const endTs = new Date(endMs).toISOString();
-
             const entries = await Promise.all(
               sensors.map(async (sensor) => {
-                const params = new URLSearchParams({
-                  start_ts: startTs,
-                  end_ts: endTs,
-                  max_points: String(cfg.maxPoints),
-                });
-
-                const rows = await fetchJson(`/sensors/${encodeURIComponent(sensor.id)}/readings?${params.toString()}`);
-                return [sensor.id, rows.slice().reverse()];
+                const rows = await api.fetchSensorReadings(sensor.id, nextRangeWindow);
+                return [sensor.id, sensorModel.normalizeReadings(rows)];
               })
             );
 
-            setRangeWindow({ startMs, endMs });
-            setData(Object.fromEntries(entries));
+            setRangeWindow(nextRangeWindow);
+            setHistoryBySensorId(Object.fromEntries(entries));
           } catch (err) {
-            setError(String(err));
+            setHistoryError(String(err));
           } finally {
-            setLoading(false);
+            setLoadingHistory(false);
           }
         }
 
-        loadReadings();
+        loadHistory();
       }, [range, sensors]);
 
       const switchbotSummary = React.useMemo(() => {
-        return switchbotSensors.map((sensor) => {
-          const rows = data[sensor.id] || [];
-          const latest = rows[rows.length - 1];
-          const latestTemp = latest?.temperature_c ?? null;
-          const latestHumidity = latest?.humidity_pct ?? null;
-          const latestAbsoluteHumidity = calcAbsoluteHumidity(latestTemp, latestHumidity);
-          const latestVpd = calcVpd(latestTemp, latestHumidity);
-
-          return {
-            ...sensor,
-            latestTimestamp: latest?.timestamp,
-            latestTempText: formatTemp(latestTemp),
-            latestHumidityText: formatPct(latestHumidity),
-            latestAbsoluteHumidityText: formatAbsHumidity(latestAbsoluteHumidity),
-            latestVpdText: formatVpd(latestVpd),
-          };
-        });
-      }, [switchbotSensors, data]);
+        return switchbotSensors.map(sensor => sensorModel.buildSwitchbotSummary(sensor, historyBySensorId[sensor.id] || []));
+      }, [switchbotSensors, historyBySensorId]);
 
       const xiaomiSummary = React.useMemo(() => {
-        return xiaomiSensors.map((sensor) => {
-          const rows = data[sensor.id] || [];
-          const latest = rows[rows.length - 1];
-          return {
-            ...sensor,
-            latestTimestamp: latest?.timestamp,
-            latestMoisture: latest?.moisture_pct ?? null,
-            latestLux: latest?.light_lux ?? null,
-          };
-        });
-      }, [xiaomiSensors, data]);
+        return xiaomiSensors.map(sensor => sensorModel.buildXiaomiSummary(sensor, historyBySensorId[sensor.id] || []));
+      }, [xiaomiSensors, historyBySensorId]);
+
+      const switchbotSensorsToPlot = React.useMemo(() => {
+        return selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
+      }, [selectedSwitchbotSensor, switchbotSensors]);
 
       React.useEffect(() => {
-        if (!tempCanvas.current) return;
-        if (tempChart.current) tempChart.current.destroy();
-
-        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
-
-        const datasets = sensorsToPlot.map((sensor) => ({
-          label: sensor.name,
-          data: (data[sensor.id] || [])
-            .filter(r => r.temperature_c != null)
-            .map(r => ({ x: new Date(r.timestamp), y: round1(r.temperature_c) })),
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.15,
-        }));
-
-        tempChart.current = new Chart(tempCanvas.current, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            parsing: false,
-            interaction: { mode: 'nearest', intersect: false },
-            plugins: { legend: { display: true } },
-            scales: {
-              x: makeTimeScale(rangeWindow),
-              y: { title: { display: true, text: '°C' } }
-            }
-          }
-        });
-      }, [switchbotSensors, selectedSwitchbotSensor, data, rangeWindow]);
+        const datasets = switchbotSensorsToPlot.map(sensor =>
+          chartFactory.timeSeriesDataset(
+            sensor.name,
+            historyBySensorId[sensor.id] || [],
+            row => row.temperature_c == null ? null : metrics.round1(row.temperature_c)
+          )
+        );
+        chartFactory.lineChart(tempCanvas.current, tempChart, datasets, '°C', rangeWindow);
+      }, [switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
 
       React.useEffect(() => {
-        if (!humidityCanvas.current) return;
-        if (humidityChart.current) humidityChart.current.destroy();
-
-        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
-
-        const datasets = sensorsToPlot.map((sensor) => ({
-          label: sensor.name,
-          data: (data[sensor.id] || [])
-            .filter(r => r.humidity_pct != null)
-            .map(r => ({ x: new Date(r.timestamp), y: Math.round(r.humidity_pct) })),
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.15,
-        }));
-
-        humidityChart.current = new Chart(humidityCanvas.current, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            parsing: false,
-            interaction: { mode: 'nearest', intersect: false },
-            plugins: { legend: { display: true } },
-            scales: {
-              x: makeTimeScale(rangeWindow),
-              y: { title: { display: true, text: '%' } }
-            }
-          }
-        });
-      }, [switchbotSensors, selectedSwitchbotSensor, data, rangeWindow]);
+        const datasets = switchbotSensorsToPlot.map(sensor =>
+          chartFactory.timeSeriesDataset(
+            sensor.name,
+            historyBySensorId[sensor.id] || [],
+            row => row.humidity_pct == null ? null : Math.round(row.humidity_pct)
+          )
+        );
+        chartFactory.lineChart(humidityCanvas.current, humidityChart, datasets, '%', rangeWindow);
+      }, [switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
 
       React.useEffect(() => {
-        if (!showDerivedCharts || !absHumidityCanvas.current) return;
-        if (absHumidityChart.current) absHumidityChart.current.destroy();
-
-        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
-
-        const datasets = sensorsToPlot.map((sensor) => ({
-          label: sensor.name,
-          data: (data[sensor.id] || [])
-            .filter(r => r.temperature_c != null && r.humidity_pct != null)
-            .map(r => ({
-              x: new Date(r.timestamp),
-              y: round1(calcAbsoluteHumidity(r.temperature_c, r.humidity_pct))
-            })),
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.15,
-        }));
-
-        absHumidityChart.current = new Chart(absHumidityCanvas.current, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            parsing: false,
-            interaction: { mode: 'nearest', intersect: false },
-            plugins: { legend: { display: true } },
-            scales: {
-              x: makeTimeScale(rangeWindow),
-              y: { title: { display: true, text: 'g/m³' } }
-            }
-          }
-        });
-      }, [switchbotSensors, selectedSwitchbotSensor, data, showDerivedCharts, rangeWindow]);
+        if (!showDerivedCharts) {
+          chartFactory.destroy(absHumidityChart);
+          return;
+        }
+        const datasets = switchbotSensorsToPlot.map(sensor =>
+          chartFactory.timeSeriesDataset(
+            sensor.name,
+            historyBySensorId[sensor.id] || [],
+            row => metrics.round1(metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct))
+          )
+        );
+        chartFactory.lineChart(absHumidityCanvas.current, absHumidityChart, datasets, 'g/m³', rangeWindow);
+      }, [showDerivedCharts, switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
 
       React.useEffect(() => {
-        if (!showDerivedCharts || !vpdCanvas.current) return;
-        if (vpdChart.current) vpdChart.current.destroy();
-
-        const sensorsToPlot = selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
-
-        const datasets = sensorsToPlot.map((sensor) => ({
-          label: sensor.name,
-          data: (data[sensor.id] || [])
-            .filter(r => r.temperature_c != null && r.humidity_pct != null)
-            .map(r => ({
-              x: new Date(r.timestamp),
-              y: round1(calcVpd(r.temperature_c, r.humidity_pct))
-            })),
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.15,
-        }));
-
-        vpdChart.current = new Chart(vpdCanvas.current, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            parsing: false,
-            interaction: { mode: 'nearest', intersect: false },
-            plugins: { legend: { display: true } },
-            scales: {
-              x: makeTimeScale(rangeWindow),
-              y: { title: { display: true, text: 'kPa' } }
-            }
-          }
-        });
-      }, [switchbotSensors, selectedSwitchbotSensor, data, showDerivedCharts, rangeWindow]);
+        if (!showDerivedCharts) {
+          chartFactory.destroy(vpdChart);
+          return;
+        }
+        const datasets = switchbotSensorsToPlot.map(sensor =>
+          chartFactory.timeSeriesDataset(
+            sensor.name,
+            historyBySensorId[sensor.id] || [],
+            row => metrics.round1(metrics.calcVpd(row.temperature_c, row.humidity_pct))
+          )
+        );
+        chartFactory.lineChart(vpdCanvas.current, vpdChart, datasets, 'kPa', rangeWindow);
+      }, [showDerivedCharts, switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
 
       React.useEffect(() => {
-        if (!xiaomiCanvas.current) return;
-        if (xiaomiChart.current) xiaomiChart.current.destroy();
-        if (xiaomiSensors.length === 0) return;
+        if (xiaomiSensors.length === 0) {
+          chartFactory.destroy(xiaomiChart);
+          return;
+        }
 
         const sensor = xiaomiSensors[0];
+        const datasets = [
+          chartFactory.timeSeriesDataset(
+            `${sensor.name} ${xiaomiMetric.replaceAll('_', ' ')}`,
+            historyBySensorId[sensor.id] || [],
+            row => row[xiaomiMetric]
+          )
+        ];
+        chartFactory.lineChart(xiaomiCanvas.current, xiaomiChart, datasets, xiaomiMetric, rangeWindow);
+      }, [xiaomiSensors, historyBySensorId, xiaomiMetric, rangeWindow]);
 
-        const datasets = [{
-          label: `${sensor.name} ${xiaomiMetric.replaceAll('_', ' ')}`,
-          data: (data[sensor.id] || [])
-            .filter(r => r[xiaomiMetric] != null)
-            .map(r => ({ x: new Date(r.timestamp), y: r[xiaomiMetric] })),
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.15,
-        }];
-
-        xiaomiChart.current = new Chart(xiaomiCanvas.current, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            parsing: false,
-            interaction: { mode: 'nearest', intersect: false },
-            plugins: { legend: { display: true } },
-            scales: {
-              x: makeTimeScale(rangeWindow),
-              y: { title: { display: true, text: xiaomiMetric } }
-            }
-          }
-        });
-      }, [xiaomiSensors, data, xiaomiMetric, rangeWindow]);
+      const loading = loadingSensors || loadingHistory;
+      const error = sensorError || historyError;
 
       return (
         <div className="wrap">
@@ -749,7 +699,7 @@
 
             <div className="controls">
               <div className="seg">
-                {['24h', '3d', '7d', '30d'].map((value) => (
+                {Object.keys(CONFIG.rangeConfig).map(value => (
                   <button
                     key={value}
                     className={range === value ? 'active' : ''}
@@ -760,12 +710,9 @@
                 ))}
               </div>
 
-              <select
-                value={selectedSensorId}
-                onChange={(e) => setSelectedSensorId(e.target.value)}
-              >
+              <select value={selectedSensorId} onChange={(e) => setSelectedSensorId(e.target.value)}>
                 <option value="all">All SwitchBot</option>
-                {switchbotSensors.map((sensor) => (
+                {switchbotSensors.map(sensor => (
                   <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
                 ))}
               </select>
@@ -777,7 +724,7 @@
 
           <div className="section-title">SwitchBot</div>
           <div className="sensor-grid">
-            {switchbotSummary.map((sensor) => (
+            {switchbotSummary.map(sensor => (
               <SensorCard
                 key={sensor.id}
                 sensor={sensor}
@@ -791,7 +738,7 @@
 
           <div className="section-title">Xiaomi</div>
           <div className="sensor-grid">
-            {xiaomiSummary.map((sensor) => (
+            {xiaomiSummary.map(sensor => (
               <SensorCard
                 key={sensor.id}
                 sensor={sensor}
@@ -859,3 +806,4 @@
   </script>
 </body>
 </html>
+
