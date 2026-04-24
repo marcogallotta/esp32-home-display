@@ -1,0 +1,10 @@
+window.CONFIG = {
+  apiKey: "YOUR_API_KEY",
+  staleAfterMs: 2 * 60 * 60 * 1000,
+  rangeConfig: {
+    "24h": { hours: 24, maxPoints: 96 },
+    "3d": { hours: 72, maxPoints: 144 },
+    "7d": { hours: 24 * 7, maxPoints: 196 },
+    "30d": { hours: 24 * 30, maxPoints: 300 },
+  },
+};
