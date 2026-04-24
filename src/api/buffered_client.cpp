@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "payloads.h"
+#include "../log.h"
 
 namespace api {
 namespace {
@@ -89,10 +90,12 @@ WriteResult BufferedClient::postSwitchbotReading(
 ) {
     const auto payload = makeSwitchbotPayload(identity, reading);
     if (!payload.has_value()) {
+        logLine(LogLevel::Warn, "api.switchbot.drop_invalid_payload mac=" + identity.mac);
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
+        logLine(LogLevel::Warn, "api.switchbot.drop_buffer_full mac=" + identity.mac);
         return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
@@ -108,10 +111,12 @@ WriteResult BufferedClient::postXiaomiReading(
 ) {
     const auto payload = makeXiaomiPayload(identity, reading);
     if (!payload.has_value()) {
+        logLine(LogLevel::Warn, "api.xiaomi.drop_invalid_payload mac=" + identity.mac);
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
     if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
+        logLine(LogLevel::Warn, "api.xiaomi.drop_buffer_full mac=" + identity.mac);
         return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
@@ -123,8 +128,15 @@ WriteResult BufferedClient::postXiaomiReading(
 
 WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
     if (hasBacklog(buffer_)) {
+        const std::string path = request.path;
         const BufferInsertResult insertResult =
             bufferRequest(buffer_, std::move(request), config_.api.buffer);
+
+        logLine(
+            LogLevel::Debug,
+            "api.fresh.buffered_due_to_backlog path=" + path
+        );
+
         return makeWriteResult(mapBufferInsertResult(insertResult));
     }
 
@@ -132,6 +144,14 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
 
     switch (classifyFreshResponse(response)) {
         case FreshRequestDecision::Sent:
+            logLine(
+                LogLevel::Info,
+                "api.fresh.sent path=" + request.path +
+                " transport=" + transportResultName(response.transport) +
+                " status=" + std::to_string(response.statusCode) +
+                " body=\"" + response.body + "\""
+            );
+
             return makeWriteResult(
                 WriteStatus::Sent,
                 parseBackendWriteResult(response),
@@ -140,6 +160,15 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
             );
 
         case FreshRequestDecision::DropPermanent:
+            logLine(
+                LogLevel::Warn,
+                "api.fresh.drop_permanent path=" + request.path +
+                " transport=" + transportResultName(response.transport) +
+                " status=" + std::to_string(response.statusCode) +
+                " error=\"" + response.error + "\"" +
+                " body=\"" + response.body + "\""
+            );
+
             return makeWriteResult(
                 WriteStatus::DroppedPermanent,
                 BackendWriteResult::Failed,
@@ -148,8 +177,17 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
             );
 
         case FreshRequestDecision::Buffer: {
+            logLine(
+                LogLevel::Warn,
+                "api.fresh.buffer path=" + request.path +
+                " transport=" + transportResultName(response.transport) +
+                " status=" + std::to_string(response.statusCode) +
+                " error=\"" + response.error + "\""
+            );
+
             const BufferInsertResult insertResult =
                 bufferRequest(buffer_, std::move(request), config_.api.buffer);
+
             return makeWriteResult(
                 mapBufferInsertResult(insertResult),
                 BackendWriteResult::Failed,

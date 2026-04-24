@@ -4,7 +4,7 @@
 #include <ctime>
 #include <string>
 
-#include "platform.h"
+#include "log.h"
 
 namespace {
 constexpr std::int64_t kXiaomiBufferWindowSeconds = 60;
@@ -20,14 +20,14 @@ void logConflict(
     const SensorIdentity& identity,
     const api::WriteResult& response
 ) {
-    platform::printLine(
-        std::string("WARNING: API conflict for ") +
+    logLine(
+        LogLevel::Warn,
+        std::string("api.conflict sensor_type=") +
         sensorType +
-        " sensor " +
-        identity.name +
-        " (" + identity.mac + ")" +
+        " name=\"" + identity.name + "\"" +
+        " mac=" + identity.mac +
         " status=" + std::to_string(response.httpStatusCode) +
-        " body=" + response.body
+        " body=\"" + response.body + "\""
     );
 }
 

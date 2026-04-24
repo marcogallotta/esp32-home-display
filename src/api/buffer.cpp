@@ -3,7 +3,7 @@
 #include <utility>
 
 #include "client.h"
-#include "../platform.h"
+#include "../log.h"
 
 namespace api {
 namespace {
@@ -67,11 +67,14 @@ void logDroppedBufferedRequest(
     const BufferedRequest& request,
     const network::HttpResponse& response
 ) {
-    platform::printLine(
-        "Buffered request dropped: path=" + request.path +
-        " transport=" + std::to_string(static_cast<int>(response.transport)) +
+    logLine(
+        LogLevel::Warn,
+        "api.buffer.drop path=" + request.path +
+        " transport=" + transportResultName(response.transport) +
         " status=" + std::to_string(response.statusCode) +
-        " error=" + response.error
+        " timeout_retries=" + std::to_string(request.timeoutRetryCount) +
+        " tls_retries=" + std::to_string(request.tlsRetryCount) +
+        " error=\"" + response.error + "\""
     );
 }
 
@@ -83,10 +86,24 @@ BufferInsertResult bufferRequest(
     const ApiBufferConfig& config
 ) {
     if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
+        logLine(
+            LogLevel::Warn,
+            "api.buffer.insert_drop_full size=" + std::to_string(buffer.requests.size()) +
+            " cap=" + std::to_string(config.inMemory) +
+            " path=" + request.path
+        );
         return BufferInsertResult::DroppedNewRequestBufferFull;
     }
 
+    const std::string path = request.path;
     buffer.requests.push_back(std::move(request));
+
+    logLine(
+        LogLevel::Info,
+        "api.buffer.insert path=" + path +
+        " size=" + std::to_string(buffer.requests.size())
+    );
+
     return BufferInsertResult::Buffered;
 }
 
@@ -101,6 +118,14 @@ BufferDrainResult maybeDrainBuffer(
     if (now < buffer.nextDrainAllowedAtEpochS) {
         result.notDueYet = true;
         return result;
+    }
+
+    if (!buffer.requests.empty()) {
+        logLine(
+            LogLevel::Debug,
+            "api.buffer.drain_start size=" + std::to_string(buffer.requests.size()) +
+            " cap=" + std::to_string(config.drainRateCap)
+        );
     }
 
     buffer.nextDrainAllowedAtEpochS =
@@ -118,14 +143,33 @@ BufferDrainResult maybeDrainBuffer(
         const BufferDecision decision = decideBufferedResponse(request, response);
 
         if (decision == BufferDecision::Sent) {
+            const std::string path = request.path;
             buffer.requests.pop_front();
             result.sent += 1;
+
+            logLine(
+                LogLevel::Info,
+                "api.buffer.sent path=" + path +
+                " remaining=" + std::to_string(buffer.requests.size())
+            );
+
             continue;
         }
 
         if (decision == BufferDecision::KeepBuffered) {
             buffer.nextDrainAllowedAtEpochS =
                 now + static_cast<std::time_t>(config.drainRateTickS);
+
+            logLine(
+                LogLevel::Warn,
+                "api.buffer.blocked path=" + request.path +
+                " transport=" + transportResultName(response.transport) +
+                " status=" + std::to_string(response.statusCode) +
+                " timeout_retries=" + std::to_string(request.timeoutRetryCount) +
+                " tls_retries=" + std::to_string(request.tlsRetryCount) +
+                " error=\"" + response.error + "\""
+            );
+
             result.blockedByRetryableFailure = true;
             break;
         }

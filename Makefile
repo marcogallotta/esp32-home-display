@@ -36,6 +36,7 @@ COMMON_SRC := \
 	src/config.cpp \
 	src/config_desktop.cpp \
 	src/forecast/openmeteo.cpp \
+	src/log.cpp \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
 	src/salah/state.cpp \

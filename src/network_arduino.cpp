@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 
+#include "log.h"
 #include "network.h"
 #include "platform.h"
 
@@ -36,11 +37,20 @@ TransportResult mapHttpClientError(int code) {
             return TransportResult::NetworkError;
 
         default:
-            platform::printLine("default network error, code: " + std::to_string(code));
-            // If the code is negative but not handled above,
-            // it's usually a low-level stream error.
+            logLine(LogLevel::Warn, "network.arduino.unmapped_error code=" + std::to_string(code));
             return TransportResult::NetworkError;
     }
+}
+
+const char* methodName(Method method) {
+    switch (method) {
+        case Method::Get:
+            return "GET";
+        case Method::Post:
+            return "POST";
+    }
+
+    return "UNKNOWN";
 }
 
 class ArduinoPlatform final : public Platform {
@@ -67,11 +77,13 @@ public:
         const uint32_t start = ::millis();
         while (WiFi.status() != WL_CONNECTED) {
             if (::millis() - start >= timeoutMs) {
+                logLine(LogLevel::Warn, "network.wifi.timeout");
                 return false;
             }
             delay(250);
         }
 
+        logLine(LogLevel::Info, "network.wifi.connected");
         return true;
     }
 
@@ -85,6 +97,7 @@ private:
 
         if (!networkReady(5000)) {
             resp.transport = TransportResult::NetworkError;
+            resp.error = "wifi not connected";
             return resp;
         }
 
@@ -94,6 +107,15 @@ private:
         HTTPClient http;
         if (!http.begin(client, request.url.c_str())) {
             resp.transport = TransportResult::InternalError;
+            resp.error = "http.begin failed";
+
+            logLine(
+                LogLevel::Error,
+                "network.begin_failed method=" +
+                std::string(methodName(request.method)) +
+                " url=" + request.url
+            );
+
             return resp;
         }
 
@@ -118,9 +140,27 @@ private:
             resp.transport = TransportResult::Ok;
             resp.statusCode = code;
             resp.body = http.getString().c_str();
+
+            logLine(
+                LogLevel::Debug,
+                "network.response method=" +
+                std::string(methodName(request.method)) +
+                " status=" + std::to_string(code) +
+                " url=" + request.url
+            );
         } else {
             resp.transport = mapHttpClientError(code);
             resp.error = http.errorToString(code).c_str();
+
+            logLine(
+                LogLevel::Warn,
+                "network.failure method=" +
+                std::string(methodName(request.method)) +
+                " code=" + std::to_string(code) +
+                " transport=" + transportResultName(resp.transport) +
+                " error=\"" + resp.error + "\"" +
+                " url=" + request.url
+            );
         }
 
         http.end();
