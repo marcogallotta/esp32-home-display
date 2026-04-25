@@ -5,7 +5,7 @@
         "pem_file": "/YOUR_CERT.pem"
     },
     "forecast": {
-        "openmeteo_pem": "/openmeteo.pem"
+        "openmeteo_pem_file": "/openmeteo.pem"
     },
     "location": {
         "latitude": 48.9,
