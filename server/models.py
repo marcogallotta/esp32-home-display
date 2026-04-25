@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     CheckConstraint,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -30,7 +32,13 @@ class Sensor(Base):
     )
 
     mac: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    id: Mapped[UUID] = mapped_column(
+        PostgresUUID(as_uuid=True),
+        unique=True,
+        nullable=False,
+        default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
     type: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
 
@@ -39,9 +47,15 @@ class SwitchbotReading(Base):
     __table_args__ = (
         UniqueConstraint("mac", "timestamp", name="switchbot_readings_mac_timestamp_uniq"),
         Index("switchbot_readings_mac_timestamp_idx", "mac", "timestamp"),
+        Index("switchbot_readings_sensor_id_timestamp_idx", "sensor_id", "timestamp"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sensor_id: Mapped[UUID] = mapped_column(
+        PostgresUUID(as_uuid=True),
+        ForeignKey("sensors.id"),
+        nullable=False,
+    )
     mac: Mapped[str] = mapped_column(String, ForeignKey("sensors.mac"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     temperature_c: Mapped[float] = mapped_column(Float, nullable=False)
@@ -53,9 +67,15 @@ class XiaomiReading(Base):
     __table_args__ = (
         UniqueConstraint("mac", "timestamp", name="xiaomi_readings_mac_timestamp_uniq"),
         Index("xiaomi_readings_mac_timestamp_idx", "mac", "timestamp"),
+        Index("xiaomi_readings_sensor_id_timestamp_idx", "sensor_id", "timestamp"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sensor_id: Mapped[UUID] = mapped_column(
+        PostgresUUID(as_uuid=True),
+        ForeignKey("sensors.id"),
+        nullable=False,
+    )
     mac: Mapped[str] = mapped_column(String, ForeignKey("sensors.mac"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     temperature_c: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

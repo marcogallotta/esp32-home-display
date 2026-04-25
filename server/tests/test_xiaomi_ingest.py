@@ -1,6 +1,11 @@
 import pytest
 
-from tests.helpers import auth_headers, make_xiaomi_payload, post_xiaomi
+from tests.helpers import (
+    get_sensor_id,
+    get_sensor_readings,
+    make_xiaomi_payload,
+    post_xiaomi,
+)
 
 
 def test_xiaomi_create_accepts_partial_reading(client, api_key):
@@ -31,11 +36,8 @@ def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
     assert second.status_code == 200
     assert second.json()["result"] == "merged"
 
-    fetch = client.get(
-        "/xiaomi/readings",
-        headers=auth_headers(api_key),
-        params={"mac": first_payload["mac"]},
-    )
+    sensor_id = get_sensor_id(client, api_key, sensor_type="xiaomi")
+    fetch = get_sensor_readings(client, api_key, sensor_id)
 
     assert fetch.status_code == 200
     assert fetch.json() == [
@@ -111,11 +113,8 @@ def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_a
         }
     ]
 
-    fetch = client.get(
-        "/xiaomi/readings",
-        headers=auth_headers(api_key),
-        params={"mac": first_payload["mac"]},
-    )
+    sensor_id = get_sensor_id(client, api_key, sensor_type="xiaomi")
+    fetch = get_sensor_readings(client, api_key, sensor_id)
 
     assert fetch.status_code == 200
     assert fetch.json() == [

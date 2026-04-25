@@ -3,8 +3,7 @@ import pytest
 
 def test_api_key_auth_accepts_correct_key(client, api_key):
     response = client.get(
-        "/switchbot/readings",
-        params={"mac": "AA:BB:CC:DD:EE:FF"},
+        "/sensors",
         headers={"x-api-key": api_key},
     )
 
@@ -31,11 +30,7 @@ def test_api_key_auth_rejects_invalid_key(client, header_value):
     if header_value is not None:
         headers["x-api-key"] = header_value
 
-    response = client.get(
-        "/switchbot/readings",
-        params={"mac": "AA:BB:CC:DD:EE:FF"},
-        headers=headers,
-    )
+    response = client.get("/sensors", headers=headers)
 
     assert response.status_code == 401
     assert response.json() == {"detail": "unauthorized"}
