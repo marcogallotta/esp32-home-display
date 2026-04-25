@@ -16,24 +16,32 @@ window.chartFactory = {
   },
 
   lineChart(canvas, chartRef, datasets, yLabel, rangeWindow) {
-    this.destroy(chartRef);
     if (!canvas) return;
 
-    chartRef.current = new Chart(canvas, {
-      type: "line",
-      data: { datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        parsing: false,
-        interaction: { mode: "nearest", intersect: false },
-        plugins: { legend: { display: true } },
-        scales: {
-          x: this.makeTimeScale(rangeWindow),
-          y: { title: { display: true, text: yLabel } },
-        },
+    const options = {
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: { legend: { display: true } },
+      scales: {
+        x: this.makeTimeScale(rangeWindow),
+        y: { title: { display: true, text: yLabel } },
       },
-    });
+    };
+
+    if (!chartRef.current) {
+      chartRef.current = new Chart(canvas, {
+        type: "line",
+        data: { datasets },
+        options,
+      });
+      return;
+    }
+
+    chartRef.current.data.datasets = datasets;
+    chartRef.current.options = options;
+    chartRef.current.update();
   },
 
   timeSeriesDataset(label, rows, valueGetter) {
