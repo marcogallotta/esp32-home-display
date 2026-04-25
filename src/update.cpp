@@ -1,6 +1,7 @@
 #include "update.h"
 
 #include <cstdio>
+#include <iomanip>
 #include <optional>
 #include <string>
 
@@ -19,16 +20,12 @@ std::string formatFloat1(float value) {
 }
 
 std::string formatDate(const std::tm& time) {
-    char buf[16];
-    std::snprintf(
-        buf,
-        sizeof(buf),
-        "%04d-%02d-%02d",
-        time.tm_year + 1900,
-        time.tm_mon + 1,
-        time.tm_mday
-    );
-    return std::string(buf);
+    std::ostringstream out;
+    out << std::setfill('0')
+        << std::setw(4) << (time.tm_year + 1900) << '-'
+        << std::setw(2) << (time.tm_mon + 1) << '-'
+        << std::setw(2) << time.tm_mday;
+    return out.str();
 }
 
 std::string switchbotLabel(const SwitchbotSensorState& row) {
