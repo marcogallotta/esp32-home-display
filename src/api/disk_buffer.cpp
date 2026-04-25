@@ -6,31 +6,31 @@
 namespace api::disk_buffer {
 namespace {
 
-request_file_store::Index toIndex(const State& state) {
-    request_file_store::Index index;
+RequestStoreIndex toIndex(const State& state) {
+    RequestStoreIndex index;
     index.head = state.head;
     index.tail = state.tail;
     index.count = state.count;
     return index;
 }
 
-void fromIndex(const request_file_store::Index& index, State& state) {
+void fromIndex(const RequestStoreIndex& index, State& state) {
     state.head = index.head;
     state.tail = index.tail;
     state.count = index.count;
     state.loaded = true;
 }
 
-bool ensureLoaded(State& state) {
+bool ensureLoaded(State& state, RequestStore& store) {
     if (state.loaded) {
         return true;
     }
 
-    return load(state);
+    return load(state, store);
 }
 
-bool hasDiskSpace(const ApiBufferConfig& config) {
-    const std::uint64_t freeBytes = request_file_store::freeBytes();
+bool hasDiskSpace(const ApiBufferConfig& config, RequestStore& store) {
+    const std::uint64_t freeBytes = store.freeBytes();
 
     if (freeBytes <= config.diskReserveBytes) {
         logLine(LogLevel::Warn, "API disk buffer full: reserve would be crossed");
@@ -40,8 +40,8 @@ bool hasDiskSpace(const ApiBufferConfig& config) {
     return true;
 }
 
-bool advanceHead(State& state, const char* actionName) {
-    if (!ensureLoaded(state)) {
+bool advanceHead(State& state, const char* actionName, RequestStore& store) {
+    if (!ensureLoaded(state, store)) {
         return false;
     }
 
@@ -55,7 +55,7 @@ bool advanceHead(State& state, const char* actionName) {
     next.head += 1;
     next.count -= 1;
 
-    if (!request_file_store::writeIndex(toIndex(next))) {
+    if (!store.writeIndex(toIndex(next))) {
         logLine(
             LogLevel::Warn,
             std::string("API disk buffer ") + actionName + " failed: index write failed"
@@ -63,7 +63,7 @@ bool advanceHead(State& state, const char* actionName) {
         return false;
     }
 
-    if (!request_file_store::removeRequest(oldHead)) {
+    if (!store.removeRequest(oldHead)) {
         logLine(
             LogLevel::Warn,
             std::string("API disk buffer ") + actionName + " warning: request delete failed"
@@ -74,11 +74,15 @@ bool advanceHead(State& state, const char* actionName) {
     return true;
 }
 
+RequestStore& defaultStore() {
+    return request_file_store::defaultStore();
+}
+
 } // namespace
 
-bool load(State& state) {
-    request_file_store::Index index;
-    if (!request_file_store::readIndex(index)) {
+bool load(State& state, RequestStore& store) {
+    RequestStoreIndex index;
+    if (!store.readIndex(index)) {
         logLine(LogLevel::Warn, "API disk buffer load failed");
         return false;
     }
@@ -87,22 +91,27 @@ bool load(State& state) {
     return true;
 }
 
+bool load(State& state) {
+    return load(state, defaultStore());
+}
+
 bool enqueue(
     State& state,
     const BufferedRequest& request,
-    const ApiBufferConfig& config
+    const ApiBufferConfig& config,
+    RequestStore& store
 ) {
-    if (!ensureLoaded(state)) {
+    if (!ensureLoaded(state, store)) {
         return false;
     }
 
-    if (!hasDiskSpace(config)) {
+    if (!hasDiskSpace(config, store)) {
         return false;
     }
 
     const std::uint32_t sequence = state.tail;
 
-    if (!request_file_store::writeRequest(sequence, request)) {
+    if (!store.writeRequest(sequence, request)) {
         logLine(LogLevel::Warn, "API disk buffer enqueue failed: request write failed");
         return false;
     }
@@ -111,7 +120,7 @@ bool enqueue(
     next.tail += 1;
     next.count += 1;
 
-    if (!request_file_store::writeIndex(toIndex(next))) {
+    if (!store.writeIndex(toIndex(next))) {
         logLine(LogLevel::Warn, "API disk buffer enqueue failed: index write failed");
         return false;
     }
@@ -120,8 +129,16 @@ bool enqueue(
     return true;
 }
 
-bool peek(State& state, BufferedRequest& out) {
-    if (!ensureLoaded(state)) {
+bool enqueue(
+    State& state,
+    const BufferedRequest& request,
+    const ApiBufferConfig& config
+) {
+    return enqueue(state, request, config, defaultStore());
+}
+
+bool peek(State& state, BufferedRequest& out, RequestStore& store) {
+    if (!ensureLoaded(state, store)) {
         return false;
     }
 
@@ -129,7 +146,7 @@ bool peek(State& state, BufferedRequest& out) {
         return false;
     }
 
-    if (!request_file_store::readRequest(state.head, out)) {
+    if (!store.readRequest(state.head, out)) {
         logLine(LogLevel::Warn, "API disk buffer peek failed: request read failed");
         return false;
     }
@@ -137,16 +154,28 @@ bool peek(State& state, BufferedRequest& out) {
     return true;
 }
 
+bool peek(State& state, BufferedRequest& out) {
+    return peek(state, out, defaultStore());
+}
+
+bool consume(State& state, RequestStore& store) {
+    return advanceHead(state, "consume", store);
+}
+
 bool consume(State& state) {
-    return advanceHead(state, "consume");
+    return consume(state, defaultStore());
+}
+
+bool dropFront(State& state, RequestStore& store) {
+    return advanceHead(state, "drop front", store);
 }
 
 bool dropFront(State& state) {
-    return advanceHead(state, "drop front");
+    return dropFront(state, defaultStore());
 }
 
-bool rewriteFront(State& state, const BufferedRequest& request) {
-    if (!ensureLoaded(state)) {
+bool rewriteFront(State& state, const BufferedRequest& request, RequestStore& store) {
+    if (!ensureLoaded(state, store)) {
         return false;
     }
 
@@ -154,12 +183,16 @@ bool rewriteFront(State& state, const BufferedRequest& request) {
         return false;
     }
 
-    if (!request_file_store::writeRequest(state.head, request)) {
+    if (!store.writeRequest(state.head, request)) {
         logLine(LogLevel::Warn, "API disk buffer rewrite failed");
         return false;
     }
 
     return true;
+}
+
+bool rewriteFront(State& state, const BufferedRequest& request) {
+    return rewriteFront(state, request, defaultStore());
 }
 
 } // namespace api::disk_buffer

@@ -425,4 +425,51 @@ std::uint64_t freeBytes() {
 #endif
 }
 
+namespace {
+
+class FileRequestStore final : public api::RequestStore {
+public:
+    bool readIndex(api::RequestStoreIndex& out) override {
+        Index index;
+        if (!api::request_file_store::readIndex(index)) {
+            return false;
+        }
+        out.head = index.head;
+        out.tail = index.tail;
+        out.count = index.count;
+        return true;
+    }
+
+    bool writeIndex(const api::RequestStoreIndex& index) override {
+        Index fileIndex;
+        fileIndex.head = index.head;
+        fileIndex.tail = index.tail;
+        fileIndex.count = index.count;
+        return api::request_file_store::writeIndex(fileIndex);
+    }
+
+    bool writeRequest(std::uint32_t sequence, const BufferedRequest& request) override {
+        return api::request_file_store::writeRequest(sequence, request);
+    }
+
+    bool readRequest(std::uint32_t sequence, BufferedRequest& out) override {
+        return api::request_file_store::readRequest(sequence, out);
+    }
+
+    bool removeRequest(std::uint32_t sequence) override {
+        return api::request_file_store::removeRequest(sequence);
+    }
+
+    std::uint64_t freeBytes() override {
+        return api::request_file_store::freeBytes();
+    }
+};
+
+} // namespace
+
+RequestStore& defaultStore() {
+    static FileRequestStore store;
+    return store;
+}
+
 } // namespace api::request_file_store

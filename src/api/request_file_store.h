@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "buffer.h"
+#include "request_store.h"
 
 namespace api::request_file_store {
 
@@ -22,5 +23,7 @@ bool readRequest(std::uint32_t sequence, BufferedRequest& out);
 bool removeRequest(std::uint32_t sequence);
 
 std::uint64_t freeBytes();
+
+RequestStore& defaultStore();
 
 } // namespace api::request_file_store
