@@ -110,6 +110,8 @@ void checkDefaults(const Config& config) {
 
     CHECK_EQ(config.forecast.updateIntervalMinutes, defaults.forecast.updateIntervalMinutes);
     CHECK_EQ(config.api.buffer.inMemory, defaults.api.buffer.inMemory);
+    CHECK_EQ(config.api.buffer.diskMaxBytes, defaults.api.buffer.diskMaxBytes);
+    CHECK_EQ(config.api.buffer.diskReserveBytes, defaults.api.buffer.diskReserveBytes);
     CHECK_EQ(config.api.buffer.drainRateCap, defaults.api.buffer.drainRateCap);
     CHECK_EQ(config.api.buffer.drainRateTickS, defaults.api.buffer.drainRateTickS);
     CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
@@ -206,7 +208,13 @@ TEST_CASE("config validates API values") {
     }
 
     SUBCASE("API buffer values must be ints") {
-        for (const char* key : {"in_memory", "drain_rate_cap", "drain_rate_tick_s"}) {
+        for (const char* key : {
+                 "in_memory",
+                 "disk_max_bytes",
+                 "disk_reserve_bytes",
+                 "drain_rate_cap",
+                 "drain_rate_tick_s"
+             }) {
             CAPTURE(key);
             auto doc = exampleConfig();
             doc["api"]["buffer"][key] = "1";
@@ -221,6 +229,25 @@ TEST_CASE("config validates API values") {
             doc["api"]["buffer"][key] = 0;
             expectInvalid(doc);
         }
+    }
+
+    SUBCASE("API disk max bytes must be positive") {
+        auto doc = exampleConfig();
+        doc["api"]["buffer"]["disk_max_bytes"] = 0;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("API disk buffer values use defaults when omitted") {
+        auto doc = exampleConfig();
+        doc["api"]["buffer"].remove("disk_max_bytes");
+        doc["api"]["buffer"].remove("disk_reserve_bytes");
+
+        Config config;
+        REQUIRE(parses(doc, config));
+
+        const Config defaults{};
+        CHECK_EQ(config.api.buffer.diskMaxBytes, defaults.api.buffer.diskMaxBytes);
+        CHECK_EQ(config.api.buffer.diskReserveBytes, defaults.api.buffer.diskReserveBytes);
     }
 }
 
