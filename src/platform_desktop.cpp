@@ -21,6 +21,14 @@ bool hasValidTime() {
     return true;
 }
 
+std::uint64_t millis() {
+    static const auto start = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()
+    );
+}
+
 void delayMs(int ms) {
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }

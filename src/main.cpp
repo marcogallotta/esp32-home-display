@@ -360,10 +360,13 @@ void renderUi(const AppContext& app, bool doFullDraw) {
 }
 
 void syncOutputs(AppContext& app, std::time_t now) {
+    (void)now;
+    const std::uint64_t nowMs = platform::millis();
+
     syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
     api::maybeDrainBuffer(
         app.apiState.buffer,
-        now,
+        nowMs,
         app.config.api.buffer,
         app.apiClient,
         api::request_file_store::defaultStore()

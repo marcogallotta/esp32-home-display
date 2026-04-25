@@ -54,6 +54,19 @@ bool hasValidTime() {
     return getLocalTime(&timeinfo, 0);
 }
 
+std::uint64_t millis() {
+    static std::uint32_t previous = 0;
+    static std::uint64_t high = 0;
+
+    const std::uint32_t current = ::millis();
+    if (current < previous) {
+        high += 1ULL << 32;
+    }
+    previous = current;
+
+    return high + current;
+}
+
 void delayMs(int ms) {
     delay(ms);
 }

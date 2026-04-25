@@ -1,6 +1,5 @@
 #include "api_sync.h"
 
-#include <cstdint>
 #include <ctime>
 #include <string>
 

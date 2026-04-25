@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <sys/stat.h>
 #include <cstring>
 
 #include "../log.h"

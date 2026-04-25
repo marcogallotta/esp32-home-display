@@ -33,7 +33,7 @@ struct BufferedRequest {
 
 struct BufferState {
     std::deque<BufferedRequest> requests;
-    std::time_t nextDrainAllowedAtEpochS = 0;
+    std::uint64_t nextDrainAllowedAtMs = 0;
     disk_buffer::State disk;
 };
 
@@ -54,12 +54,13 @@ BufferInsertResult bufferRequest(
     BufferState& buffer,
     BufferedRequest request,
     const ApiBufferConfig& config,
-    RequestStore& store
+    RequestStore& store,
+    std::uint64_t nowMs
 );
 
 BufferDrainResult maybeDrainBuffer(
     BufferState& buffer,
-    std::time_t now,
+    std::uint64_t nowMs,
     const ApiBufferConfig& config,
     const ApiPoster& poster,
     RequestStore& store

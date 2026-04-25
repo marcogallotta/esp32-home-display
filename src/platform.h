@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "config.h"
@@ -11,6 +12,9 @@ bool initTime(const Config& config, unsigned long timeoutMs = 15000);
 
 // Whether local wall-clock time is currently valid
 bool hasValidTime();
+
+// Monotonic milliseconds since boot/process start.
+std::uint64_t millis();
 
 // Sleep/delay in milliseconds
 void delayMs(int ms);

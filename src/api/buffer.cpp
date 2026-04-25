@@ -21,6 +21,17 @@ bool isSuccessfulSend(const network::HttpResponse& response) {
            response.statusCode < 300;
 }
 
+std::uint64_t drainDelayMs(const ApiBufferConfig& config) {
+    return static_cast<std::uint64_t>(config.drainRateTickS) * 1000;
+}
+
+void markDrainDelayed(BufferState& buffer, const ApiBufferConfig& config, std::uint64_t nowMs) {
+    const std::uint64_t nextAllowed = nowMs + drainDelayMs(config);
+    if (buffer.nextDrainAllowedAtMs <= nowMs) {
+        buffer.nextDrainAllowedAtMs = nextAllowed;
+    }
+}
+
 bool ensureDiskLoaded(BufferState& buffer, RequestStore& store) {
     if (buffer.disk.loaded) {
         return true;
@@ -37,7 +48,8 @@ BufferInsertResult bufferToDisk(
     BufferState& buffer,
     const BufferedRequest& request,
     const ApiBufferConfig& config,
-    RequestStore& store
+    RequestStore& store,
+    std::uint64_t nowMs
 ) {
     if (!disk_buffer::enqueue(buffer.disk, request, config, store)) {
         logLine(
@@ -47,6 +59,8 @@ BufferInsertResult bufferToDisk(
         );
         return BufferInsertResult::DroppedNewRequestBufferFull;
     }
+
+    markDrainDelayed(buffer, config, nowMs);
 
     logLine(
         LogLevel::Warn,
@@ -199,18 +213,20 @@ BufferInsertResult bufferRequest(
     BufferState& buffer,
     BufferedRequest request,
     const ApiBufferConfig& config,
-    RequestStore& store
+    RequestStore& store,
+    std::uint64_t nowMs
 ) {
     if (hasDiskBacklog(buffer, store)) {
-        return bufferToDisk(buffer, request, config, store);
+        return bufferToDisk(buffer, request, config, store, nowMs);
     }
 
     if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
-        return bufferToDisk(buffer, request, config, store);
+        return bufferToDisk(buffer, request, config, store, nowMs);
     }
 
     const bool wasEmpty = buffer.requests.empty();
     buffer.requests.push_back(std::move(request));
+    markDrainDelayed(buffer, config, nowMs);
 
     if (wasEmpty) {
         logLine(
@@ -226,14 +242,14 @@ BufferInsertResult bufferRequest(
 
 BufferDrainResult maybeDrainBuffer(
     BufferState& buffer,
-    std::time_t now,
+    std::uint64_t nowMs,
     const ApiBufferConfig& config,
     const ApiPoster& poster,
     RequestStore& store
 ) {
     BufferDrainResult result;
 
-    if (now < buffer.nextDrainAllowedAtEpochS) {
+    if (nowMs < buffer.nextDrainAllowedAtMs) {
         result.notDueYet = true;
         return result;
     }
@@ -249,8 +265,7 @@ BufferDrainResult maybeDrainBuffer(
         " queued"
     );
 
-    buffer.nextDrainAllowedAtEpochS =
-        now + static_cast<std::time_t>(config.drainRateTickS);
+    buffer.nextDrainAllowedAtMs = nowMs + drainDelayMs(config);
 
     for (int i = 0; i < config.drainRateCap; ++i) {
         if (!buffer.requests.empty()) {
@@ -267,8 +282,7 @@ BufferDrainResult maybeDrainBuffer(
             }
 
             if (decision == BufferDecision::KeepBuffered) {
-                buffer.nextDrainAllowedAtEpochS =
-                    now + static_cast<std::time_t>(config.drainRateTickS);
+                buffer.nextDrainAllowedAtMs = nowMs + drainDelayMs(config);
 
                 result.blockedByRetryableFailure = true;
                 logDrainPaused(request, response, result, buffer);
@@ -320,8 +334,7 @@ BufferDrainResult maybeDrainBuffer(
                 return result;
             }
 
-            buffer.nextDrainAllowedAtEpochS =
-                now + static_cast<std::time_t>(config.drainRateTickS);
+            buffer.nextDrainAllowedAtMs = nowMs + drainDelayMs(config);
 
             result.blockedByRetryableFailure = true;
             logDrainPaused(request, response, result, buffer);

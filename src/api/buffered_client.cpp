@@ -1,10 +1,12 @@
 #include "buffered_client.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 
 #include "../log.h"
+#include "../platform.h"
 #include "disk_buffer.h"
 #include "dropped_log.h"
 #include "payloads.h"
@@ -234,9 +236,10 @@ WriteResult BufferedClient::postXiaomiReading(
 }
 
 WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
+    const std::uint64_t nowMs = platform::millis();
     if (hasBacklog(buffer_, store_)) {
         const BufferInsertResult insertResult =
-            bufferRequest(buffer_, request, config_.api.buffer, store_);
+            bufferRequest(buffer_, request, config_.api.buffer, store_, nowMs);
 
         if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
             logDroppedBufferFullRequest(request);
@@ -267,7 +270,7 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
 
         case FreshRequestDecision::Buffer: {
             const BufferInsertResult insertResult =
-                bufferRequest(buffer_, request, config_.api.buffer, store_);
+                bufferRequest(buffer_, request, config_.api.buffer, store_, nowMs);
 
             if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
                 logDroppedBufferFullRequest(request);
