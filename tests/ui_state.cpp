@@ -1,8 +1,9 @@
+#include "helpers.h"
+#include "salah/types.h"
 #include "state.h"
 #include "ui/state.h"
 
-#include "helpers.h"
-#include "salah/types.h"
+#include "doctest/doctest.h"
 
 namespace {
 
@@ -53,13 +54,13 @@ void assertNoSensorRowsDirty(const DirtyRegions& dirty) {
     }
 }
 
-void testDisplayTempRounds() {
+TEST_CASE("testDisplayTempRounds") {
     assertEqual(displayTemp(21.2f), 21, "21.2 should round to 21");
     assertEqual(displayTemp(21.5f), 22, "21.5 should round to 22");
     assertEqual(displayTemp(-1.5f), -2, "-1.5 should round to -2");
 }
 
-void testIdenticalStatesProduceNoDirtyRegions() {
+TEST_CASE("testIdenticalStatesProduceNoDirtyRegions") {
     const State previous = makeBaseState();
     const State current = previous;
 
@@ -73,7 +74,7 @@ void testIdenticalStatesProduceNoDirtyRegions() {
     assertNoSensorRowsDirty(dirty);
 }
 
-void testSalahNameDirtyWhenCurrentChanges() {
+TEST_CASE("testSalahNameDirtyWhenCurrentChanges") {
     const State previous = makeBaseState();
     State current = previous;
     current.salah.current = salah::Phase::Asr;
@@ -84,7 +85,7 @@ void testSalahNameDirtyWhenCurrentChanges() {
     assertTrue(!dirty.minutes, "minutes should not be dirty");
 }
 
-void testMinutesDirtyWhenRemainingChanges() {
+TEST_CASE("testMinutesDirtyWhenRemainingChanges") {
     const State previous = makeBaseState();
     State current = previous;
     current.salah.minutesRemaining = 41;
@@ -95,7 +96,7 @@ void testMinutesDirtyWhenRemainingChanges() {
     assertTrue(dirty.minutes, "minutes should be dirty");
 }
 
-void testForecastDirtyWhenDayChanges() {
+TEST_CASE("testForecastDirtyWhenDayChanges") {
     State previous = makeBaseState();
     State current = previous;
     current.forecast.days[1].weatherCode = 80;
@@ -105,7 +106,7 @@ void testForecastDirtyWhenDayChanges() {
     assertTrue(dirty.forecast, "forecast should be dirty");
 }
 
-void testSingleSensorRowDirtyWhenHumidityChanges() {
+TEST_CASE("testSingleSensorRowDirtyWhenHumidityChanges") {
     State previous = makeBaseState();
     State current = previous;
     current.switchbotSensors[0].reading.humidityPct = 56;
@@ -117,7 +118,7 @@ void testSingleSensorRowDirtyWhenHumidityChanges() {
     assertTrue(!dirty.sensorRows[1], "sensor row 1 should not be dirty");
 }
 
-void testSingleSensorRowDirtyWhenReadingAppears() {
+TEST_CASE("testSingleSensorRowDirtyWhenReadingAppears") {
     State previous = makeBaseState();
     State current = previous;
     current.switchbotSensors[1].reading.temperatureC = 19.0f;
@@ -132,7 +133,7 @@ void testSingleSensorRowDirtyWhenReadingAppears() {
     assertTrue(dirty.sensorRows[1], "sensor row 1 should be dirty");
 }
 
-void testSensorNotDirtyWhenTempRoundsSame() {
+TEST_CASE("testSensorNotDirtyWhenTempRoundsSame") {
     State previous = makeBaseState();
     State current = previous;
     current.switchbotSensors[0].reading.temperatureC = 21.49f;
@@ -143,7 +144,7 @@ void testSensorNotDirtyWhenTempRoundsSame() {
     assertTrue(!dirty.sensorRows[0], "sensor row 0 should not be dirty");
 }
 
-void testSensorDirtyWhenTempRoundsDifferently() {
+TEST_CASE("testSensorDirtyWhenTempRoundsDifferently") {
     State previous = makeBaseState();
     State current = previous;
     current.switchbotSensors[0].reading.temperatureC = 21.5f;
@@ -154,7 +155,7 @@ void testSensorDirtyWhenTempRoundsDifferently() {
     assertTrue(dirty.sensorRows[0], "sensor row 0 should be dirty");
 }
 
-void testSensorDirtyWhenShortNameChanges() {
+TEST_CASE("testSensorDirtyWhenShortNameChanges") {
     State previous = makeBaseState();
     State current = previous;
     current.switchbotSensors[0].identity.shortName = "K";
@@ -166,16 +167,3 @@ void testSensorDirtyWhenShortNameChanges() {
 }
 
 } // namespace
-
-void runUiStateTests() {
-    testDisplayTempRounds();
-    testIdenticalStatesProduceNoDirtyRegions();
-    testSalahNameDirtyWhenCurrentChanges();
-    testMinutesDirtyWhenRemainingChanges();
-    testForecastDirtyWhenDayChanges();
-    testSingleSensorRowDirtyWhenHumidityChanges();
-    testSingleSensorRowDirtyWhenReadingAppears();
-    testSensorNotDirtyWhenTempRoundsSame();
-    testSensorDirtyWhenTempRoundsDifferently();
-    testSensorDirtyWhenShortNameChanges();
-}

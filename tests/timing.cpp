@@ -1,7 +1,8 @@
-#include "timing.h"
-
 #include "config.h"
 #include "helpers.h"
+#include "timing.h"
+
+#include "doctest/doctest.h"
 
 namespace {
 
@@ -13,7 +14,7 @@ Config makeConfig(int forecastUpdateIntervalMinutes, int xiaomiUpdateIntervalMin
     return config;
 }
 
-void testAllTasksDueAtStartup() {
+TEST_CASE("testAllTasksDueAtStartup") {
     const TimingState timing{};
 
     assertTrue(isSalahDue(1000, timing), "salah should be due at startup");
@@ -22,7 +23,7 @@ void testAllTasksDueAtStartup() {
     assertTrue(isForecastDue(1000, timing), "forecast should be due at startup");
 }
 
-void testMarkSalahUpdatedAlignsToNextMinuteBoundary() {
+TEST_CASE("testMarkSalahUpdatedAlignsToNextMinuteBoundary") {
     TimingState timing;
     markSalahUpdated(12 * 60 + 34, timing); // 00:12:34
 
@@ -33,7 +34,7 @@ void testMarkSalahUpdatedAlignsToNextMinuteBoundary() {
     );
 }
 
-void testMarkSalahUpdatedAtExactBoundaryMovesToNextMinute() {
+TEST_CASE("testMarkSalahUpdatedAtExactBoundaryMovesToNextMinute") {
     TimingState timing;
     markSalahUpdated(12 * 60, timing); // exact boundary
 
@@ -44,7 +45,7 @@ void testMarkSalahUpdatedAtExactBoundaryMovesToNextMinute() {
     );
 }
 
-void testMarkSensorsUpdatedUsesNowPlusSixtySeconds() {
+TEST_CASE("testMarkSensorsUpdatedUsesNowPlusSixtySeconds") {
     TimingState timing;
     markSensorsUpdated(1000, timing);
 
@@ -55,7 +56,7 @@ void testMarkSensorsUpdatedUsesNowPlusSixtySeconds() {
     );
 }
 
-void testMarkXiaomiUpdatedUsesConfiguredInterval() {
+TEST_CASE("testMarkXiaomiUpdatedUsesConfiguredInterval") {
     TimingState timing;
     const Config config = makeConfig(17, 45);
 
@@ -68,7 +69,7 @@ void testMarkXiaomiUpdatedUsesConfiguredInterval() {
     );
 }
 
-void testMarkForecastUpdatedSuccessUsesConfiguredInterval() {
+TEST_CASE("testMarkForecastUpdatedSuccessUsesConfiguredInterval") {
     TimingState timing;
     const Config config = makeConfig(17);
 
@@ -81,7 +82,7 @@ void testMarkForecastUpdatedSuccessUsesConfiguredInterval() {
     );
 }
 
-void testMarkForecastUpdatedFailureUsesFiveMinutes() {
+TEST_CASE("testMarkForecastUpdatedFailureUsesFiveMinutes") {
     TimingState timing;
     markForecastUpdatedFailure(1000, timing);
 
@@ -92,7 +93,7 @@ void testMarkForecastUpdatedFailureUsesFiveMinutes() {
     );
 }
 
-void testDueChecksWork() {
+TEST_CASE("testDueChecksWork") {
     TimingState timing;
     timing.nextSalahDueEpochS = 100;
     timing.nextSensorsDueEpochS = 200;
@@ -112,7 +113,7 @@ void testDueChecksWork() {
     assertTrue(isForecastDue(300, timing), "forecast should be due at due time");
 }
 
-void testEarliestDueEpochSReturnsMinimum() {
+TEST_CASE("testEarliestDueEpochSReturnsMinimum") {
     TimingState timing;
     timing.nextSalahDueEpochS = 500;
     timing.nextSensorsDueEpochS = 200;
@@ -126,7 +127,7 @@ void testEarliestDueEpochSReturnsMinimum() {
     );
 }
 
-void testComputeSleepMsUsesEarliestDue() {
+TEST_CASE("testComputeSleepMsUsesEarliestDue") {
     TimingState timing;
     timing.nextSalahDueEpochS = 500;
     timing.nextSensorsDueEpochS = 200;
@@ -140,7 +141,7 @@ void testComputeSleepMsUsesEarliestDue() {
     );
 }
 
-void testComputeSleepMsReturnsZeroWhenOverdue() {
+TEST_CASE("testComputeSleepMsReturnsZeroWhenOverdue") {
     TimingState timing;
     timing.nextSalahDueEpochS = 100;
     timing.nextSensorsDueEpochS = 200;
@@ -155,17 +156,3 @@ void testComputeSleepMsReturnsZeroWhenOverdue() {
 }
 
 } // namespace
-
-void runTimingTests() {
-    testAllTasksDueAtStartup();
-    testMarkSalahUpdatedAlignsToNextMinuteBoundary();
-    testMarkSalahUpdatedAtExactBoundaryMovesToNextMinute();
-    testMarkSensorsUpdatedUsesNowPlusSixtySeconds();
-    testMarkXiaomiUpdatedUsesConfiguredInterval();
-    testMarkForecastUpdatedSuccessUsesConfiguredInterval();
-    testMarkForecastUpdatedFailureUsesFiveMinutes();
-    testDueChecksWork();
-    testEarliestDueEpochSReturnsMinimum();
-    testComputeSleepMsUsesEarliestDue();
-    testComputeSleepMsReturnsZeroWhenOverdue();
-}

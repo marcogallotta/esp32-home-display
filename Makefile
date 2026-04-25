@@ -1,6 +1,7 @@
 CXX := g++
 CXXFLAGS_COMMON := -Wall -Wextra -Wpedantic -O2 -MMD -MP \
-            -Isrc -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src -Itests \
+            -Isrc -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src \
+			-Ithird_party/doctest -Itests \
 			$(shell pkg-config --cflags sdbus-c++)
 CXXFLAGS := -std=c++17 $(CXXFLAGS_COMMON)
 CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)

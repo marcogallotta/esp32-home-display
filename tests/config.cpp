@@ -1,6 +1,7 @@
 #include "config.h"
-
 #include "helpers.h"
+
+#include "doctest/doctest.h"
 
 namespace {
 
@@ -60,7 +61,7 @@ std::string validConfigJson() {
 )json";
 }
 
-void testParseValidConfig() {
+TEST_CASE("testParseValidConfig") {
     Config config;
     const bool ok = parseConfigText(validConfigJson(), config, false);
 
@@ -116,7 +117,7 @@ void testParseValidConfig() {
                 "password should match");
 }
 
-void testMissingForecastFails() {
+TEST_CASE("testMissingForecastFails") {
     const std::string text = R"json(
 {
     "location": {
@@ -150,7 +151,7 @@ void testMissingForecastFails() {
     assertTrue(!ok, "missing forecast should fail");
 }
 
-void testInvalidForecastIntervalFails() {
+TEST_CASE("testInvalidForecastIntervalFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -188,7 +189,7 @@ void testInvalidForecastIntervalFails() {
     assertTrue(!ok, "non-positive forecast interval should fail");
 }
 
-void testInvalidLatitudeFails() {
+TEST_CASE("testInvalidLatitudeFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -226,7 +227,7 @@ void testInvalidLatitudeFails() {
     assertTrue(!ok, "out of range latitude should fail");
 }
 
-void testUnsupportedDstRuleFails() {
+TEST_CASE("testUnsupportedDstRuleFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -264,7 +265,7 @@ void testUnsupportedDstRuleFails() {
     assertTrue(!ok, "unsupported dst rule should fail");
 }
 
-void testNegativeAsrMakruhFails() {
+TEST_CASE("testNegativeAsrMakruhFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -302,7 +303,7 @@ void testNegativeAsrMakruhFails() {
     assertTrue(!ok, "negative asr makruh should fail");
 }
 
-void testMissingSwitchbotSensorsFails() {
+TEST_CASE("testMissingSwitchbotSensorsFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -338,7 +339,7 @@ void testMissingSwitchbotSensorsFails() {
     assertTrue(!ok, "missing switchbot.sensors should fail");
 }
 
-void testWrongSensorFieldTypesFail() {
+TEST_CASE("testWrongSensorFieldTypesFail") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -382,7 +383,7 @@ void testWrongSensorFieldTypesFail() {
     assertTrue(!ok, "wrong sensor field types should fail");
 }
 
-void testMissingWifiFails() {
+TEST_CASE("testMissingWifiFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -416,7 +417,7 @@ void testMissingWifiFails() {
     assertTrue(!ok, "missing wifi should fail");
 }
 
-void testInvalidJsonFails() {
+TEST_CASE("testInvalidJsonFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -431,7 +432,7 @@ void testInvalidJsonFails() {
     assertTrue(!ok, "invalid json should fail");
 }
 
-void testMissingXiaomiFails() {
+TEST_CASE("testMissingXiaomiFails") {
     const std::string text = R"json(
 {
     "forecast": {
@@ -466,17 +467,3 @@ void testMissingXiaomiFails() {
 }
 
 } // namespace
-
-void runConfigTests() {
-    testParseValidConfig();
-    testMissingForecastFails();
-    testInvalidForecastIntervalFails();
-    testInvalidLatitudeFails();
-    testUnsupportedDstRuleFails();
-    testNegativeAsrMakruhFails();
-    testMissingSwitchbotSensorsFails();
-    testWrongSensorFieldTypesFail();
-    testMissingWifiFails();
-    testInvalidJsonFails();
-    testMissingXiaomiFails();
-}

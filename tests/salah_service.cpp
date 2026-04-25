@@ -1,7 +1,8 @@
-#include "salah/service.h"
-
 #include "config.h"
 #include "helpers.h"
+#include "salah/service.h"
+
+#include "doctest/doctest.h"
 #include "PrayerTimes.h"
 
 namespace {
@@ -102,33 +103,33 @@ void assertStrictlyOrdered(const Schedule& s, const char* context) {
     assertTrue(s.maghrib < s.isha, std::string(context) + ": expected maghrib < isha");
 }
 
-void testBasicSummerScheduleIsOrdered() {
+TEST_CASE("testBasicSummerScheduleIsOrdered") {
     const Config config = makeParisConfig("eu");
     const Schedule s = buildServiceScheduleOrFail(4, 4, 2026, config);
     assertStrictlyOrdered(s, "summer schedule");
 }
 
-void testBasicWinterScheduleIsOrdered() {
+TEST_CASE("testBasicWinterScheduleIsOrdered") {
     const Config config = makeParisConfig("eu");
     const Schedule s = buildServiceScheduleOrFail(15, 1, 2026, config);
     assertStrictlyOrdered(s, "winter schedule");
 }
 
-void testServiceMatchesDirectWhenDstOffInWinter() {
+TEST_CASE("testServiceMatchesDirectWhenDstOffInWinter") {
     const Config config = makeParisConfig("eu");
     const Schedule actual = buildServiceScheduleOrFail(15, 1, 2026, config);
     const Schedule expected = buildDirectSchedule(15, 1, 2026, 0, config);
     assertScheduleEqual(actual, expected, "winter direct comparison");
 }
 
-void testServiceMatchesDirectWhenDstOnInSummer() {
+TEST_CASE("testServiceMatchesDirectWhenDstOnInSummer") {
     const Config config = makeParisConfig("eu");
     const Schedule actual = buildServiceScheduleOrFail(4, 4, 2026, config);
     const Schedule expected = buildDirectSchedule(4, 4, 2026, 60, config);
     assertScheduleEqual(actual, expected, "summer direct comparison");
 }
 
-void testDstStartsOnLastSundayOfMarch() {
+TEST_CASE("testDstStartsOnLastSundayOfMarch") {
     const Config config = makeParisConfig("eu");
     const Schedule before = buildServiceScheduleOrFail(28, 3, 2026, config);
     const Schedule start = buildServiceScheduleOrFail(29, 3, 2026, config);
@@ -140,7 +141,7 @@ void testDstStartsOnLastSundayOfMarch() {
     assertInRange(fajrDelta, 54, 66, "DST start should shift fajr by about +60 minutes");
 }
 
-void testDstEndsOnLastSundayOfOctober() {
+TEST_CASE("testDstEndsOnLastSundayOfOctober") {
     const Config config = makeParisConfig("eu");
     const Schedule before = buildServiceScheduleOrFail(24, 10, 2026, config);
     const Schedule end = buildServiceScheduleOrFail(25, 10, 2026, config);
@@ -152,27 +153,27 @@ void testDstEndsOnLastSundayOfOctober() {
     assertInRange(fajrDelta, -66, -54, "DST end should shift fajr by about -60 minutes");
 }
 
-void testNoDstConfigDoesNotApplyDstAtMarchBoundary() {
+TEST_CASE("testNoDstConfigDoesNotApplyDstAtMarchBoundary") {
     const Config config = makeParisConfig("none");
     const Schedule actual = buildServiceScheduleOrFail(29, 3, 2026, config);
     const Schedule expected = buildDirectSchedule(29, 3, 2026, 0, config);
     assertScheduleEqual(actual, expected, "no DST config on March boundary");
 }
 
-void testNoDstConfigDoesNotApplyDstAtOctoberBoundary() {
+TEST_CASE("testNoDstConfigDoesNotApplyDstAtOctoberBoundary") {
     const Config config = makeParisConfig("none");
     const Schedule actual = buildServiceScheduleOrFail(25, 10, 2026, config);
     const Schedule expected = buildDirectSchedule(25, 10, 2026, 0, config);
     assertScheduleEqual(actual, expected, "no DST config on October boundary");
 }
 
-void testLeapYearDateBuilds() {
+TEST_CASE("testLeapYearDateBuilds") {
     const Config config = makeParisConfig("eu");
     const Schedule s = buildServiceScheduleOrFail(29, 2, 2028, config);
     assertStrictlyOrdered(s, "leap year schedule");
 }
 
-void testInvalidMonthFails() {
+TEST_CASE("testInvalidMonthFails") {
     const Config config = makeParisConfig("eu");
 
     Schedule out{};
@@ -180,7 +181,7 @@ void testInvalidMonthFails() {
     assertTrue(!ok, "invalid month should fail");
 }
 
-void testAnotherRepresentativeDateMatchesDirect() {
+TEST_CASE("testAnotherRepresentativeDateMatchesDirect") {
     const Config config = makeParisConfig("eu");
     const Schedule actual = buildServiceScheduleOrFail(1, 11, 2026, config);
     const Schedule expected = buildDirectSchedule(1, 11, 2026, 0, config);
@@ -188,17 +189,3 @@ void testAnotherRepresentativeDateMatchesDirect() {
 }
 
 } // namespace
-
-void runServiceTests() {
-    testBasicSummerScheduleIsOrdered();
-    testBasicWinterScheduleIsOrdered();
-    testServiceMatchesDirectWhenDstOffInWinter();
-    testServiceMatchesDirectWhenDstOnInSummer();
-    testDstStartsOnLastSundayOfMarch();
-    testDstEndsOnLastSundayOfOctober();
-    testNoDstConfigDoesNotApplyDstAtMarchBoundary();
-    testNoDstConfigDoesNotApplyDstAtOctoberBoundary();
-    testLeapYearDateBuilds();
-    testInvalidMonthFails();
-    testAnotherRepresentativeDateMatchesDirect();
-}

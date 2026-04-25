@@ -1,6 +1,7 @@
+#include "helpers.h"
 #include "salah/state.h"
 
-#include "helpers.h"
+#include "doctest/doctest.h"
 
 namespace {
 
@@ -42,145 +43,119 @@ void assertState(const State& state,
     assertEqual(state.minutesRemaining, remaining, std::string(context) + ": wrong remaining minutes");
 }
 
-void testBeforeFajr() {
+TEST_CASE("testBeforeFajr") {
     const State state = salah::computeState(kToday, kTomorrow, 299);
     assertState(state, Phase::Isha, Phase::Fajr, 1, "1 minute before fajr");
 }
 
-void testExactlyAtFajr() {
+TEST_CASE("testExactlyAtFajr") {
     const State state = salah::computeState(kToday, kTomorrow, 300);
     assertState(state, Phase::Fajr, Phase::SunriseMakruh, 90, "exactly at fajr");
 }
 
-void testBetweenFajrAndSunrise() {
+TEST_CASE("testBetweenFajrAndSunrise") {
     const State state = salah::computeState(kToday, kTomorrow, 345);
     assertState(state, Phase::Fajr, Phase::SunriseMakruh, 45, "between fajr and sunrise");
 }
 
-void testOneMinuteBeforeSunrise() {
+TEST_CASE("testOneMinuteBeforeSunrise") {
     const State state = salah::computeState(kToday, kTomorrow, 389);
     assertState(state, Phase::Fajr, Phase::SunriseMakruh, 1, "1 minute before sunrise");
 }
 
-void testExactlyAtSunrise() {
+TEST_CASE("testExactlyAtSunrise") {
     const State state = salah::computeState(kToday, kTomorrow, 390);
     assertState(state, Phase::SunriseMakruh, Phase::Duha, 210, "exactly at sunrise");
 }
 
-void testBetweenSunriseAndZuhr() {
+TEST_CASE("testBetweenSunriseAndZuhr") {
     const State state = salah::computeState(kToday, kTomorrow, 500);
     assertState(state, Phase::SunriseMakruh, Phase::Duha, 100, "between sunrise and duha");
 }
 
-void testExactlyAtDuha() {
+TEST_CASE("testExactlyAtDuha") {
     const State state = salah::computeState(kToday, kTomorrow, 600);
     assertState(state, Phase::Duha, Phase::DahwaEKubra, 60, "exactly at duha");
 }
 
-void testBetweenDuhaAndDahwaEKubra() {
+TEST_CASE("testBetweenDuhaAndDahwaEKubra") {
     const State state = salah::computeState(kToday, kTomorrow, 630);
     assertState(state, Phase::Duha, Phase::DahwaEKubra, 30, "between duha and dahwa e kubra");
 }
 
-void testExactlyAtDahwaEKubra() {
+TEST_CASE("testExactlyAtDahwaEKubra") {
     const State state = salah::computeState(kToday, kTomorrow, 660);
     assertState(state, Phase::DahwaEKubra, Phase::Zuhr, 60, "exactly at dahwa e kubra");
 }
 
-void testOneMinuteBeforeZuhr() {
+TEST_CASE("testOneMinuteBeforeZuhr") {
     const State state = salah::computeState(kToday, kTomorrow, 719);
     assertState(state, Phase::DahwaEKubra, Phase::Zuhr, 1, "1 minute before zuhr");
 }
 
-void testExactlyAtZuhr() {
+TEST_CASE("testExactlyAtZuhr") {
     const State state = salah::computeState(kToday, kTomorrow, 720);
     assertState(state, Phase::Zuhr, Phase::Asr, 210, "exactly at zuhr");
 }
 
-void testBetweenZuhrAndAsr() {
+TEST_CASE("testBetweenZuhrAndAsr") {
     const State state = salah::computeState(kToday, kTomorrow, 800);
     assertState(state, Phase::Zuhr, Phase::Asr, 130, "between zuhr and asr");
 }
 
-void testExactlyAtAsr() {
+TEST_CASE("testExactlyAtAsr") {
     const State state = salah::computeState(kToday, kTomorrow, 930);
     assertState(state, Phase::Asr, Phase::AsrMakruh, 210, "exactly at asr");
 }
 
-void testBetweenAsrAndAsrMakruh() {
+TEST_CASE("testBetweenAsrAndAsrMakruh") {
     const State state = salah::computeState(kToday, kTomorrow, 990);
     assertState(state, Phase::Asr, Phase::AsrMakruh, 150, "between asr and asr makruh");
 }
 
-void testExactlyAtAsrMakruh() {
+TEST_CASE("testExactlyAtAsrMakruh") {
     const State state = salah::computeState(kToday, kTomorrow, 1050);
     assertState(state, Phase::AsrMakruh, Phase::Maghrib, 90, "exactly at asr makruh");
 }
 
-void testBetweenAsrMakruhAndMaghrib() {
+TEST_CASE("testBetweenAsrMakruhAndMaghrib") {
     const State state = salah::computeState(kToday, kTomorrow, 1100);
     assertState(state, Phase::AsrMakruh, Phase::Maghrib, 40, "between asr makruh and maghrib");
 }
 
-void testExactlyAtMaghrib() {
+TEST_CASE("testExactlyAtMaghrib") {
     const State state = salah::computeState(kToday, kTomorrow, 1140);
     assertState(state, Phase::Maghrib, Phase::Isha, 90, "exactly at maghrib");
 }
 
-void testBetweenMaghribAndIsha() {
+TEST_CASE("testBetweenMaghribAndIsha") {
     const State state = salah::computeState(kToday, kTomorrow, 1200);
     assertState(state, Phase::Maghrib, Phase::Isha, 30, "between maghrib and isha");
 }
 
-void testExactlyAtIsha() {
+TEST_CASE("testExactlyAtIsha") {
     const State state = salah::computeState(kToday, kTomorrow, 1230);
     assertState(state, Phase::Isha, Phase::Fajr, 511, "exactly at isha");
 }
 
-void testAfterIsha() {
+TEST_CASE("testAfterIsha") {
     const State state = salah::computeState(kToday, kTomorrow, 1300);
     assertState(state, Phase::Isha, Phase::Fajr, 441, "after isha");
 }
 
-void testOneMinuteBeforeMidnight() {
+TEST_CASE("testOneMinuteBeforeMidnight") {
     const State state = salah::computeState(kToday, kTomorrow, 1439);
     assertState(state, Phase::Isha, Phase::Fajr, 302, "1 minute before midnight");
 }
 
-void testAtMidnight() {
+TEST_CASE("testAtMidnight") {
     const State state = salah::computeState(kToday, kTomorrow, 0);
     assertState(state, Phase::Isha, Phase::Fajr, 300, "midnight");
 }
 
-void testAtLastMinuteOfDayWithinValidRange() {
+TEST_CASE("testAtLastMinuteOfDayWithinValidRange") {
     const State state = salah::computeState(kToday, kTomorrow, 1438);
     assertState(state, Phase::Isha, Phase::Fajr, 303, "late night rollover");
 }
 
 } // namespace
-
-void runStateTests() {
-    testBeforeFajr();
-    testExactlyAtFajr();
-    testBetweenFajrAndSunrise();
-    testOneMinuteBeforeSunrise();
-    testExactlyAtSunrise();
-    testBetweenSunriseAndZuhr();
-    testExactlyAtDuha();
-    testBetweenDuhaAndDahwaEKubra();
-    testExactlyAtDahwaEKubra();
-    testOneMinuteBeforeZuhr();
-    testExactlyAtZuhr();
-    testBetweenZuhrAndAsr();
-    testExactlyAtAsr();
-    testBetweenAsrAndAsrMakruh();
-    testExactlyAtAsrMakruh();
-    testBetweenAsrMakruhAndMaghrib();
-    testExactlyAtMaghrib();
-    testBetweenMaghribAndIsha();
-    testExactlyAtIsha();
-    testAfterIsha();
-    testOneMinuteBeforeMidnight();
-    testAtMidnight();
-    testAtLastMinuteOfDayWithinValidRange();
-}
