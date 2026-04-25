@@ -56,12 +56,20 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
 
     const JsonObject apiBuffer = api["buffer"];
     int apiBufferInMemory = config.api.buffer.inMemory;
+    std::uint32_t apiBufferDiskMaxBytes = config.api.buffer.diskMaxBytes;
+    std::uint32_t apiBufferDiskReserveBytes = config.api.buffer.diskReserveBytes;
     int apiBufferDrainRateCap = config.api.buffer.drainRateCap;
     int apiBufferDrainRateTickS = config.api.buffer.drainRateTickS;
 
     if (!apiBuffer.isNull()) {
         if (!apiBuffer["in_memory"].isNull() && !apiBuffer["in_memory"].is<int>()) {
             return fail("api.buffer.in_memory is not an int");
+        }
+        if (!apiBuffer["disk_max_bytes"].isNull() && !apiBuffer["disk_max_bytes"].is<unsigned int>()) {
+            return fail("api.buffer.disk_max_bytes is not an unsigned int");
+        }
+        if (!apiBuffer["disk_reserve_bytes"].isNull() && !apiBuffer["disk_reserve_bytes"].is<unsigned int>()) {
+            return fail("api.buffer.disk_reserve_bytes is not an unsigned int");
         }
         if (!apiBuffer["drain_rate_cap"].isNull() && !apiBuffer["drain_rate_cap"].is<int>()) {
             return fail("api.buffer.drain_rate_cap is not an int");
@@ -71,6 +79,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         }
 
         apiBufferInMemory = apiBuffer["in_memory"] | apiBufferInMemory;
+        apiBufferDiskMaxBytes = apiBuffer["disk_max_bytes"] | apiBufferDiskMaxBytes;
+        apiBufferDiskReserveBytes = apiBuffer["disk_reserve_bytes"] | apiBufferDiskReserveBytes;
         apiBufferDrainRateCap = apiBuffer["drain_rate_cap"] | apiBufferDrainRateCap;
         apiBufferDrainRateTickS = apiBuffer["drain_rate_tick_s"] | apiBufferDrainRateTickS;
     }
@@ -81,6 +91,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
 
     if (apiBufferInMemory <= 0) {
         return fail("api.buffer.in_memory must be > 0");
+    }
+    if (apiBufferDiskMaxBytes == 0) {
+        return fail("api.buffer.disk_max_bytes must be > 0");
     }
     if (apiBufferDrainRateCap <= 0) {
         return fail("api.buffer.drain_rate_cap must be > 0");
@@ -243,6 +256,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.api.pemFile = apiPemFile;
     config.api.pem.clear();
     config.api.buffer.inMemory = apiBufferInMemory;
+    config.api.buffer.diskMaxBytes = apiBufferDiskMaxBytes;
+    config.api.buffer.diskReserveBytes = apiBufferDiskReserveBytes;
     config.api.buffer.drainRateCap = apiBufferDrainRateCap;
     config.api.buffer.drainRateTickS = apiBufferDrainRateTickS;
 

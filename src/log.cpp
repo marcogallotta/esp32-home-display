@@ -8,6 +8,7 @@
 namespace {
 
 constexpr bool kUseAnsiColours = true;
+bool gLogMuted = false;
 
 const char* logLevelColour(LogLevel level) {
     if (!kUseAnsiColours) {
@@ -69,7 +70,15 @@ std::string logTimestamp() {
     return std::string(buf);
 }
 
+void setLogMuted(bool muted) {
+    gLogMuted = muted;
+}
+
 void logLine(LogLevel level, const std::string& msg) {
+    if (gLogMuted) {
+        return;
+    }
+
     platform::printLine(
         std::string(logLevelColour(level)) +
         "[" + logTimestamp() + "] " +

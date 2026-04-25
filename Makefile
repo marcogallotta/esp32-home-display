@@ -9,7 +9,8 @@ CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
 LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 
 BUILD_DIR := .build_desktop
-OBJ_DIR := $(BUILD_DIR)/obj
+OBJ_DIR := $(BUILD_DIR)/obj/main
+TEST_OBJ_DIR := $(BUILD_DIR)/obj/tests
 
 COV_BUILD_DIR := .build_coverage
 COV_OBJ_DIR := $(COV_BUILD_DIR)/obj
@@ -55,6 +56,7 @@ MAIN_SRC := \
 	$(COMMON_SRC)
 
 TEST_SRC := \
+	tests/api_buffer.cpp \
 	tests/config.cpp \
 	tests/main.cpp \
 	tests/salah_state.cpp \
@@ -66,16 +68,12 @@ TEST_SRC := \
 # --- OBJECT CONVERSION ---
 
 define make_objs
-$(patsubst %.cpp,$(OBJ_DIR)/%.o,$(1))
+$(patsubst %.cpp,$(2)/%.o,$(1))
 endef
 
-define make_cov_objs
-$(patsubst %.cpp,$(COV_OBJ_DIR)/%.o,$(1))
-endef
-
-MAIN_OBJ := $(call make_objs,$(MAIN_SRC))
-TEST_OBJ := $(call make_objs,$(TEST_SRC))
-COV_TEST_OBJ := $(call make_cov_objs,$(TEST_SRC))
+MAIN_OBJ := $(call make_objs,$(MAIN_SRC),$(OBJ_DIR))
+TEST_OBJ := $(call make_objs,$(TEST_SRC),$(TEST_OBJ_DIR))
+COV_TEST_OBJ := $(call make_objs,$(TEST_SRC),$(COV_OBJ_DIR))
 
 # --- RULES ---
 
@@ -113,6 +111,14 @@ $(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
 	$(CXX) $(CXXFLAGS_20) -c $< -o $@
 
 $(OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS_20) -c $< -o $@
+
+$(TEST_OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 

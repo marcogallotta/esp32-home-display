@@ -7,10 +7,10 @@
 
 #include "../config.h"
 #include "../network.h"
+#include "poster.h"
 
 namespace api {
 
-class Client;
 
 struct BufferedRequest {
     std::string path;
@@ -48,7 +48,7 @@ BufferDrainResult maybeDrainBuffer(
     BufferState& buffer,
     std::time_t now,
     const ApiBufferConfig& config,
-    const Client& client
+    const ApiPoster& poster
 );
 
 } // namespace api
