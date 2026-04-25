@@ -28,8 +28,10 @@ COMMON_SRC := \
 	src/api/buffer.cpp \
 	src/api/buffered_client.cpp \
 	src/api/client.cpp \
+	src/api/disk_buffer.cpp \
 	src/api/dropped_log.cpp \
 	src/api/payloads.cpp \
+	src/api/request_file_store.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
 	src/ble/desktop.cpp \
