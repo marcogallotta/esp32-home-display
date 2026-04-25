@@ -1,5 +1,7 @@
 #include "request_file_store.h"
 
+#include "buffer.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>

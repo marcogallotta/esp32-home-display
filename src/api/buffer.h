@@ -8,9 +8,20 @@
 #include "../config.h"
 #include "../network.h"
 #include "poster.h"
+#include "request_store.h"
 
 namespace api {
 
+namespace disk_buffer {
+
+struct State {
+    std::uint32_t head = 0;
+    std::uint32_t tail = 0;
+    std::uint32_t count = 0;
+    bool loaded = false;
+};
+
+} // namespace disk_buffer
 
 struct BufferedRequest {
     std::string path;
@@ -23,6 +34,7 @@ struct BufferedRequest {
 struct BufferState {
     std::deque<BufferedRequest> requests;
     std::time_t nextDrainAllowedAtEpochS = 0;
+    disk_buffer::State disk;
 };
 
 enum class BufferInsertResult {
@@ -41,14 +53,16 @@ struct BufferDrainResult {
 BufferInsertResult bufferRequest(
     BufferState& buffer,
     BufferedRequest request,
-    const ApiBufferConfig& config
+    const ApiBufferConfig& config,
+    RequestStore& store
 );
 
 BufferDrainResult maybeDrainBuffer(
     BufferState& buffer,
     std::time_t now,
     const ApiBufferConfig& config,
-    const ApiPoster& poster
+    const ApiPoster& poster,
+    RequestStore& store
 );
 
 } // namespace api

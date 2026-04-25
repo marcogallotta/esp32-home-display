@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "../log.h"
+#include "disk_buffer.h"
 #include "dropped_log.h"
 
 namespace api {
@@ -18,6 +19,42 @@ bool isSuccessfulSend(const network::HttpResponse& response) {
     return response.transport == network::TransportResult::Ok &&
            response.statusCode >= 200 &&
            response.statusCode < 300;
+}
+
+bool ensureDiskLoaded(BufferState& buffer, RequestStore& store) {
+    if (buffer.disk.loaded) {
+        return true;
+    }
+
+    return disk_buffer::load(buffer.disk, store);
+}
+
+bool hasDiskBacklog(BufferState& buffer, RequestStore& store) {
+    return ensureDiskLoaded(buffer, store) && buffer.disk.count > 0;
+}
+
+BufferInsertResult bufferToDisk(
+    BufferState& buffer,
+    const BufferedRequest& request,
+    const ApiBufferConfig& config,
+    RequestStore& store
+) {
+    if (!disk_buffer::enqueue(buffer.disk, request, config, store)) {
+        logLine(
+            LogLevel::Warn,
+            "Disk buffer full; dropping new request to " + request.path +
+            " for " + request.mac
+        );
+        return BufferInsertResult::DroppedNewRequestBufferFull;
+    }
+
+    logLine(
+        LogLevel::Warn,
+        "Buffered API request on disk: " +
+        std::to_string(buffer.disk.count) + " queued"
+    );
+
+    return BufferInsertResult::Buffered;
 }
 
 BufferDecision decideBufferedResponse(
@@ -159,17 +196,15 @@ void logDrainSummary(const BufferDrainResult& result, const BufferState& buffer)
 BufferInsertResult bufferRequest(
     BufferState& buffer,
     BufferedRequest request,
-    const ApiBufferConfig& config
+    const ApiBufferConfig& config,
+    RequestStore& store
 ) {
+    if (hasDiskBacklog(buffer, store)) {
+        return bufferToDisk(buffer, request, config, store);
+    }
+
     if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
-        logLine(
-            LogLevel::Warn,
-            "Buffer full; dropping new request to " + request.path +
-            " for " + request.mac +
-            " (" + std::to_string(buffer.requests.size()) +
-            "/" + std::to_string(config.inMemory) + ")"
-        );
-        return BufferInsertResult::DroppedNewRequestBufferFull;
+        return bufferToDisk(buffer, request, config, store);
     }
 
     const bool wasEmpty = buffer.requests.empty();
@@ -191,7 +226,8 @@ BufferDrainResult maybeDrainBuffer(
     BufferState& buffer,
     std::time_t now,
     const ApiBufferConfig& config,
-    const ApiPoster& poster
+    const ApiPoster& poster,
+    RequestStore& store
 ) {
     BufferDrainResult result;
 
@@ -203,6 +239,8 @@ BufferDrainResult maybeDrainBuffer(
     if (buffer.requests.empty()) {
         return result;
     }
+
+    (void)store;
 
     logLine(
         LogLevel::Info,

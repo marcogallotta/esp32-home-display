@@ -2,9 +2,9 @@
 
 #include <cstdint>
 
-#include "buffer.h"
-
 namespace api {
+
+struct BufferedRequest;
 
 struct RequestStoreIndex {
     std::uint32_t head = 0;

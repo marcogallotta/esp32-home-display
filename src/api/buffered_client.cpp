@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "../log.h"
+#include "disk_buffer.h"
 #include "dropped_log.h"
 #include "payloads.h"
 
@@ -16,12 +17,16 @@ enum class FreshRequestDecision {
     DropPermanent,
 };
 
-bool hasBacklog(const BufferState& buffer) {
-    return !buffer.requests.empty();
-}
+bool hasBacklog(BufferState& buffer, RequestStore& store) {
+    if (!buffer.requests.empty()) {
+        return true;
+    }
 
-bool isBufferFull(const BufferState& buffer, const ApiBufferConfig& config) {
-    return buffer.requests.size() >= static_cast<std::size_t>(config.inMemory);
+    if (!buffer.disk.loaded && !disk_buffer::load(buffer.disk, store)) {
+        return false;
+    }
+
+    return buffer.disk.count > 0;
 }
 
 bool isAcceptedHttp(const network::HttpResponse& response) {
@@ -133,11 +138,13 @@ void logDroppedBufferFullRequest(const BufferedRequest& request) {
 BufferedClient::BufferedClient(
     const Config& config,
     BufferState& buffer,
-    const Client& client
+    const Client& client,
+    RequestStore& store
 )
     : config_(config),
       buffer_(buffer),
-      client_(client) {
+      client_(client),
+      store_(store) {
 }
 
 WriteResult BufferedClient::postSwitchbotReading(
@@ -148,15 +155,6 @@ WriteResult BufferedClient::postSwitchbotReading(
     if (!payload.has_value()) {
         logLine(LogLevel::Warn, "Dropping SwitchBot reading: invalid payload for " + identity.mac);
         return makeWriteResult(WriteStatus::DroppedPermanent);
-    }
-
-    if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        logDroppedBufferFullRequest(BufferedRequest{
-            "/switchbot/reading",
-            identity.mac,
-            toJson(*payload),
-        });
-        return makeWriteResult(WriteStatus::DroppedBufferFull);
     }
 
     return postBufferedRequest(BufferedRequest{
@@ -176,15 +174,6 @@ WriteResult BufferedClient::postXiaomiReading(
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
-    if (hasBacklog(buffer_) && isBufferFull(buffer_, config_.api.buffer)) {
-        logDroppedBufferFullRequest(BufferedRequest{
-            "/xiaomi/reading",
-            identity.mac,
-            toJson(*payload),
-        });
-        return makeWriteResult(WriteStatus::DroppedBufferFull);
-    }
-
     return postBufferedRequest(BufferedRequest{
         "/xiaomi/reading",
         identity.mac,
@@ -193,9 +182,13 @@ WriteResult BufferedClient::postXiaomiReading(
 }
 
 WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
-    if (hasBacklog(buffer_)) {
+    if (hasBacklog(buffer_, store_)) {
         const BufferInsertResult insertResult =
-            bufferRequest(buffer_, std::move(request), config_.api.buffer);
+            bufferRequest(buffer_, request, config_.api.buffer, store_);
+
+        if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
+            logDroppedBufferFullRequest(request);
+        }
 
         return makeWriteResult(mapBufferInsertResult(insertResult));
     }
@@ -222,7 +215,11 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
 
         case FreshRequestDecision::Buffer: {
             const BufferInsertResult insertResult =
-                bufferRequest(buffer_, std::move(request), config_.api.buffer);
+                bufferRequest(buffer_, request, config_.api.buffer, store_);
+
+            if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
+                logDroppedBufferFullRequest(request);
+            }
 
             return makeWriteResult(
                 mapBufferInsertResult(insertResult),

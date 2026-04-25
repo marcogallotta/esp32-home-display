@@ -11,6 +11,7 @@
 
 #include "api/buffered_client.h"
 #include "api/client.h"
+#include "api/request_file_store.h"
 #include "api/state.h"
 #include "api_sync.h"
 #include "ble/scanner.h"
@@ -78,7 +79,7 @@ struct AppContext {
     explicit AppContext(const Config& cfg)
         : config(cfg),
           apiClient(config),
-          bufferedApiClient(config, apiState.buffer, apiClient),
+          bufferedApiClient(config, apiState.buffer, apiClient, api::request_file_store::defaultStore()),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
           bleScanner([this](const ble::AdvertisementEvent& event) {
@@ -360,7 +361,13 @@ void renderUi(const AppContext& app, bool doFullDraw) {
 
 void syncOutputs(AppContext& app, std::time_t now) {
     syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
-    api::maybeDrainBuffer(app.apiState.buffer, now, app.config.api.buffer, app.apiClient);
+    api::maybeDrainBuffer(
+        app.apiState.buffer,
+        now,
+        app.config.api.buffer,
+        app.apiClient,
+        api::request_file_store::defaultStore()
+    );
 
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);

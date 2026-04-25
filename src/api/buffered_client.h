@@ -7,6 +7,7 @@
 #include "backend_result.h"
 #include "buffer.h"
 #include "client.h"
+#include "request_store.h"
 
 namespace api {
 
@@ -29,7 +30,8 @@ public:
     BufferedClient(
         const Config& config,
         BufferState& buffer,
-        const Client& client
+        const Client& client,
+        RequestStore& store
     );
 
     WriteResult postSwitchbotReading(
@@ -48,6 +50,7 @@ private:
     const Config& config_;
     BufferState& buffer_;
     const Client& client_;
+    RequestStore& store_;
 };
 
 } // namespace api

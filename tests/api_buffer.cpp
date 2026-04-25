@@ -1,9 +1,12 @@
 #include "api/buffer.h"
+#include "api/request_store.h"
 
 #include "doctest/doctest.h"
 
 #include <cstdio>
+#include <cstdint>
 #include <deque>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,6 +57,63 @@ private:
     mutable std::vector<PostedRequest> calls_;
 };
 
+class FakeRequestStore final : public api::RequestStore {
+public:
+    api::RequestStoreIndex index;
+    std::map<std::uint32_t, api::BufferedRequest> requests;
+
+    bool readIndexOk = true;
+    bool writeIndexOk = true;
+    bool writeRequestOk = true;
+    bool removeRequestOk = true;
+    std::uint64_t availableBytes = 1024 * 1024;
+
+    bool readIndex(api::RequestStoreIndex& out) override {
+        if (!readIndexOk) {
+            return false;
+        }
+        out = index;
+        return true;
+    }
+
+    bool writeIndex(const api::RequestStoreIndex& next) override {
+        if (!writeIndexOk) {
+            return false;
+        }
+        index = next;
+        return true;
+    }
+
+    bool writeRequest(std::uint32_t sequence, const api::BufferedRequest& request) override {
+        if (!writeRequestOk) {
+            return false;
+        }
+        requests[sequence] = request;
+        return true;
+    }
+
+    bool readRequest(std::uint32_t sequence, api::BufferedRequest& out) override {
+        const auto it = requests.find(sequence);
+        if (it == requests.end()) {
+            return false;
+        }
+        out = it->second;
+        return true;
+    }
+
+    bool removeRequest(std::uint32_t sequence) override {
+        if (!removeRequestOk) {
+            return false;
+        }
+        requests.erase(sequence);
+        return true;
+    }
+
+    std::uint64_t freeBytes() override {
+        return availableBytes;
+    }
+};
+
 api::BufferedRequest request(const std::string& name) {
     api::BufferedRequest r;
     r.path = "/" + name;
@@ -67,6 +127,7 @@ ApiBufferConfig config(int capacity = 10, int drainCap = 10, int drainTickS = 60
     c.inMemory = capacity;
     c.drainRateCap = drainCap;
     c.drainRateTickS = drainTickS;
+    c.diskReserveBytes = 0;
     return c;
 }
 
@@ -92,8 +153,16 @@ network::HttpResponse transportFailure(network::TransportResult transport) {
     return r;
 }
 
-void bufferOrFail(api::BufferState& buffer, const std::string& name, const ApiBufferConfig& c) {
-    CHECK_EQ(api::bufferRequest(buffer, request(name), c), api::BufferInsertResult::Buffered);
+void bufferOrFail(
+    api::BufferState& buffer,
+    FakeRequestStore& store,
+    const std::string& name,
+    const ApiBufferConfig& c
+) {
+    CHECK_EQ(
+        api::bufferRequest(buffer, request(name), c, store),
+        api::BufferInsertResult::Buffered
+    );
 }
 
 void removeDroppedLogFile() {
@@ -107,36 +176,80 @@ TEST_CASE("buffer starts empty") {
 
     CHECK(buffer.requests.empty());
     CHECK_EQ(buffer.nextDrainAllowedAtEpochS, 0);
+    CHECK_EQ(buffer.disk.count, 0U);
 }
 
-TEST_CASE("buffer rejects newest request when full and keeps existing FIFO contents") {
+TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM FIFO contents") {
     api::BufferState buffer;
+    FakeRequestStore store;
     const ApiBufferConfig c = config(/*capacity=*/2);
 
-    bufferOrFail(buffer, "first", c);
-    bufferOrFail(buffer, "second", c);
+    bufferOrFail(buffer, store, "first", c);
+    bufferOrFail(buffer, store, "second", c);
 
-    const api::BufferInsertResult result = api::bufferRequest(buffer, request("third"), c);
+    const api::BufferInsertResult result =
+        api::bufferRequest(buffer, request("third"), c, store);
 
-    CHECK_EQ(result, api::BufferInsertResult::DroppedNewRequestBufferFull);
+    CHECK_EQ(result, api::BufferInsertResult::Buffered);
     REQUIRE_EQ(buffer.requests.size(), 2U);
     CHECK_EQ(buffer.requests[0].path, "/first");
     CHECK_EQ(buffer.requests[1].path, "/second");
+
+    CHECK_EQ(buffer.disk.count, 1U);
+    REQUIRE_EQ(store.requests.size(), 1U);
+    CHECK_EQ(store.requests[0].path, "/third");
+}
+
+TEST_CASE("buffer sends new requests to disk while disk backlog exists") {
+    api::BufferState buffer;
+    FakeRequestStore store;
+    store.index.tail = 1;
+    store.index.count = 1;
+    store.requests[0] = request("existing");
+
+    const ApiBufferConfig c = config(/*capacity=*/10);
+
+    const api::BufferInsertResult result =
+        api::bufferRequest(buffer, request("new"), c, store);
+
+    CHECK_EQ(result, api::BufferInsertResult::Buffered);
+    CHECK(buffer.requests.empty());
+    CHECK_EQ(buffer.disk.count, 2U);
+    CHECK_EQ(store.requests[1].path, "/new");
+}
+
+TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails") {
+    api::BufferState buffer;
+    FakeRequestStore store;
+    store.writeRequestOk = false;
+    const ApiBufferConfig c = config(/*capacity=*/1);
+
+    bufferOrFail(buffer, store, "first", c);
+
+    const api::BufferInsertResult result =
+        api::bufferRequest(buffer, request("second"), c, store);
+
+    CHECK_EQ(result, api::BufferInsertResult::DroppedNewRequestBufferFull);
+    REQUIRE_EQ(buffer.requests.size(), 1U);
+    CHECK_EQ(buffer.requests.front().path, "/first");
+    CHECK_EQ(buffer.disk.count, 0U);
 }
 
 TEST_CASE("buffer drains oldest requests first") {
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config();
 
-    bufferOrFail(buffer, "first", c);
-    bufferOrFail(buffer, "second", c);
-    bufferOrFail(buffer, "third", c);
+    bufferOrFail(buffer, store, "first", c);
+    bufferOrFail(buffer, store, "second", c);
+    bufferOrFail(buffer, store, "third", c);
     poster.respondWith(httpOk());
     poster.respondWith(httpOk());
     poster.respondWith(httpOk());
 
-    const api::BufferDrainResult result = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
 
     CHECK_EQ(result.attempted, 3);
     CHECK_EQ(result.sent, 3);
@@ -151,16 +264,18 @@ TEST_CASE("buffer drains oldest requests first") {
 
 TEST_CASE("drain cap limits how many requests are sent per tick") {
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
-    bufferOrFail(buffer, "first", c);
-    bufferOrFail(buffer, "second", c);
-    bufferOrFail(buffer, "third", c);
+    bufferOrFail(buffer, store, "first", c);
+    bufferOrFail(buffer, store, "second", c);
+    bufferOrFail(buffer, store, "third", c);
     poster.respondWith(httpOk());
     poster.respondWith(httpOk());
 
-    const api::BufferDrainResult result = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.sent, 2);
@@ -171,13 +286,15 @@ TEST_CASE("drain cap limits how many requests are sent per tick") {
 
 TEST_CASE("buffer does not drain before the next allowed tick") {
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
-    bufferOrFail(buffer, "first", c);
+    bufferOrFail(buffer, store, "first", c);
     buffer.nextDrainAllowedAtEpochS = 160;
 
-    const api::BufferDrainResult result = api::maybeDrainBuffer(buffer, 159, c, poster);
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 159, c, poster, store);
 
     CHECK(result.notDueYet);
     CHECK_EQ(result.attempted, 0);
@@ -188,14 +305,16 @@ TEST_CASE("buffer does not drain before the next allowed tick") {
 
 TEST_CASE("retryable transport failure keeps first request and blocks later requests") {
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/10, /*drainTickS=*/60);
 
-    bufferOrFail(buffer, "first", c);
-    bufferOrFail(buffer, "second", c);
+    bufferOrFail(buffer, store, "first", c);
+    bufferOrFail(buffer, store, "second", c);
     poster.respondWith(transportFailure(network::TransportResult::NetworkError));
 
-    const api::BufferDrainResult result = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
 
     CHECK_EQ(result.attempted, 1);
     CHECK_EQ(result.sent, 0);
@@ -212,14 +331,16 @@ TEST_CASE("retryable transport failure keeps first request and blocks later requ
 
 TEST_CASE("retryable HTTP failure keeps first request and blocks later requests") {
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/10, /*drainTickS=*/60);
 
-    bufferOrFail(buffer, "first", c);
-    bufferOrFail(buffer, "second", c);
+    bufferOrFail(buffer, store, "first", c);
+    bufferOrFail(buffer, store, "second", c);
     poster.respondWith(httpStatus(503));
 
-    const api::BufferDrainResult result = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
 
     CHECK_EQ(result.attempted, 1);
     CHECK(result.blockedByRetryableFailure);
@@ -233,15 +354,17 @@ TEST_CASE("permanent failure drops first request and continues draining") {
     removeDroppedLogFile();
 
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/10, /*drainTickS=*/60);
 
-    bufferOrFail(buffer, "first", c);
-    bufferOrFail(buffer, "second", c);
+    bufferOrFail(buffer, store, "first", c);
+    bufferOrFail(buffer, store, "second", c);
     poster.respondWith(httpStatus(400));
     poster.respondWith(httpOk());
 
-    const api::BufferDrainResult result = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.dropped, 1);
@@ -260,27 +383,31 @@ TEST_CASE("timeout failure is retried twice and then dropped") {
     removeDroppedLogFile();
 
     api::BufferState buffer;
+    FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/1, /*drainTickS=*/0);
 
-    bufferOrFail(buffer, "first", c);
+    bufferOrFail(buffer, store, "first", c);
     poster.respondWith(transportFailure(network::TransportResult::Timeout));
     poster.respondWith(transportFailure(network::TransportResult::Timeout));
     poster.respondWith(transportFailure(network::TransportResult::Timeout));
 
-    const api::BufferDrainResult first = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult first =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
     CHECK_EQ(first.attempted, 1);
     CHECK(first.blockedByRetryableFailure);
     REQUIRE_EQ(buffer.requests.size(), 1U);
     CHECK_EQ(buffer.requests.front().timeoutRetryCount, 1);
 
-    const api::BufferDrainResult second = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult second =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
     CHECK_EQ(second.attempted, 1);
     CHECK(second.blockedByRetryableFailure);
     REQUIRE_EQ(buffer.requests.size(), 1U);
     CHECK_EQ(buffer.requests.front().timeoutRetryCount, 2);
 
-    const api::BufferDrainResult third = api::maybeDrainBuffer(buffer, 100, c, poster);
+    const api::BufferDrainResult third =
+        api::maybeDrainBuffer(buffer, 100, c, poster, store);
     CHECK_EQ(third.attempted, 1);
     CHECK_EQ(third.dropped, 1);
     CHECK(buffer.requests.empty());

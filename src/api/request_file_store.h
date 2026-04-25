@@ -2,7 +2,6 @@
 
 #include <cstdint>
 
-#include "buffer.h"
 #include "request_store.h"
 
 namespace api::request_file_store {

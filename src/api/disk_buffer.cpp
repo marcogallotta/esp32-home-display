@@ -1,7 +1,6 @@
 #include "disk_buffer.h"
 
 #include "../log.h"
-#include "request_file_store.h"
 
 namespace api::disk_buffer {
 namespace {
@@ -74,10 +73,6 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
     return true;
 }
 
-RequestStore& defaultStore() {
-    return request_file_store::defaultStore();
-}
-
 } // namespace
 
 bool load(State& state, RequestStore& store) {
@@ -89,10 +84,6 @@ bool load(State& state, RequestStore& store) {
 
     fromIndex(index, state);
     return true;
-}
-
-bool load(State& state) {
-    return load(state, defaultStore());
 }
 
 bool enqueue(
@@ -129,14 +120,6 @@ bool enqueue(
     return true;
 }
 
-bool enqueue(
-    State& state,
-    const BufferedRequest& request,
-    const ApiBufferConfig& config
-) {
-    return enqueue(state, request, config, defaultStore());
-}
-
 bool peek(State& state, BufferedRequest& out, RequestStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
@@ -154,24 +137,12 @@ bool peek(State& state, BufferedRequest& out, RequestStore& store) {
     return true;
 }
 
-bool peek(State& state, BufferedRequest& out) {
-    return peek(state, out, defaultStore());
-}
-
 bool consume(State& state, RequestStore& store) {
     return advanceHead(state, "consume", store);
 }
 
-bool consume(State& state) {
-    return consume(state, defaultStore());
-}
-
 bool dropFront(State& state, RequestStore& store) {
     return advanceHead(state, "drop front", store);
-}
-
-bool dropFront(State& state) {
-    return dropFront(state, defaultStore());
 }
 
 bool rewriteFront(State& state, const BufferedRequest& request, RequestStore& store) {
@@ -189,10 +160,6 @@ bool rewriteFront(State& state, const BufferedRequest& request, RequestStore& st
     }
 
     return true;
-}
-
-bool rewriteFront(State& state, const BufferedRequest& request) {
-    return rewriteFront(state, request, defaultStore());
 }
 
 } // namespace api::disk_buffer
