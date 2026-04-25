@@ -65,6 +65,7 @@ TEST_SRC := \
 	tests/main.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
+	tests/sensor_readings.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
 	$(COMMON_SRC)
