@@ -30,6 +30,11 @@
 
 namespace {
 
+constexpr std::uint64_t kInvalidTimeApiSyncWarnAfterMs = 30ULL * 1000ULL;
+constexpr std::uint64_t kInvalidTimeApiSyncErrorAfterMs = 120ULL * 1000ULL;
+constexpr std::uint64_t kInvalidTimeApiSyncWarnRepeatMs = 60ULL * 1000ULL;
+constexpr std::uint64_t kInvalidTimeApiSyncErrorRepeatMs = 5ULL * 60ULL * 1000ULL;
+
 #ifdef ARDUINO
 constexpr int kMaxVisibleSensorRows = 4;
 #endif
@@ -359,11 +364,41 @@ void renderUi(const AppContext& app, bool doFullDraw) {
 #endif
 }
 
+void logInvalidTimeApiSyncSkipped(std::uint64_t nowMs) {
+    if (nowMs >= kInvalidTimeApiSyncErrorAfterMs) {
+        rateLimitedLog(
+            LogLevel::Error,
+            "api_time_not_initialized",
+            "API sync disabled: time still not initialized after 120 seconds",
+            kInvalidTimeApiSyncErrorRepeatMs
+        );
+        return;
+    }
+
+    if (nowMs >= kInvalidTimeApiSyncWarnAfterMs) {
+        rateLimitedLog(
+            LogLevel::Warn,
+            "api_time_not_initialized",
+            "API sync skipped: time not initialized yet",
+            kInvalidTimeApiSyncWarnRepeatMs
+        );
+    }
+}
+
 void syncOutputs(AppContext& app, std::time_t now) {
     (void)now;
     const std::uint64_t nowMs = platform::millis();
 
-    syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
+    if (!app.hasValidTime && platform::hasValidTime()) {
+        app.hasValidTime = true;
+    }
+
+    if (app.hasValidTime) {
+        syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
+    } else {
+        logInvalidTimeApiSyncSkipped(nowMs);
+    }
+
     api::maybeDrainBuffer(
         app.apiState.buffer,
         nowMs,

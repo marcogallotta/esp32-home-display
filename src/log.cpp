@@ -1,5 +1,8 @@
 #include "log.h"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <ctime>
 #include <string>
 
@@ -9,6 +12,31 @@ namespace {
 
 constexpr bool kUseAnsiColours = true;
 bool gLogMuted = false;
+
+struct RateLimitedLogSlot {
+    bool used = false;
+    LogLevel level = LogLevel::Debug;
+    std::string key;
+    std::uint64_t nextAllowedMs = 0;
+};
+
+constexpr std::size_t kRateLimitedLogSlotCount = 8;
+std::array<RateLimitedLogSlot, kRateLimitedLogSlotCount> gRateLimitedLogSlots;
+
+RateLimitedLogSlot* findRateLimitedLogSlot(LogLevel level, const std::string& key) {
+    RateLimitedLogSlot* firstUnused = nullptr;
+
+    for (auto& slot : gRateLimitedLogSlots) {
+        if (slot.used && slot.level == level && slot.key == key) {
+            return &slot;
+        }
+        if (!slot.used && firstUnused == nullptr) {
+            firstUnused = &slot;
+        }
+    }
+
+    return firstUnused;
+}
 
 const char* logLevelColour(LogLevel level) {
     if (!kUseAnsiColours) {
@@ -86,6 +114,31 @@ void logLine(LogLevel level, const std::string& msg) {
         msg +
         resetColour()
     );
+}
+
+void rateLimitedLog(
+    LogLevel level,
+    const std::string& key,
+    const std::string& msg,
+    std::uint64_t intervalMs
+) {
+    RateLimitedLogSlot* slot = findRateLimitedLogSlot(level, key);
+    const std::uint64_t nowMs = platform::millis();
+
+    if (slot == nullptr) {
+        logLine(level, msg);
+        return;
+    }
+
+    if (slot->used && nowMs < slot->nextAllowedMs) {
+        return;
+    }
+
+    logLine(level, msg);
+    slot->used = true;
+    slot->level = level;
+    slot->key = key;
+    slot->nextAllowedMs = nowMs + intervalMs;
 }
 
 std::string transportResultName(network::TransportResult result) {
