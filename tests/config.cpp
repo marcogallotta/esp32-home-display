@@ -110,14 +110,16 @@ JsonObject addXiaomiSensor(DynamicJsonDocument& doc) {
 }
 
 void checkDefaults(const Config& config) {
-    CHECK(config.forecast.updateIntervalMinutes == 30);
-    CHECK(config.api.buffer.inMemory == 32);
-    CHECK(config.api.buffer.drainRateCap == 4);
-    CHECK(config.api.buffer.drainRateTickS == 5);
-    CHECK(config.salah.dstRule == "none");
-    CHECK(config.salah.asrMakruhMinutes == 20);
-    CHECK(config.salah.hanafiAsr == false);
-    CHECK(config.xiaomi.updateIntervalMinutes == 60);
+    const Config defaults{};
+
+    CHECK_EQ(config.forecast.updateIntervalMinutes, defaults.forecast.updateIntervalMinutes);
+    CHECK_EQ(config.api.buffer.inMemory, defaults.api.buffer.inMemory);
+    CHECK_EQ(config.api.buffer.drainRateCap, defaults.api.buffer.drainRateCap);
+    CHECK_EQ(config.api.buffer.drainRateTickS, defaults.api.buffer.drainRateTickS);
+    CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
+    CHECK_EQ(config.salah.asrMakruhMinutes, defaults.salah.asrMakruhMinutes);
+    CHECK_EQ(config.salah.hanafiAsr, defaults.salah.hanafiAsr);
+    CHECK_EQ(config.xiaomi.updateIntervalMinutes, defaults.xiaomi.updateIntervalMinutes);
     CHECK(config.switchbot.sensors.empty());
     CHECK(config.xiaomi.sensors.empty());
 }
