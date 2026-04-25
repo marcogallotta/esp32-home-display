@@ -1,6 +1,6 @@
 CXX := g++
 CXXFLAGS_COMMON := -Wall -Wextra -Wpedantic -O2 -MMD -MP \
-            -Isrc -Ilib/PrayerTimes/src -Ilib/ArduinoJson/src -Itests \
+            -Isrc -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src -Itests \
 			$(shell pkg-config --cflags sdbus-c++)
 CXXFLAGS := -std=c++17 $(CXXFLAGS_COMMON)
 CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
@@ -16,7 +16,7 @@ TEST_TARGET := $(BUILD_DIR)/tests
 # --- COMMON SOURCES ---
 
 COMMON_SRC := \
-	lib/PrayerTimes/src/PrayerTimes.cpp \
+	third_party/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
 	src/api/buffer.cpp \
 	src/api/buffered_client.cpp \

@@ -1,6 +1,6 @@
 [submodule "lib/PrayerTimes"]
-	path = lib/PrayerTimes
+	path = third_party/PrayerTimes
 	url = git@github.com:marcogallotta/PrayerTimes.git
 [submodule "lib/ArduinoJson"]
-	path = lib/ArduinoJson
+	path = third_party/ArduinoJson
 	url = git@github.com:bblanchon/ArduinoJson.git
