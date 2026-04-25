@@ -76,7 +76,7 @@ TEST_OBJ := $(call make_objs,$(TEST_SRC))
 
 # --- RULES ---
 
-.PHONY: all clean run tests esp32-compile esp32-upload esp32-monitor
+.PHONY: all clean run tests run-tests esp32-compile esp32-upload esp32-upload-config esp32-monitor
 
 all: $(MAIN_TARGET)
 
@@ -93,7 +93,7 @@ run: $(MAIN_TARGET)
 	./$(MAIN_TARGET)
 
 run-tests: $(TEST_TARGET)
-	$/$(TEST_TARGET)
+	./$(TEST_TARGET)
 
 $(BUILD_DIR)/littlefs.bin: config.json certs
 	mkdir -p $(ESP32_DATA_DIR)
