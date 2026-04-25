@@ -10,7 +10,9 @@ function App() {
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [sensorError, setSensorError] = React.useState("");
   const [historyError, setHistoryError] = React.useState("");
-  const [rangeWindow, setRangeWindow] = React.useState(window.sensorModel.buildRangeWindow("24h"));
+  const [rangeWindow, setRangeWindow] = React.useState(
+    window.sensorModel.buildRangeWindow("24h")
+  );
 
   const tempCanvas = React.useRef(null);
   const humidityCanvas = React.useRef(null);
@@ -24,7 +26,11 @@ function App() {
   const vpdChart = React.useRef(null);
   const xiaomiChart = React.useRef(null);
 
-  const sensorGroups = React.useMemo(() => window.sensorModel.splitByType(sensors), [sensors]);
+  const sensorGroups = React.useMemo(
+    () => window.sensorModel.splitByType(sensors),
+    [sensors]
+  );
+
   const switchbotSensors = sensorGroups.switchbot;
   const xiaomiSensors = sensorGroups.xiaomi;
 
@@ -37,6 +43,7 @@ function App() {
     async function loadSensors() {
       setLoadingSensors(true);
       setSensorError("");
+
       try {
         const loadedSensors = await window.api.fetchSensors();
         setSensors(loadedSensors);
@@ -55,6 +62,7 @@ function App() {
 
     async function loadHistory() {
       const nextRangeWindow = window.sensorModel.buildRangeWindow(range);
+
       setLoadingHistory(true);
       setHistoryError("");
 
@@ -80,13 +88,19 @@ function App() {
 
   const switchbotSummary = React.useMemo(() => {
     return switchbotSensors.map((sensor) =>
-      window.sensorModel.buildSwitchbotSummary(sensor, historyBySensorId[sensor.id] || [])
+      window.sensorModel.buildSwitchbotSummary(
+        sensor,
+        historyBySensorId[sensor.id] || []
+      )
     );
   }, [switchbotSensors, historyBySensorId]);
 
   const xiaomiSummary = React.useMemo(() => {
     return xiaomiSensors.map((sensor) =>
-      window.sensorModel.buildXiaomiSummary(sensor, historyBySensorId[sensor.id] || [])
+      window.sensorModel.buildXiaomiSummary(
+        sensor,
+        historyBySensorId[sensor.id] || []
+      )
     );
   }, [xiaomiSensors, historyBySensorId]);
 
@@ -94,29 +108,88 @@ function App() {
     return selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
   }, [selectedSwitchbotSensor, switchbotSensors]);
 
-  React.useEffect(() => {
-    const datasets = switchbotSensorsToPlot.map((sensor) =>
+  const tempDatasets = React.useMemo(() => {
+    return switchbotSensorsToPlot.map((sensor) =>
       window.chartFactory.timeSeriesDataset(
         sensor.name,
         historyBySensorId[sensor.id] || [],
-        (row) => (row.temperature_c == null ? null : window.metrics.round1(row.temperature_c))
+        (row) =>
+          row.temperature_c == null
+            ? null
+            : window.metrics.round1(row.temperature_c)
       )
     );
+  }, [switchbotSensorsToPlot, historyBySensorId]);
 
-    window.chartFactory.lineChart(tempCanvas.current, tempChart, datasets, "°C", rangeWindow);
-  }, [switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
-
-  React.useEffect(() => {
-    const datasets = switchbotSensorsToPlot.map((sensor) =>
+  const humidityDatasets = React.useMemo(() => {
+    return switchbotSensorsToPlot.map((sensor) =>
       window.chartFactory.timeSeriesDataset(
         sensor.name,
         historyBySensorId[sensor.id] || [],
         (row) => (row.humidity_pct == null ? null : Math.round(row.humidity_pct))
       )
     );
+  }, [switchbotSensorsToPlot, historyBySensorId]);
 
-    window.chartFactory.lineChart(humidityCanvas.current, humidityChart, datasets, "%", rangeWindow);
-  }, [switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
+  const absHumidityDatasets = React.useMemo(() => {
+    return switchbotSensorsToPlot.map((sensor) =>
+      window.chartFactory.timeSeriesDataset(
+        sensor.name,
+        historyBySensorId[sensor.id] || [],
+        (row) =>
+          window.metrics.round1(
+            window.metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct)
+          )
+      )
+    );
+  }, [switchbotSensorsToPlot, historyBySensorId]);
+
+  const vpdDatasets = React.useMemo(() => {
+    return switchbotSensorsToPlot.map((sensor) =>
+      window.chartFactory.timeSeriesDataset(
+        sensor.name,
+        historyBySensorId[sensor.id] || [],
+        (row) =>
+          window.metrics.round1(
+            window.metrics.calcVpd(row.temperature_c, row.humidity_pct)
+          )
+      )
+    );
+  }, [switchbotSensorsToPlot, historyBySensorId]);
+
+  const xiaomiDatasets = React.useMemo(() => {
+    if (xiaomiSensors.length === 0) return [];
+
+    const sensor = xiaomiSensors[0];
+
+    return [
+      window.chartFactory.timeSeriesDataset(
+        `${sensor.name} ${xiaomiMetric.replaceAll("_", " ")}`,
+        historyBySensorId[sensor.id] || [],
+        (row) => row[xiaomiMetric]
+      ),
+    ];
+  }, [xiaomiSensors, historyBySensorId, xiaomiMetric]);
+
+  React.useEffect(() => {
+    window.chartFactory.lineChart(
+      tempCanvas.current,
+      tempChart,
+      tempDatasets,
+      "°C",
+      rangeWindow
+    );
+  }, [tempDatasets, rangeWindow]);
+
+  React.useEffect(() => {
+    window.chartFactory.lineChart(
+      humidityCanvas.current,
+      humidityChart,
+      humidityDatasets,
+      "%",
+      rangeWindow
+    );
+  }, [humidityDatasets, rangeWindow]);
 
   React.useEffect(() => {
     if (!showDerivedCharts) {
@@ -124,16 +197,14 @@ function App() {
       return;
     }
 
-    const datasets = switchbotSensorsToPlot.map((sensor) =>
-      window.chartFactory.timeSeriesDataset(
-        sensor.name,
-        historyBySensorId[sensor.id] || [],
-        (row) => window.metrics.round1(window.metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct))
-      )
+    window.chartFactory.lineChart(
+      absHumidityCanvas.current,
+      absHumidityChart,
+      absHumidityDatasets,
+      "g/m³",
+      rangeWindow
     );
-
-    window.chartFactory.lineChart(absHumidityCanvas.current, absHumidityChart, datasets, "g/m³", rangeWindow);
-  }, [showDerivedCharts, switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
+  }, [showDerivedCharts, absHumidityDatasets, rangeWindow]);
 
   React.useEffect(() => {
     if (!showDerivedCharts) {
@@ -141,34 +212,29 @@ function App() {
       return;
     }
 
-    const datasets = switchbotSensorsToPlot.map((sensor) =>
-      window.chartFactory.timeSeriesDataset(
-        sensor.name,
-        historyBySensorId[sensor.id] || [],
-        (row) => window.metrics.round1(window.metrics.calcVpd(row.temperature_c, row.humidity_pct))
-      )
+    window.chartFactory.lineChart(
+      vpdCanvas.current,
+      vpdChart,
+      vpdDatasets,
+      "kPa",
+      rangeWindow
     );
-
-    window.chartFactory.lineChart(vpdCanvas.current, vpdChart, datasets, "kPa", rangeWindow);
-  }, [showDerivedCharts, switchbotSensorsToPlot, historyBySensorId, rangeWindow]);
+  }, [showDerivedCharts, vpdDatasets, rangeWindow]);
 
   React.useEffect(() => {
-    if (xiaomiSensors.length === 0) {
+    if (xiaomiDatasets.length === 0) {
       window.chartFactory.destroy(xiaomiChart);
       return;
     }
 
-    const sensor = xiaomiSensors[0];
-    const datasets = [
-      window.chartFactory.timeSeriesDataset(
-        `${sensor.name} ${xiaomiMetric.replaceAll("_", " ")}`,
-        historyBySensorId[sensor.id] || [],
-        (row) => row[xiaomiMetric]
-      ),
-    ];
-
-    window.chartFactory.lineChart(xiaomiCanvas.current, xiaomiChart, datasets, xiaomiMetric, rangeWindow);
-  }, [xiaomiSensors, historyBySensorId, xiaomiMetric, rangeWindow]);
+    window.chartFactory.lineChart(
+      xiaomiCanvas.current,
+      xiaomiChart,
+      xiaomiDatasets,
+      xiaomiMetric,
+      rangeWindow
+    );
+  }, [xiaomiDatasets, xiaomiMetric, rangeWindow]);
 
   const loading = loadingSensors || loadingHistory;
   const error = sensorError || historyError;
@@ -194,10 +260,15 @@ function App() {
             ))}
           </div>
 
-          <select value={selectedSensorId} onChange={(e) => setSelectedSensorId(e.target.value)}>
+          <select
+            value={selectedSensorId}
+            onChange={(e) => setSelectedSensorId(e.target.value)}
+          >
             <option value="all">All SwitchBot</option>
             {switchbotSensors.map((sensor) => (
-              <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
+              <option key={sensor.id} value={sensor.id}>
+                {sensor.name}
+              </option>
             ))}
           </select>
         </div>
@@ -214,7 +285,11 @@ function App() {
             sensor={sensor}
             kind="switchbot"
             selected={selectedSensorId === sensor.id}
-            onClick={() => setSelectedSensorId(selectedSensorId === sensor.id ? "all" : sensor.id)}
+            onClick={() =>
+              setSelectedSensorId(
+                selectedSensorId === sensor.id ? "all" : sensor.id
+              )
+            }
             clickable={true}
           />
         ))}
@@ -247,7 +322,10 @@ function App() {
         />
 
         <div className="toggle-row">
-          <button className="ghost-btn" onClick={() => setShowDerivedCharts((v) => !v)}>
+          <button
+            className="ghost-btn"
+            onClick={() => setShowDerivedCharts((v) => !v)}
+          >
             {showDerivedCharts ? "Hide derived charts" : "Show derived charts"}
           </button>
         </div>
@@ -271,7 +349,10 @@ function App() {
           <window.ChartCard
             title="Xiaomi Detail"
             right={
-              <select value={xiaomiMetric} onChange={(e) => setXiaomiMetric(e.target.value)}>
+              <select
+                value={xiaomiMetric}
+                onChange={(e) => setXiaomiMetric(e.target.value)}
+              >
                 <option value="moisture_pct">Moisture</option>
                 <option value="light_lux">Lux</option>
                 <option value="conductivity_us_cm">Conductivity</option>
