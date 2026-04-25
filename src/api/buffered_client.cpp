@@ -1,6 +1,7 @@
 #include "buffered_client.h"
 
 #include <cstddef>
+#include <optional>
 #include <utility>
 
 #include "../log.h"
@@ -62,6 +63,49 @@ WriteStatus mapBufferInsertResult(BufferInsertResult result) {
     return result == BufferInsertResult::Buffered
         ? WriteStatus::Buffered
         : WriteStatus::DroppedBufferFull;
+}
+
+std::string invalidTimestampReason(const std::optional<std::int64_t>& epochS) {
+    if (!epochS.has_value()) {
+        return "missing timestamp";
+    }
+
+    if (*epochS <= 0) {
+        return "invalid timestamp " + std::to_string(*epochS);
+    }
+
+    return "timestamp invalid";
+}
+
+std::string invalidSwitchbotPayloadReason(const SwitchbotReading& reading) {
+    if (!reading.temperatureC.has_value()) {
+        return "missing temperature";
+    }
+
+    if (!reading.humidityPct.has_value()) {
+        return "missing humidity";
+    }
+
+    if (!reading.lastSeenEpochS.has_value() || *reading.lastSeenEpochS <= 0) {
+        return invalidTimestampReason(reading.lastSeenEpochS);
+    }
+
+    return "unknown invalid payload";
+}
+
+std::string invalidXiaomiPayloadReason(const XiaomiReading& reading) {
+    if (!reading.lastSeenEpochS.has_value() || *reading.lastSeenEpochS <= 0) {
+        return invalidTimestampReason(reading.lastSeenEpochS);
+    }
+
+    if (!reading.temperatureC.has_value() &&
+        !reading.moisturePct.has_value() &&
+        !reading.lux.has_value() &&
+        !reading.conductivityUsCm.has_value()) {
+        return "missing all sensor values";
+    }
+
+    return "unknown invalid payload";
 }
 
 WriteResult makeWriteResult(
@@ -153,7 +197,11 @@ WriteResult BufferedClient::postSwitchbotReading(
 ) {
     const auto payload = makeSwitchbotPayload(identity, reading);
     if (!payload.has_value()) {
-        logLine(LogLevel::Warn, "Dropping SwitchBot reading: invalid payload for " + identity.mac);
+        logLine(
+            LogLevel::Warn,
+            "Dropping SwitchBot reading: invalid payload for " + identity.mac +
+            ": " + invalidSwitchbotPayloadReason(reading)
+        );
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
@@ -170,7 +218,11 @@ WriteResult BufferedClient::postXiaomiReading(
 ) {
     const auto payload = makeXiaomiPayload(identity, reading);
     if (!payload.has_value()) {
-        logLine(LogLevel::Warn, "Dropping Xiaomi reading: invalid payload for " + identity.mac);
+        logLine(
+            LogLevel::Warn,
+            "Dropping Xiaomi reading: invalid payload for " + identity.mac +
+            ": " + invalidXiaomiPayloadReason(reading)
+        );
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
