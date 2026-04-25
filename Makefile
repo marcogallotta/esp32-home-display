@@ -131,14 +131,6 @@ $(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS_20) -c $< -o $@
 
-$(OBJ_DIR)/src/xiaomi/ble_desktop.o: src/xiaomi/ble_desktop.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS_20) -c $< -o $@
-
-$(OBJ_DIR)/src/switchbot/ble_desktop.o: src/switchbot/ble_desktop.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS_20) -c $< -o $@
-
 $(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
