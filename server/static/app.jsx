@@ -10,9 +10,7 @@ function App() {
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [sensorError, setSensorError] = React.useState("");
   const [historyError, setHistoryError] = React.useState("");
-  const [rangeWindow, setRangeWindow] = React.useState(
-    window.sensorModel.buildRangeWindow("24h")
-  );
+  const [rangeWindow, setRangeWindow] = React.useState(window.sensorModel.buildRangeWindow("24h"));
 
   const tempCanvas = React.useRef(null);
   const humidityCanvas = React.useRef(null);
@@ -266,11 +264,24 @@ function App() {
           >
             <option value="all">All SwitchBot</option>
             {switchbotSensors.map((sensor) => (
-              <option key={sensor.id} value={sensor.id}>
-                {sensor.name}
-              </option>
+              <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
             ))}
           </select>
+
+          <button
+            className="ghost-btn"
+            onClick={() =>
+              window.chartFactory.resetZoom([
+                tempChart,
+                humidityChart,
+                absHumidityChart,
+                vpdChart,
+                xiaomiChart,
+              ])
+            }
+          >
+            Reset zoom
+          </button>
         </div>
       </div>
 
@@ -311,13 +322,13 @@ function App() {
       <div className="charts">
         <window.ChartCard
           title="Temperature"
-          right={<div className="hint">Overlay view for SwitchBot sensors</div>}
+          right={<div className="hint">Drag to zoom. Mouse wheel zooms. Hold Shift + drag to pan.</div>}
           canvasRef={tempCanvas}
         />
 
         <window.ChartCard
           title="Humidity"
-          right={<div className="hint">Overlay view for SwitchBot sensors</div>}
+          right={<div className="hint">Drag to zoom. Mouse wheel zooms. Hold Shift + drag to pan.</div>}
           canvasRef={humidityCanvas}
         />
 
@@ -334,12 +345,12 @@ function App() {
           <>
             <window.ChartCard
               title="Absolute Humidity"
-              right={<div className="hint">Derived from air temp + RH</div>}
+              right={<div className="hint">Derived from air temp + RH. Drag to zoom.</div>}
               canvasRef={absHumidityCanvas}
             />
             <window.ChartCard
               title="Air VPD"
-              right={<div className="hint">Derived from air temp + RH</div>}
+              right={<div className="hint">Derived from air temp + RH. Drag to zoom.</div>}
               canvasRef={vpdCanvas}
             />
           </>

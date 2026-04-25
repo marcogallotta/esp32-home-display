@@ -15,6 +15,14 @@ window.chartFactory = {
     }
   },
 
+  resetZoom(chartRefs) {
+    chartRefs.forEach((chartRef) => {
+      if (chartRef.current && typeof chartRef.current.resetZoom === "function") {
+        chartRef.current.resetZoom();
+      }
+    });
+  },
+
   lineChart(canvas, chartRef, datasets, yLabel, rangeWindow) {
     if (!canvas) return;
 
@@ -23,7 +31,28 @@ window.chartFactory = {
       maintainAspectRatio: false,
       parsing: false,
       interaction: { mode: "nearest", intersect: false },
-      plugins: { legend: { display: true } },
+      plugins: {
+        legend: { display: true },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: "x",
+            modifierKey: "shift",
+          },
+          zoom: {
+            wheel: {
+              enabled: true,
+            },
+            pinch: {
+              enabled: true,
+            },
+            drag: {
+              enabled: true,
+            },
+            mode: "x",
+          },
+        },
+      },
       scales: {
         x: this.makeTimeScale(rangeWindow),
         y: { title: { display: true, text: yLabel } },
