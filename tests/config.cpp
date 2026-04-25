@@ -60,10 +60,6 @@ void removePath(DynamicJsonDocument& doc, const char* section, const char* key) 
     doc[section].remove(key);
 }
 
-void removePath(DynamicJsonDocument& doc, const char* section, const char* object, const char* key) {
-    doc[section][object].remove(key);
-}
-
 DynamicJsonDocument exampleWithoutOptionalFields() {
     auto doc = exampleConfig();
 
