@@ -11,8 +11,13 @@ LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 BUILD_DIR := .build_desktop
 OBJ_DIR := $(BUILD_DIR)/obj
 
+COV_BUILD_DIR := .build_coverage
+COV_OBJ_DIR := $(COV_BUILD_DIR)/obj
+COV_FLAGS := -O0 -g --coverage
+
 MAIN_TARGET := $(BUILD_DIR)/main
 TEST_TARGET := $(BUILD_DIR)/tests
+COV_TEST_TARGET := $(COV_BUILD_DIR)/tests
 
 # --- COMMON SOURCES ---
 
@@ -64,12 +69,17 @@ define make_objs
 $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(1))
 endef
 
+define make_cov_objs
+$(patsubst %.cpp,$(COV_OBJ_DIR)/%.o,$(1))
+endef
+
 MAIN_OBJ := $(call make_objs,$(MAIN_SRC))
 TEST_OBJ := $(call make_objs,$(TEST_SRC))
+COV_TEST_OBJ := $(call make_cov_objs,$(TEST_SRC))
 
 # --- RULES ---
 
-.PHONY: all clean run tests run-tests
+.PHONY: all clean clean-coverage run tests run-tests coverage
 
 all: $(MAIN_TARGET)
 
@@ -88,6 +98,14 @@ run: $(MAIN_TARGET)
 run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
+coverage: $(COV_TEST_TARGET)
+	./$(COV_TEST_TARGET)
+	gcovr -r . --object-directory $(COV_OBJ_DIR) --exclude 'third_party/.*' --exclude 'tests/.*' --html --html-details -o $(COV_BUILD_DIR)/coverage.html
+
+$(COV_TEST_TARGET): $(COV_TEST_OBJ)
+	@mkdir -p $(COV_BUILD_DIR)
+	$(CXX) $^ -o $@ $(LDFLAGS) --coverage
+
 # --- OBJECT BUILD ---
 
 $(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
@@ -98,7 +116,18 @@ $(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(COV_OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS_20) $(COV_FLAGS) -c $< -o $@
+
+$(COV_OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(COV_FLAGS) -c $< -o $@
+
 clean:
 	rm -rf $(BUILD_DIR)
 
--include $(MAIN_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+clean-coverage:
+	rm -rf $(COV_BUILD_DIR)
+
+-include $(MAIN_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(COV_TEST_OBJ:.o=.d)
