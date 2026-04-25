@@ -7,14 +7,6 @@ CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
 
 LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 
-ARDUINO_CLI := arduino-cli
-FQBN := esp32:esp32:esp32s3:PartitionScheme=no_ota
-PORT ?= /dev/ttyACM0
-ESP32_BUILD_DIR := esp32-build
-ESP32_DATA_DIR := esp32-data
-SKETCH_DIR := .
-ESP32_EXTRA_INCLUDES := -Isrc
-
 BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj
 
@@ -76,7 +68,7 @@ TEST_OBJ := $(call make_objs,$(TEST_SRC))
 
 # --- RULES ---
 
-.PHONY: all clean run tests run-tests esp32-compile esp32-upload esp32-upload-config esp32-monitor
+.PHONY: all clean run tests run-tests
 
 all: $(MAIN_TARGET)
 
@@ -95,36 +87,6 @@ run: $(MAIN_TARGET)
 run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
-$(BUILD_DIR)/littlefs.bin: config.json certs
-	mkdir -p $(ESP32_DATA_DIR)
-	cp config.json $(ESP32_DATA_DIR)
-	cp -R certs $(ESP32_DATA_DIR)
-	mkdir -p $(BUILD_DIR)
-	mklittlefs -c $(ESP32_DATA_DIR) -b 4096 -p 256 -s 0x1E0000 $(BUILD_DIR)/littlefs.bin
-
-esp32-compile:
-	$(ARDUINO_CLI) compile \
-		--fqbn $(FQBN) \
-		--library $(CURDIR)/lib/PrayerTimes \
-		--library $(CURDIR)/lib/ArduinoJson \
-		--build-path $(ESP32_BUILD_DIR) \
-		--build-property compiler.cpp.extra_flags="$(ESP32_EXTRA_INCLUDES)" \
-		--build-property compiler.c.extra_flags="$(ESP32_EXTRA_INCLUDES)" \
-		$(SKETCH_DIR)
-
-esp32-upload-config: $(BUILD_DIR)/littlefs.bin
-	esptool --chip esp32s3 --port $(PORT) write_flash 0x210000 $(BUILD_DIR)/littlefs.bin
-
-esp32-upload: esp32-compile
-	$(ARDUINO_CLI) upload \
-		-p $(PORT) \
-		--fqbn $(FQBN) \
-		$(SKETCH_DIR) \
-		--input-dir $(ESP32_BUILD_DIR)
-
-esp32-monitor:
-	$(ARDUINO_CLI) monitor -p $(PORT) -c baudrate=115200
-
 # --- OBJECT BUILD ---
 
 $(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
@@ -137,7 +99,5 @@ $(OBJ_DIR)/%.o: %.cpp
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -rf $(ESP32_BUILD_DIR)
-	rm -rf $(ESP32_DATA_DIR)
 
 -include $(MAIN_OBJ:.o=.d) $(TEST_OBJ:.o=.d)

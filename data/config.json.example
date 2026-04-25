@@ -2,7 +2,7 @@
     "api": {
         "base_url": "http://localhost:8000",
         "api_key": "YOUR_API_KEY",
-        "pem_file": "certs/YOUR_CERT.pem",
+        "pem_file": "/YOUR_CERT.pem",
         "buffer" : {
             "in_memory": 128,
             "drain_rate_cap": 32,
@@ -10,7 +10,7 @@
         }
     },
     "forecast": {
-        "openmeteo_pem": "certs/openmeteo.pem",
+        "openmeteo_pem": "/openmeteo.pem",
         "update_interval_minutes": 60
     },
     "location": {

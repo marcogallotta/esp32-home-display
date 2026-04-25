@@ -13,7 +13,7 @@ bool readTextFile(const std::string& path, std::string& out) {
         resolved.erase(0, 1);
     }
 
-    std::ifstream fin(resolved);
+    std::ifstream fin("data/" + resolved);
     if (!fin) {
         return false;
     }
