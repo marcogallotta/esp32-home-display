@@ -3,7 +3,6 @@
 #include <utility>
 
 #include "../log.h"
-#include "client.h"
 #include "dropped_log.h"
 
 namespace api {
@@ -192,7 +191,7 @@ BufferDrainResult maybeDrainBuffer(
     BufferState& buffer,
     std::time_t now,
     const ApiBufferConfig& config,
-    const Client& client
+    const ApiPoster& poster
 ) {
     BufferDrainResult result;
 
@@ -220,7 +219,7 @@ BufferDrainResult maybeDrainBuffer(
         }
 
         BufferedRequest& request = buffer.requests.front();
-        const network::HttpResponse response = client.postJson(request.path, request.body);
+        const network::HttpResponse response = poster.postJson(request.path, request.body);
         result.attempted += 1;
 
         const BufferDecision decision = decideBufferedResponse(request, response);

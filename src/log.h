@@ -12,6 +12,7 @@ enum class LogLevel {
 };
 
 const char* logLevelName(LogLevel level);
+void setLogMuted(bool muted);
 void logLine(LogLevel level, const std::string& msg);
 
 std::string transportResultName(network::TransportResult result);
