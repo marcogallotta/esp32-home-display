@@ -60,6 +60,7 @@ MAIN_SRC := \
 TEST_SRC := \
 	tests/api_buffer.cpp \
 	tests/api_disk_buffer.cpp \
+	tests/api_payloads.cpp \
 	tests/config.cpp \
 	tests/main.cpp \
 	tests/salah_state.cpp \
