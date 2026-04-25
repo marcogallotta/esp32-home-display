@@ -4,3 +4,6 @@
 [submodule "lib/ArduinoJson"]
 	path = third_party/ArduinoJson
 	url = git@github.com:bblanchon/ArduinoJson.git
+[submodule "third_party/doctest"]
+	path = third_party/doctest
+	url = https://github.com/doctest/doctest.git
