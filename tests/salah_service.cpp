@@ -1,19 +1,17 @@
 #include "config.h"
-#include "helpers.h"
 #include "salah/service.h"
 
 #include "doctest/doctest.h"
 #include "PrayerTimes.h"
 
+#include <string>
+
 namespace {
 
 using salah::Schedule;
 
-Config makeParisConfig(const std::string& dstRule) {
+Config makeParisConfig(const std::string& dstRule = "eu", bool hanafiAsr = false) {
     Config config;
-
-    config.forecast.openmeteoPem = "";
-    config.forecast.updateIntervalMinutes = 60;
 
     config.location.latitude = 48.9f;
     config.location.longitude = 2.3f;
@@ -23,10 +21,7 @@ Config makeParisConfig(const std::string& dstRule) {
     config.salah.timezoneOffsetMinutes = 60;
     config.salah.dstRule = dstRule;
     config.salah.asrMakruhMinutes = 20;
-    config.salah.hanafiAsr = true;
-
-    config.wifi.ssid = "";
-    config.wifi.password = "";
+    config.salah.hanafiAsr = hanafiAsr;
 
     return config;
 }
@@ -48,144 +43,137 @@ Schedule buildDirectSchedule(int day, int month, int year, int dstMinutes, const
     pt.setAsrMethod(config.salah.hanafiAsr ? HANAFI : SHAFII);
 
     const PrayerTimesResult result = pt.calculateWithOffset(day, month, year, dstMinutes);
-    assertTrue(result.valid, "direct PrayerTimes result should be valid");
-
-    const int fajrMin = toMinutes(result.fajr);
-    const int sunriseMin = toMinutes(result.sunrise);
-    const int duhaMin = toMinutes(result.duha);
-    const int dahwaEKubraMin = toMinutes(result.dahwaEKubra);
-    const int zuhrMin = toMinutes(result.dhuhr);
-    const int asrMin = toMinutes(result.asr);
-    const int asrMakruhMin = toMinutes(result.maghrib - config.salah.asrMakruhMinutes);
-    const int maghribMin = toMinutes(result.maghrib);
-    const int ishaMin = toMinutes(result.isha);
+    REQUIRE(result.valid);
 
     return Schedule{
-        fajrMin,
-        sunriseMin,
-        duhaMin,
-        dahwaEKubraMin,
-        zuhrMin,
-        asrMin,
-        asrMakruhMin,
-        maghribMin,
-        ishaMin,
+        toMinutes(result.fajr),
+        toMinutes(result.sunrise),
+        toMinutes(result.duha),
+        toMinutes(result.dahwaEKubra),
+        toMinutes(result.dhuhr),
+        toMinutes(result.asr),
+        toMinutes(result.maghrib - config.salah.asrMakruhMinutes),
+        toMinutes(result.maghrib),
+        toMinutes(result.isha),
     };
 }
 
-Schedule buildServiceScheduleOrFail(int day, int month, int year, const Config& config) {
+Schedule buildServiceSchedule(int day, int month, int year, const Config& config) {
     Schedule out{};
-    const bool ok = salah::buildSchedule(day, month, year, config, out);
-    assertTrue(ok, "buildSchedule should succeed");
+    REQUIRE(salah::buildSchedule(day, month, year, config, out));
     return out;
 }
 
-void assertScheduleEqual(const Schedule& actual, const Schedule& expected, const char* context) {
-    assertEqual(actual.fajr, expected.fajr, std::string(context) + ": fajr mismatch");
-    assertEqual(actual.sunrise, expected.sunrise, std::string(context) + ": sunrise mismatch");
-    assertEqual(actual.duha, expected.duha, std::string(context) + ": duha mismatch");
-    assertEqual(actual.dahwaEKubra, expected.dahwaEKubra, std::string(context) + ": dahwaEKubra mismatch");
-    assertEqual(actual.zuhr, expected.zuhr, std::string(context) + ": zuhr mismatch");
-    assertEqual(actual.asr, expected.asr, std::string(context) + ": asr mismatch");
-    assertEqual(actual.asrMakruh, expected.asrMakruh, std::string(context) + ": asrMakruh mismatch");
-    assertEqual(actual.maghrib, expected.maghrib, std::string(context) + ": maghrib mismatch");
-    assertEqual(actual.isha, expected.isha, std::string(context) + ": isha mismatch");
+void checkScheduleEquals(const Schedule& actual, const Schedule& expected) {
+    CHECK_EQ(actual.fajr, expected.fajr);
+    CHECK_EQ(actual.sunrise, expected.sunrise);
+    CHECK_EQ(actual.duha, expected.duha);
+    CHECK_EQ(actual.dahwaEKubra, expected.dahwaEKubra);
+    CHECK_EQ(actual.zuhr, expected.zuhr);
+    CHECK_EQ(actual.asr, expected.asr);
+    CHECK_EQ(actual.asrMakruh, expected.asrMakruh);
+    CHECK_EQ(actual.maghrib, expected.maghrib);
+    CHECK_EQ(actual.isha, expected.isha);
 }
 
-void assertStrictlyOrdered(const Schedule& s, const char* context) {
-    assertTrue(s.fajr < s.sunrise, std::string(context) + ": expected fajr < sunrise");
-    assertTrue(s.sunrise < s.duha, std::string(context) + ": expected sunrise < duha");
-    assertTrue(s.duha < s.dahwaEKubra, std::string(context) + ": expected duha < dahwaEKubra");
-    assertTrue(s.dahwaEKubra < s.zuhr, std::string(context) + ": expected dahwaEKubra < zuhr");
-    assertTrue(s.zuhr < s.asr, std::string(context) + ": expected zuhr < asr");
-    assertTrue(s.asr < s.asrMakruh, std::string(context) + ": expected asr < asrMakruh");
-    assertTrue(s.asrMakruh < s.maghrib, std::string(context) + ": expected asrMakruh < maghrib");
-    assertTrue(s.maghrib < s.isha, std::string(context) + ": expected maghrib < isha");
+void checkScheduleIsStrictlyOrdered(const Schedule& s) {
+    CHECK_LT(s.fajr, s.sunrise);
+    CHECK_LT(s.sunrise, s.duha);
+    CHECK_LT(s.duha, s.dahwaEKubra);
+    CHECK_LT(s.dahwaEKubra, s.zuhr);
+    CHECK_LT(s.zuhr, s.asr);
+    CHECK_LT(s.asr, s.asrMakruh);
+    CHECK_LT(s.asrMakruh, s.maghrib);
+    CHECK_LT(s.maghrib, s.isha);
 }
 
-TEST_CASE("testBasicSummerScheduleIsOrdered") {
-    const Config config = makeParisConfig("eu");
-    const Schedule s = buildServiceScheduleOrFail(4, 4, 2026, config);
-    assertStrictlyOrdered(s, "summer schedule");
-}
-
-TEST_CASE("testBasicWinterScheduleIsOrdered") {
-    const Config config = makeParisConfig("eu");
-    const Schedule s = buildServiceScheduleOrFail(15, 1, 2026, config);
-    assertStrictlyOrdered(s, "winter schedule");
-}
-
-TEST_CASE("testServiceMatchesDirectWhenDstOffInWinter") {
-    const Config config = makeParisConfig("eu");
-    const Schedule actual = buildServiceScheduleOrFail(15, 1, 2026, config);
-    const Schedule expected = buildDirectSchedule(15, 1, 2026, 0, config);
-    assertScheduleEqual(actual, expected, "winter direct comparison");
-}
-
-TEST_CASE("testServiceMatchesDirectWhenDstOnInSummer") {
-    const Config config = makeParisConfig("eu");
-    const Schedule actual = buildServiceScheduleOrFail(4, 4, 2026, config);
-    const Schedule expected = buildDirectSchedule(4, 4, 2026, 60, config);
-    assertScheduleEqual(actual, expected, "summer direct comparison");
-}
-
-TEST_CASE("testDstStartsOnLastSundayOfMarch") {
-    const Config config = makeParisConfig("eu");
-    const Schedule before = buildServiceScheduleOrFail(28, 3, 2026, config);
-    const Schedule start = buildServiceScheduleOrFail(29, 3, 2026, config);
-
-    const int zuhrDelta = start.zuhr - before.zuhr;
-    const int fajrDelta = start.fajr - before.fajr;
-
-    assertInRange(zuhrDelta, 55, 65, "DST start should shift zuhr by about +60 minutes");
-    assertInRange(fajrDelta, 54, 66, "DST start should shift fajr by about +60 minutes");
-}
-
-TEST_CASE("testDstEndsOnLastSundayOfOctober") {
-    const Config config = makeParisConfig("eu");
-    const Schedule before = buildServiceScheduleOrFail(24, 10, 2026, config);
-    const Schedule end = buildServiceScheduleOrFail(25, 10, 2026, config);
-
-    const int zuhrDelta = end.zuhr - before.zuhr;
-    const int fajrDelta = end.fajr - before.fajr;
-
-    assertInRange(zuhrDelta, -65, -55, "DST end should shift zuhr by about -60 minutes");
-    assertInRange(fajrDelta, -66, -54, "DST end should shift fajr by about -60 minutes");
-}
-
-TEST_CASE("testNoDstConfigDoesNotApplyDstAtMarchBoundary") {
-    const Config config = makeParisConfig("none");
-    const Schedule actual = buildServiceScheduleOrFail(29, 3, 2026, config);
-    const Schedule expected = buildDirectSchedule(29, 3, 2026, 0, config);
-    assertScheduleEqual(actual, expected, "no DST config on March boundary");
-}
-
-TEST_CASE("testNoDstConfigDoesNotApplyDstAtOctoberBoundary") {
-    const Config config = makeParisConfig("none");
-    const Schedule actual = buildServiceScheduleOrFail(25, 10, 2026, config);
-    const Schedule expected = buildDirectSchedule(25, 10, 2026, 0, config);
-    assertScheduleEqual(actual, expected, "no DST config on October boundary");
-}
-
-TEST_CASE("testLeapYearDateBuilds") {
-    const Config config = makeParisConfig("eu");
-    const Schedule s = buildServiceScheduleOrFail(29, 2, 2028, config);
-    assertStrictlyOrdered(s, "leap year schedule");
-}
-
-TEST_CASE("testInvalidMonthFails") {
-    const Config config = makeParisConfig("eu");
-
-    Schedule out{};
-    const bool ok = salah::buildSchedule(1, 0, 2026, config, out);
-    assertTrue(!ok, "invalid month should fail");
-}
-
-TEST_CASE("testAnotherRepresentativeDateMatchesDirect") {
-    const Config config = makeParisConfig("eu");
-    const Schedule actual = buildServiceScheduleOrFail(1, 11, 2026, config);
-    const Schedule expected = buildDirectSchedule(1, 11, 2026, 0, config);
-    assertScheduleEqual(actual, expected, "post-DST direct comparison");
+void checkServiceMatchesDirect(int day, int month, int year, int expectedDstMinutes, const Config& config) {
+    const Schedule actual = buildServiceSchedule(day, month, year, config);
+    const Schedule expected = buildDirectSchedule(day, month, year, expectedDstMinutes, config);
+    checkScheduleEquals(actual, expected);
 }
 
 } // namespace
+
+TEST_CASE("salah service builds ordered schedules for representative dates") {
+    SUBCASE("winter") {
+        checkScheduleIsStrictlyOrdered(buildServiceSchedule(15, 1, 2026, makeParisConfig()));
+    }
+
+    SUBCASE("summer") {
+        checkScheduleIsStrictlyOrdered(buildServiceSchedule(4, 4, 2026, makeParisConfig()));
+    }
+
+    SUBCASE("leap day") {
+        checkScheduleIsStrictlyOrdered(buildServiceSchedule(29, 2, 2028, makeParisConfig()));
+    }
+}
+
+TEST_CASE("salah service matches direct PrayerTimes calculation") {
+    SUBCASE("winter has no DST offset") {
+        checkServiceMatchesDirect(15, 1, 2026, 0, makeParisConfig("eu"));
+    }
+
+    SUBCASE("summer applies EU DST offset") {
+        checkServiceMatchesDirect(4, 4, 2026, 60, makeParisConfig("eu"));
+    }
+
+    SUBCASE("after EU DST ends has no DST offset") {
+        checkServiceMatchesDirect(1, 11, 2026, 0, makeParisConfig("eu"));
+    }
+
+    SUBCASE("dst_rule none never applies DST at March boundary") {
+        checkServiceMatchesDirect(29, 3, 2026, 0, makeParisConfig("none"));
+    }
+
+    SUBCASE("dst_rule none never applies DST at October boundary") {
+        checkServiceMatchesDirect(25, 10, 2026, 0, makeParisConfig("none"));
+    }
+}
+
+TEST_CASE("salah service passes Asr method from config") {
+    SUBCASE("Shafii Asr when hanafi_asr is false") {
+        checkServiceMatchesDirect(4, 4, 2026, 60, makeParisConfig("eu", false));
+    }
+
+    SUBCASE("Hanafi Asr when hanafi_asr is true") {
+        checkServiceMatchesDirect(4, 4, 2026, 60, makeParisConfig("eu", true));
+    }
+
+    SUBCASE("Hanafi Asr is later than Shafii Asr") {
+        const Schedule shafii = buildServiceSchedule(4, 4, 2026, makeParisConfig("eu", false));
+        const Schedule hanafi = buildServiceSchedule(4, 4, 2026, makeParisConfig("eu", true));
+
+        CHECK_GT(hanafi.asr, shafii.asr);
+        CHECK_GT(hanafi.asrMakruh, hanafi.asr);
+    }
+}
+
+TEST_CASE("salah service applies EU DST on boundary days") {
+    SUBCASE("last Sunday of March shifts schedule about one hour later") {
+        const Schedule before = buildServiceSchedule(28, 3, 2026, makeParisConfig("eu"));
+        const Schedule start = buildServiceSchedule(29, 3, 2026, makeParisConfig("eu"));
+
+        CHECK_GE(start.zuhr - before.zuhr, 55);
+        CHECK_LE(start.zuhr - before.zuhr, 65);
+        CHECK_GE(start.fajr - before.fajr, 54);
+        CHECK_LE(start.fajr - before.fajr, 66);
+    }
+
+    SUBCASE("last Sunday of October shifts schedule about one hour earlier") {
+        const Schedule before = buildServiceSchedule(24, 10, 2026, makeParisConfig("eu"));
+        const Schedule end = buildServiceSchedule(25, 10, 2026, makeParisConfig("eu"));
+
+        CHECK_GE(end.zuhr - before.zuhr, -65);
+        CHECK_LE(end.zuhr - before.zuhr, -55);
+        CHECK_GE(end.fajr - before.fajr, -66);
+        CHECK_LE(end.fajr - before.fajr, -54);
+    }
+}
+
+TEST_CASE("salah service rejects invalid dates") {
+    Config config = makeParisConfig();
+    Schedule out{};
+
+    CHECK_FALSE(salah::buildSchedule(1, 0, 2026, config, out));
+}
