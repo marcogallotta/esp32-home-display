@@ -7,7 +7,7 @@ CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
 
 LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 
-BUILD_DIR := build
+BUILD_DIR := .build_desktop
 OBJ_DIR := $(BUILD_DIR)/obj
 
 MAIN_TARGET := $(BUILD_DIR)/main
