@@ -108,7 +108,8 @@ bool readAll(File& file, void* data, std::size_t len) {
 }
 
 bool readIndexRecord(const char* path, IndexRecord& out) {
-    if (!LittleFS.exists(path)) {
+    struct stat st {};
+    if (stat(path, &st) != 0) {
         return false;
     }
 
