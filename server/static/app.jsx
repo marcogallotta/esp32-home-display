@@ -10,6 +10,8 @@ function App() {
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [sensorError, setSensorError] = React.useState("");
   const [historyError, setHistoryError] = React.useState("");
+  const [latestPollError, setLatestPollError] = React.useState("");
+  const [lastLatestPollAt, setLastLatestPollAt] = React.useState(null);
   const [rangeWindow, setRangeWindow] = React.useState(window.sensorModel.buildRangeWindow("24h"));
 
   const tempCanvas = React.useRef(null);
@@ -24,11 +26,7 @@ function App() {
   const vpdChart = React.useRef(null);
   const xiaomiChart = React.useRef(null);
 
-  const sensorGroups = React.useMemo(
-    () => window.sensorModel.splitByType(sensors),
-    [sensors]
-  );
-
+  const sensorGroups = React.useMemo(() => window.sensorModel.splitByType(sensors), [sensors]);
   const switchbotSensors = sensorGroups.switchbot;
   const xiaomiSensors = sensorGroups.xiaomi;
 
@@ -41,7 +39,6 @@ function App() {
     async function loadSensors() {
       setLoadingSensors(true);
       setSensorError("");
-
       try {
         const loadedSensors = await window.api.fetchSensors();
         setSensors(loadedSensors);
@@ -60,7 +57,6 @@ function App() {
 
     async function loadHistory() {
       const nextRangeWindow = window.sensorModel.buildRangeWindow(range);
-
       setLoadingHistory(true);
       setHistoryError("");
 
@@ -84,21 +80,54 @@ function App() {
     loadHistory();
   }, [range, sensors]);
 
+  React.useEffect(() => {
+    if (sensors.length === 0) return;
+
+    let cancelled = false;
+
+    async function pollLatest() {
+      try {
+        const latestEntries = await Promise.all(
+          sensors.map(async (sensor) => {
+            const latest = await window.api.fetchLatestSensorReading(sensor.id);
+            return [sensor.id, latest];
+          })
+        );
+
+        if (cancelled) return;
+
+        setHistoryBySensorId((prev) => {
+          const next = { ...prev };
+          for (const [sensorId, latest] of latestEntries) {
+            if (!latest) continue;
+            next[sensorId] = window.sensorModel.mergeLatestIntoRows(next[sensorId] || [], latest);
+          }
+          return next;
+        });
+
+        setLatestPollError("");
+        setLastLatestPollAt(new Date());
+      } catch (err) {
+        if (!cancelled) setLatestPollError(String(err));
+      }
+    }
+
+    const intervalId = setInterval(pollLatest, window.CONFIG.latestPollMs);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [sensors]);
+
   const switchbotSummary = React.useMemo(() => {
     return switchbotSensors.map((sensor) =>
-      window.sensorModel.buildSwitchbotSummary(
-        sensor,
-        historyBySensorId[sensor.id] || []
-      )
+      window.sensorModel.buildSwitchbotSummary(sensor, historyBySensorId[sensor.id] || [])
     );
   }, [switchbotSensors, historyBySensorId]);
 
   const xiaomiSummary = React.useMemo(() => {
     return xiaomiSensors.map((sensor) =>
-      window.sensorModel.buildXiaomiSummary(
-        sensor,
-        historyBySensorId[sensor.id] || []
-      )
+      window.sensorModel.buildXiaomiSummary(sensor, historyBySensorId[sensor.id] || [])
     );
   }, [xiaomiSensors, historyBySensorId]);
 
@@ -111,10 +140,7 @@ function App() {
       window.chartFactory.timeSeriesDataset(
         sensor.name,
         historyBySensorId[sensor.id] || [],
-        (row) =>
-          row.temperature_c == null
-            ? null
-            : window.metrics.round1(row.temperature_c)
+        (row) => row.temperature_c == null ? null : window.metrics.round1(row.temperature_c)
       )
     );
   }, [switchbotSensorsToPlot, historyBySensorId]);
@@ -124,7 +150,7 @@ function App() {
       window.chartFactory.timeSeriesDataset(
         sensor.name,
         historyBySensorId[sensor.id] || [],
-        (row) => (row.humidity_pct == null ? null : Math.round(row.humidity_pct))
+        (row) => row.humidity_pct == null ? null : Math.round(row.humidity_pct)
       )
     );
   }, [switchbotSensorsToPlot, historyBySensorId]);
@@ -134,10 +160,7 @@ function App() {
       window.chartFactory.timeSeriesDataset(
         sensor.name,
         historyBySensorId[sensor.id] || [],
-        (row) =>
-          window.metrics.round1(
-            window.metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct)
-          )
+        (row) => window.metrics.round1(window.metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct))
       )
     );
   }, [switchbotSensorsToPlot, historyBySensorId]);
@@ -147,10 +170,7 @@ function App() {
       window.chartFactory.timeSeriesDataset(
         sensor.name,
         historyBySensorId[sensor.id] || [],
-        (row) =>
-          window.metrics.round1(
-            window.metrics.calcVpd(row.temperature_c, row.humidity_pct)
-          )
+        (row) => window.metrics.round1(window.metrics.calcVpd(row.temperature_c, row.humidity_pct))
       )
     );
   }, [switchbotSensorsToPlot, historyBySensorId]);
@@ -159,7 +179,6 @@ function App() {
     if (xiaomiSensors.length === 0) return [];
 
     const sensor = xiaomiSensors[0];
-
     return [
       window.chartFactory.timeSeriesDataset(
         `${sensor.name} ${xiaomiMetric.replaceAll("_", " ")}`,
@@ -170,23 +189,11 @@ function App() {
   }, [xiaomiSensors, historyBySensorId, xiaomiMetric]);
 
   React.useEffect(() => {
-    window.chartFactory.lineChart(
-      tempCanvas.current,
-      tempChart,
-      tempDatasets,
-      "°C",
-      rangeWindow
-    );
+    window.chartFactory.lineChart(tempCanvas.current, tempChart, tempDatasets, "°C", rangeWindow);
   }, [tempDatasets, rangeWindow]);
 
   React.useEffect(() => {
-    window.chartFactory.lineChart(
-      humidityCanvas.current,
-      humidityChart,
-      humidityDatasets,
-      "%",
-      rangeWindow
-    );
+    window.chartFactory.lineChart(humidityCanvas.current, humidityChart, humidityDatasets, "%", rangeWindow);
   }, [humidityDatasets, rangeWindow]);
 
   React.useEffect(() => {
@@ -194,14 +201,7 @@ function App() {
       window.chartFactory.destroy(absHumidityChart);
       return;
     }
-
-    window.chartFactory.lineChart(
-      absHumidityCanvas.current,
-      absHumidityChart,
-      absHumidityDatasets,
-      "g/m³",
-      rangeWindow
-    );
+    window.chartFactory.lineChart(absHumidityCanvas.current, absHumidityChart, absHumidityDatasets, "g/m³", rangeWindow);
   }, [showDerivedCharts, absHumidityDatasets, rangeWindow]);
 
   React.useEffect(() => {
@@ -209,14 +209,7 @@ function App() {
       window.chartFactory.destroy(vpdChart);
       return;
     }
-
-    window.chartFactory.lineChart(
-      vpdCanvas.current,
-      vpdChart,
-      vpdDatasets,
-      "kPa",
-      rangeWindow
-    );
+    window.chartFactory.lineChart(vpdCanvas.current, vpdChart, vpdDatasets, "kPa", rangeWindow);
   }, [showDerivedCharts, vpdDatasets, rangeWindow]);
 
   React.useEffect(() => {
@@ -224,14 +217,7 @@ function App() {
       window.chartFactory.destroy(xiaomiChart);
       return;
     }
-
-    window.chartFactory.lineChart(
-      xiaomiCanvas.current,
-      xiaomiChart,
-      xiaomiDatasets,
-      xiaomiMetric,
-      rangeWindow
-    );
+    window.chartFactory.lineChart(xiaomiCanvas.current, xiaomiChart, xiaomiDatasets, xiaomiMetric, rangeWindow);
   }, [xiaomiDatasets, xiaomiMetric, rangeWindow]);
 
   const loading = loadingSensors || loadingHistory;
@@ -243,6 +229,11 @@ function App() {
         <div>
           <h1>Sensor Overview</h1>
           <p className="sub">Cheap insight first. Decisions later.</p>
+          <div className="status-line">
+            Latest polling: every {Math.round(window.CONFIG.latestPollMs / 1000)}s
+            {lastLatestPollAt ? ` · last update ${window.metrics.formatAgo(lastLatestPollAt.toISOString())}` : ""}
+            {latestPollError ? ` · latest poll failed` : ""}
+          </div>
         </div>
 
         <div className="controls">
@@ -258,10 +249,7 @@ function App() {
             ))}
           </div>
 
-          <select
-            value={selectedSensorId}
-            onChange={(e) => setSelectedSensorId(e.target.value)}
-          >
+          <select value={selectedSensorId} onChange={(e) => setSelectedSensorId(e.target.value)}>
             <option value="all">All SwitchBot</option>
             {switchbotSensors.map((sensor) => (
               <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
@@ -286,6 +274,7 @@ function App() {
       </div>
 
       {error && <div className="card error-card">{error}</div>}
+      {latestPollError && <div className="card error-card">Latest poll error: {latestPollError}</div>}
       {loading && <div className="card loading-card">Loading…</div>}
 
       <div className="section-title">SwitchBot</div>
@@ -296,11 +285,7 @@ function App() {
             sensor={sensor}
             kind="switchbot"
             selected={selectedSensorId === sensor.id}
-            onClick={() =>
-              setSelectedSensorId(
-                selectedSensorId === sensor.id ? "all" : sensor.id
-              )
-            }
+            onClick={() => setSelectedSensorId(selectedSensorId === sensor.id ? "all" : sensor.id)}
             clickable={true}
           />
         ))}
@@ -322,21 +307,18 @@ function App() {
       <div className="charts">
         <window.ChartCard
           title="Temperature"
-          right={<div className="hint">Drag to zoom. Mouse wheel zooms. Hold Shift + drag to pan.</div>}
+          right={<div className="hint">Overlay view for SwitchBot sensors</div>}
           canvasRef={tempCanvas}
         />
 
         <window.ChartCard
           title="Humidity"
-          right={<div className="hint">Drag to zoom. Mouse wheel zooms. Hold Shift + drag to pan.</div>}
+          right={<div className="hint">Overlay view for SwitchBot sensors</div>}
           canvasRef={humidityCanvas}
         />
 
         <div className="toggle-row">
-          <button
-            className="ghost-btn"
-            onClick={() => setShowDerivedCharts((v) => !v)}
-          >
+          <button className="ghost-btn" onClick={() => setShowDerivedCharts((v) => !v)}>
             {showDerivedCharts ? "Hide derived charts" : "Show derived charts"}
           </button>
         </div>
@@ -345,12 +327,12 @@ function App() {
           <>
             <window.ChartCard
               title="Absolute Humidity"
-              right={<div className="hint">Derived from air temp + RH. Drag to zoom.</div>}
+              right={<div className="hint">Derived from air temp + RH</div>}
               canvasRef={absHumidityCanvas}
             />
             <window.ChartCard
               title="Air VPD"
-              right={<div className="hint">Derived from air temp + RH. Drag to zoom.</div>}
+              right={<div className="hint">Derived from air temp + RH</div>}
               canvasRef={vpdCanvas}
             />
           </>
@@ -360,10 +342,7 @@ function App() {
           <window.ChartCard
             title="Xiaomi Detail"
             right={
-              <select
-                value={xiaomiMetric}
-                onChange={(e) => setXiaomiMetric(e.target.value)}
-              >
+              <select value={xiaomiMetric} onChange={(e) => setXiaomiMetric(e.target.value)}>
                 <option value="moisture_pct">Moisture</option>
                 <option value="light_lux">Lux</option>
                 <option value="conductivity_us_cm">Conductivity</option>

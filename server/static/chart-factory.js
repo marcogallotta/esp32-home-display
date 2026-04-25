@@ -15,14 +15,6 @@ window.chartFactory = {
     }
   },
 
-  resetZoom(chartRefs) {
-    chartRefs.forEach((chartRef) => {
-      if (chartRef.current && typeof chartRef.current.resetZoom === "function") {
-        chartRef.current.resetZoom();
-      }
-    });
-  },
-
   lineChart(canvas, chartRef, datasets, yLabel, rangeWindow) {
     if (!canvas) return;
 
@@ -34,21 +26,11 @@ window.chartFactory = {
       plugins: {
         legend: { display: true },
         zoom: {
-          pan: {
-            enabled: true,
-            mode: "x",
-            modifierKey: "shift",
-          },
+          pan: { enabled: true, mode: "x", modifierKey: "shift" },
           zoom: {
-            wheel: {
-              enabled: true,
-            },
-            pinch: {
-              enabled: true,
-            },
-            drag: {
-              enabled: true,
-            },
+            wheel: { enabled: true },
+            pinch: { enabled: true },
+            drag: { enabled: true },
             mode: "x",
           },
         },
@@ -60,11 +42,7 @@ window.chartFactory = {
     };
 
     if (!chartRef.current) {
-      chartRef.current = new Chart(canvas, {
-        type: "line",
-        data: { datasets },
-        options,
-      });
+      chartRef.current = new Chart(canvas, { type: "line", data: { datasets }, options });
       return;
     }
 
@@ -83,5 +61,13 @@ window.chartFactory = {
       pointRadius: 0,
       tension: 0.15,
     };
+  },
+
+  resetZoom(chartRefs) {
+    chartRefs.forEach((chartRef) => {
+      if (chartRef.current && typeof chartRef.current.resetZoom === "function") {
+        chartRef.current.resetZoom();
+      }
+    });
   },
 };

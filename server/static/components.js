@@ -48,9 +48,7 @@ function SensorCard({ sensor, kind, selected, onClick, clickable = true }) {
             </div>
             <div className="metric">
               <div className="metric-label">Lux</div>
-              <div className="metric-value">
-                {sensor.latestLux == null ? "—" : sensor.latestLux}
-              </div>
+              <div className="metric-value">{sensor.latestLux == null ? "—" : sensor.latestLux}</div>
             </div>
           </>
         )}

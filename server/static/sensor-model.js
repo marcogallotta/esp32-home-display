@@ -24,6 +24,17 @@ window.sensorModel = {
     return rows.slice().reverse();
   },
 
+  mergeLatestIntoRows(rows, latest) {
+    if (!latest) return rows;
+    const existingIndex = rows.findIndex((row) => row.timestamp === latest.timestamp);
+    if (existingIndex >= 0) {
+      const nextRows = rows.slice();
+      nextRows[existingIndex] = latest;
+      return nextRows;
+    }
+    return [...rows, latest];
+  },
+
   buildSwitchbotSummary(sensor, rows) {
     const latest = rows[rows.length - 1];
     const latestTemp = latest?.temperature_c ?? null;

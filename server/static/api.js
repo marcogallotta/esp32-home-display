@@ -26,4 +26,14 @@ window.api = {
       `/sensors/${encodeURIComponent(sensorId)}/readings?${params.toString()}`
     );
   },
+
+  async fetchLatestSensorReading(sensorId) {
+    const rows = await this.fetchSensorReadings(sensorId, {
+      startTs: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      endTs: new Date().toISOString(),
+      maxPoints: 1,
+    });
+
+    return rows.length ? rows[0] : null;
+  },
 };
