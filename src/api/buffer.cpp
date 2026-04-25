@@ -174,7 +174,8 @@ void logDrainPaused(
         ", " + response.error +
         ". Sent " + std::to_string(result.sent) +
         ", dropped " + std::to_string(result.dropped) +
-        ", remaining " + std::to_string(buffer.requests.size())
+        ", remaining RAM " + std::to_string(buffer.requests.size()) +
+        ", disk " + std::to_string(buffer.disk.count)
     );
 }
 
@@ -187,7 +188,8 @@ void logDrainSummary(const BufferDrainResult& result, const BufferState& buffer)
         LogLevel::Info,
         "Buffer drain complete: sent " + std::to_string(result.sent) +
         ", dropped " + std::to_string(result.dropped) +
-        ", remaining " + std::to_string(buffer.requests.size())
+        ", remaining RAM " + std::to_string(buffer.requests.size()) +
+        ", disk " + std::to_string(buffer.disk.count)
     );
 }
 
@@ -236,15 +238,14 @@ BufferDrainResult maybeDrainBuffer(
         return result;
     }
 
-    if (buffer.requests.empty()) {
+    if (buffer.requests.empty() && !hasDiskBacklog(buffer, store)) {
         return result;
     }
 
-    (void)store;
-
     logLine(
         LogLevel::Info,
-        "Draining API buffer: " + std::to_string(buffer.requests.size()) +
+        "Draining API buffer: RAM " + std::to_string(buffer.requests.size()) +
+        ", disk " + std::to_string(buffer.disk.count) +
         " queued"
     );
 
@@ -252,23 +253,73 @@ BufferDrainResult maybeDrainBuffer(
         now + static_cast<std::time_t>(config.drainRateTickS);
 
     for (int i = 0; i < config.drainRateCap; ++i) {
-        if (buffer.requests.empty()) {
+        if (!buffer.requests.empty()) {
+            BufferedRequest& request = buffer.requests.front();
+            const network::HttpResponse response = poster.postJson(request.path, request.body);
+            result.attempted += 1;
+
+            const BufferDecision decision = decideBufferedResponse(request, response);
+
+            if (decision == BufferDecision::Sent) {
+                buffer.requests.pop_front();
+                result.sent += 1;
+                continue;
+            }
+
+            if (decision == BufferDecision::KeepBuffered) {
+                buffer.nextDrainAllowedAtEpochS =
+                    now + static_cast<std::time_t>(config.drainRateTickS);
+
+                result.blockedByRetryableFailure = true;
+                logDrainPaused(request, response, result, buffer);
+                return result;
+            }
+
+            logDroppedBufferedRequest(request, response);
+            buffer.requests.pop_front();
+            result.dropped += 1;
+            continue;
+        }
+
+        if (!hasDiskBacklog(buffer, store)) {
             break;
         }
 
-        BufferedRequest& request = buffer.requests.front();
+        BufferedRequest request;
+        if (!disk_buffer::peek(buffer.disk, request, store)) {
+            logLine(LogLevel::Warn, "Dropping corrupt disk-buffered API request");
+            if (disk_buffer::dropFront(buffer.disk, store)) {
+                result.dropped += 1;
+                continue;
+            }
+            result.blockedByRetryableFailure = true;
+            return result;
+        }
+
+        const int timeoutRetryCount = request.timeoutRetryCount;
+        const int tlsRetryCount = request.tlsRetryCount;
         const network::HttpResponse response = poster.postJson(request.path, request.body);
         result.attempted += 1;
 
         const BufferDecision decision = decideBufferedResponse(request, response);
 
         if (decision == BufferDecision::Sent) {
-            buffer.requests.pop_front();
+            if (!disk_buffer::consume(buffer.disk, store)) {
+                result.blockedByRetryableFailure = true;
+                return result;
+            }
             result.sent += 1;
             continue;
         }
 
         if (decision == BufferDecision::KeepBuffered) {
+            if ((request.timeoutRetryCount != timeoutRetryCount ||
+                 request.tlsRetryCount != tlsRetryCount) &&
+                !disk_buffer::rewriteFront(buffer.disk, request, store)) {
+                result.blockedByRetryableFailure = true;
+                return result;
+            }
+
             buffer.nextDrainAllowedAtEpochS =
                 now + static_cast<std::time_t>(config.drainRateTickS);
 
@@ -278,7 +329,10 @@ BufferDrainResult maybeDrainBuffer(
         }
 
         logDroppedBufferedRequest(request, response);
-        buffer.requests.pop_front();
+        if (!disk_buffer::dropFront(buffer.disk, store)) {
+            result.blockedByRetryableFailure = true;
+            return result;
+        }
         result.dropped += 1;
     }
 
