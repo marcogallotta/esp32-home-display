@@ -6,13 +6,13 @@
 struct ForecastConfig {
     std::string openmeteoPemFile;
     std::string openmeteoPem;
-    int updateIntervalMinutes;
+    int updateIntervalMinutes = 30;
 };
 
 struct ApiBufferConfig {
-    int inMemory;
-    int drainRateCap;
-    int drainRateTickS;
+    int inMemory = 32;
+    int drainRateCap = 4;
+    int drainRateTickS = 5;
 };
 
 struct ApiConfig {
@@ -37,10 +37,10 @@ struct LocationConfig {
 struct SalahConfig {
     int timezoneOffsetMinutes;
     // "eu" for European rules, "none" for no adjustments.
-    std::string dstRule;
+    std::string dstRule = "none";
     // Makruh time before Maghrib.
-    int asrMakruhMinutes;
-    bool hanafiAsr;
+    int asrMakruhMinutes = 20;
+    bool hanafiAsr = false;
 };
 
 struct SwitchbotSensorConfig {
@@ -67,7 +67,7 @@ struct XiaomiSensorConfig {
 };
 
 struct XiaomiConfig {
-    int updateIntervalMinutes;
+    int updateIntervalMinutes = 60;
     std::vector<XiaomiSensorConfig> sensors;
 };
 

@@ -2,16 +2,10 @@
     "api": {
         "base_url": "http://localhost:8000",
         "api_key": "YOUR_API_KEY",
-        "pem_file": "certs/YOUR_CERT.pem",
-        "buffer" : {
-            "in_memory": 128,
-            "drain_rate_cap": 32,
-            "drain_rate_tick_s": 5
-        }
+        "pem_file": "/YOUR_CERT.pem"
     },
     "forecast": {
-        "openmeteo_pem": "certs/openmeteo.pem",
-        "update_interval_minutes": 60
+        "openmeteo_pem_file": "/openmeteo.pem"
     },
     "location": {
         "latitude": 48.9,
@@ -21,9 +15,7 @@
     },
     "salah": {
         "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 20,
-        "hanafi_asr": true
+        "dst_rule": "eu"
     },
     "switchbot": {
         "sensors": [

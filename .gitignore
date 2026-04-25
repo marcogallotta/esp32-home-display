@@ -1,11 +1,12 @@
+.build_coverage
+.build_desktop
+.pio
 .vscode
-build
-certs/laptop.pem
-config.json
+data/laptop.pem
+data/config.json
 esp32-build
 esp32-data
 flash_spiffs.bin
-mkspiffs
 otadata.bin
 partition_table.bin
 server/.env

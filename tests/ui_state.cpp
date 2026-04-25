@@ -1,8 +1,10 @@
 #include "state.h"
 #include "ui/state.h"
 
-#include "helpers.h"
+#include "doctest/doctest.h"
 #include "salah/types.h"
+
+#include <cstddef>
 
 namespace {
 
@@ -47,135 +49,136 @@ State makeBaseState() {
     return state;
 }
 
-void assertNoSensorRowsDirty(const DirtyRegions& dirty) {
+void checkNoSensorRowsDirty(const DirtyRegions& dirty) {
     for (std::size_t i = 0; i < dirty.sensorRows.size(); ++i) {
-        assertTrue(!dirty.sensorRows[i], "expected sensor row not dirty");
+        CAPTURE(i);
+        CHECK_FALSE(dirty.sensorRows[i]);
     }
 }
 
-void testDisplayTempRounds() {
-    assertEqual(displayTemp(21.2f), 21, "21.2 should round to 21");
-    assertEqual(displayTemp(21.5f), 22, "21.5 should round to 22");
-    assertEqual(displayTemp(-1.5f), -2, "-1.5 should round to -2");
+TEST_CASE("display temperature rounds to nearest integer") {
+    CHECK_EQ(displayTemp(21.2f), 21);
+    CHECK_EQ(displayTemp(21.5f), 22);
+    CHECK_EQ(displayTemp(-1.5f), -2);
 }
 
-void testIdenticalStatesProduceNoDirtyRegions() {
+TEST_CASE("identical states do not mark any region dirty") {
     const State previous = makeBaseState();
     const State current = previous;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
-    assertTrue(!dirty.salahName, "salahName should not be dirty");
-    assertTrue(!dirty.minutes, "minutes should not be dirty");
-    assertTrue(!dirty.sensorsAny, "sensorsAny should not be dirty");
-    assertTrue(!dirty.forecast, "forecast should not be dirty");
-    assertEqual(dirty.sensorRows.size(), std::size_t(2), "sensor row count should match");
-    assertNoSensorRowsDirty(dirty);
+    CHECK_FALSE(dirty.salahName);
+    CHECK_FALSE(dirty.minutes);
+    CHECK_FALSE(dirty.sensorsAny);
+    CHECK_FALSE(dirty.forecast);
+    CHECK_EQ(dirty.sensorRows.size(), std::size_t{2});
+    checkNoSensorRowsDirty(dirty);
 }
 
-void testSalahNameDirtyWhenCurrentChanges() {
-    const State previous = makeBaseState();
-    State current = previous;
-    current.salah.current = salah::Phase::Asr;
+TEST_CASE("salah phase and minute changes dirty only their own regions") {
+    SUBCASE("current salah phase changes") {
+        const State previous = makeBaseState();
+        State current = previous;
+        current.salah.current = salah::Phase::Asr;
 
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
-    assertTrue(dirty.salahName, "salahName should be dirty");
-    assertTrue(!dirty.minutes, "minutes should not be dirty");
+        CHECK(dirty.salahName);
+        CHECK_FALSE(dirty.minutes);
+    }
+
+    SUBCASE("remaining minutes change") {
+        const State previous = makeBaseState();
+        State current = previous;
+        current.salah.minutesRemaining = 41;
+
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
+
+        CHECK_FALSE(dirty.salahName);
+        CHECK(dirty.minutes);
+    }
 }
 
-void testMinutesDirtyWhenRemainingChanges() {
-    const State previous = makeBaseState();
-    State current = previous;
-    current.salah.minutesRemaining = 41;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(!dirty.salahName, "salahName should not be dirty");
-    assertTrue(dirty.minutes, "minutes should be dirty");
-}
-
-void testForecastDirtyWhenDayChanges() {
+TEST_CASE("forecast changes dirty the forecast region") {
     State previous = makeBaseState();
     State current = previous;
     current.forecast.days[1].weatherCode = 80;
 
     const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
-    assertTrue(dirty.forecast, "forecast should be dirty");
+    CHECK(dirty.forecast);
 }
 
-void testSingleSensorRowDirtyWhenHumidityChanges() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.switchbotSensors[0].reading.humidityPct = 56;
+TEST_CASE("sensor reading changes dirty only affected sensor rows") {
+    SUBCASE("humidity changes on first sensor") {
+        State previous = makeBaseState();
+        State current = previous;
+        current.switchbotSensors[0].reading.humidityPct = 56;
 
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
-    assertTrue(dirty.sensorsAny, "sensorsAny should be dirty");
-    assertTrue(dirty.sensorRows[0], "sensor row 0 should be dirty");
-    assertTrue(!dirty.sensorRows[1], "sensor row 1 should not be dirty");
+        REQUIRE_EQ(dirty.sensorRows.size(), std::size_t{2});
+        CHECK(dirty.sensorsAny);
+        CHECK(dirty.sensorRows[0]);
+        CHECK_FALSE(dirty.sensorRows[1]);
+    }
+
+    SUBCASE("reading appears on second sensor") {
+        State previous = makeBaseState();
+        State current = previous;
+        current.switchbotSensors[1].reading.temperatureC = 19.0f;
+        current.switchbotSensors[1].reading.humidityPct = 44;
+        current.switchbotSensors[1].reading.lastSeenEpochS = 1234;
+        current.switchbotSensors[1].reading.rssi = -70;
+
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
+
+        REQUIRE_EQ(dirty.sensorRows.size(), std::size_t{2});
+        CHECK(dirty.sensorsAny);
+        CHECK_FALSE(dirty.sensorRows[0]);
+        CHECK(dirty.sensorRows[1]);
+    }
+
+    SUBCASE("short name changes") {
+        State previous = makeBaseState();
+        State current = previous;
+        current.switchbotSensors[0].identity.shortName = "K";
+
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
+
+        REQUIRE_EQ(dirty.sensorRows.size(), std::size_t{2});
+        CHECK(dirty.sensorsAny);
+        CHECK(dirty.sensorRows[0]);
+        CHECK_FALSE(dirty.sensorRows[1]);
+    }
 }
 
-void testSingleSensorRowDirtyWhenReadingAppears() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.switchbotSensors[1].reading.temperatureC = 19.0f;
-    current.switchbotSensors[1].reading.humidityPct = 44;
-    current.switchbotSensors[1].reading.lastSeenEpochS = 1234;
-    current.switchbotSensors[1].reading.rssi = -70;
+TEST_CASE("sensor temperature changes only dirty rows when displayed value changes") {
+    SUBCASE("same rounded temperature does not dirty row") {
+        State previous = makeBaseState();
+        State current = previous;
+        current.switchbotSensors[0].reading.temperatureC = 21.49f;
 
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
-    assertTrue(dirty.sensorsAny, "sensorsAny should be dirty");
-    assertTrue(!dirty.sensorRows[0], "sensor row 0 should not be dirty");
-    assertTrue(dirty.sensorRows[1], "sensor row 1 should be dirty");
-}
+        REQUIRE_EQ(dirty.sensorRows.size(), std::size_t{2});
+        CHECK_FALSE(dirty.sensorsAny);
+        CHECK_FALSE(dirty.sensorRows[0]);
+    }
 
-void testSensorNotDirtyWhenTempRoundsSame() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.switchbotSensors[0].reading.temperatureC = 21.49f;
+    SUBCASE("different rounded temperature dirties row") {
+        State previous = makeBaseState();
+        State current = previous;
+        current.switchbotSensors[0].reading.temperatureC = 21.5f;
 
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
+        const DirtyRegions dirty = computeDirtyRegions(previous, current);
 
-    assertTrue(!dirty.sensorsAny, "sensorsAny should not be dirty");
-    assertTrue(!dirty.sensorRows[0], "sensor row 0 should not be dirty");
-}
-
-void testSensorDirtyWhenTempRoundsDifferently() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.switchbotSensors[0].reading.temperatureC = 21.5f;
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.sensorsAny, "sensorsAny should be dirty");
-    assertTrue(dirty.sensorRows[0], "sensor row 0 should be dirty");
-}
-
-void testSensorDirtyWhenShortNameChanges() {
-    State previous = makeBaseState();
-    State current = previous;
-    current.switchbotSensors[0].identity.shortName = "K";
-
-    const DirtyRegions dirty = computeDirtyRegions(previous, current);
-
-    assertTrue(dirty.sensorsAny, "sensorsAny should be dirty");
-    assertTrue(dirty.sensorRows[0], "sensor row 0 should be dirty");
+        REQUIRE_EQ(dirty.sensorRows.size(), std::size_t{2});
+        CHECK(dirty.sensorsAny);
+        CHECK(dirty.sensorRows[0]);
+        CHECK_FALSE(dirty.sensorRows[1]);
+    }
 }
 
 } // namespace
-
-void runUiStateTests() {
-    testDisplayTempRounds();
-    testIdenticalStatesProduceNoDirtyRegions();
-    testSalahNameDirtyWhenCurrentChanges();
-    testMinutesDirtyWhenRemainingChanges();
-    testForecastDirtyWhenDayChanges();
-    testSingleSensorRowDirtyWhenHumidityChanges();
-    testSingleSensorRowDirtyWhenReadingAppears();
-    testSensorNotDirtyWhenTempRoundsSame();
-    testSensorDirtyWhenTempRoundsDifferently();
-    testSensorDirtyWhenShortNameChanges();
-}

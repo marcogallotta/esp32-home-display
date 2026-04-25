@@ -1,3 +1,7 @@
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <ctime>
@@ -401,7 +405,15 @@ void run() {
     }
 }
 
-#ifndef ARDUINO
+#ifdef ARDUINO
+void setup() {
+    Serial.begin(115200);
+    run();
+}
+
+void loop() {
+}
+#else
 int main() {
     run();
     return 0;

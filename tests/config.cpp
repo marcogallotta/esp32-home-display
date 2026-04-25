@@ -1,482 +1,375 @@
 #include "config.h"
 
-#include "helpers.h"
+#include "doctest/doctest.h"
+#include "ArduinoJson.h"
+
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
-std::string validConfigJson() {
-    return R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": [
-            {
-                "mac": "AA:BB:CC:DD:EE:FF",
-                "name": "Living Room",
-                "short_name": "LR"
-            },
-            {
-                "mac": "11:22:33:44:55:66",
-                "name": "Bedroom",
-                "short_name": "BR"
-            }
-        ]
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": [
-            {
-                "mac": "AA:AA:AA:AA:AA:AA",
-                "name": "Plant 1",
-                "short_name": "P1"
-            },
-            {
-                "mac": "BB:BB:BB:BB:BB:BB",
-                "name": "Plant 2",
-                "short_name": "P2"
-            }
-        ]
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+constexpr const char* kExampleConfigPath = "data/config.json.example";
+
+std::string readFile(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("failed to open test fixture: " + path);
+    }
+
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+DynamicJsonDocument parseJson(const std::string& text) {
+    DynamicJsonDocument doc(8192);
+    const DeserializationError err = deserializeJson(doc, text);
+    if (err) {
+        throw std::runtime_error(std::string("failed to parse JSON fixture: ") + err.c_str());
+    }
+    return doc;
+}
+
+DynamicJsonDocument exampleConfig() {
+    return parseJson(readFile(kExampleConfigPath));
+}
+
+std::string toJson(const DynamicJsonDocument& doc) {
+    std::string out;
+    serializeJson(doc, out);
+    return out;
+}
+
+bool parses(const DynamicJsonDocument& doc, Config& config) {
+    return parseConfigText(toJson(doc), config, false);
+}
+
+void expectValid(const DynamicJsonDocument& doc) {
+    Config config;
+    CHECK(parses(doc, config));
+}
+
+void expectInvalid(const DynamicJsonDocument& doc) {
+    Config config;
+    CHECK_FALSE(parses(doc, config));
+}
+
+void removePath(DynamicJsonDocument& doc, const char* section, const char* key) {
+    doc[section].remove(key);
+}
+
+DynamicJsonDocument exampleWithoutOptionalFields() {
+    auto doc = exampleConfig();
+
+    removePath(doc, "forecast", "update_interval_minutes");
+    removePath(doc, "api", "buffer");
+    removePath(doc, "salah", "dst_rule");
+    removePath(doc, "salah", "asr_makruh_minutes");
+    removePath(doc, "salah", "hanafi_asr");
+    removePath(doc, "switchbot", "sensors");
+    removePath(doc, "xiaomi", "update_interval_minutes");
+    removePath(doc, "xiaomi", "sensors");
+
+    return doc;
+}
+
+JsonObject addSwitchbotSensor(DynamicJsonDocument& doc) {
+    JsonArray sensors;
+    if (doc["switchbot"]["sensors"].is<JsonArray>()) {
+        sensors = doc["switchbot"]["sensors"].as<JsonArray>();
+    } else {
+        sensors = doc["switchbot"].createNestedArray("sensors");
+    }
+
+    JsonObject sensor = sensors.createNestedObject();
+    sensor["mac"] = "AA:BB:CC:DD:EE:FF";
+    sensor["name"] = "Room 1";
+    sensor["short_name"] = "R1";
+    return sensor;
+}
+
+JsonObject addXiaomiSensor(DynamicJsonDocument& doc) {
+    JsonArray sensors;
+    if (doc["xiaomi"]["sensors"].is<JsonArray>()) {
+        sensors = doc["xiaomi"]["sensors"].as<JsonArray>();
+    } else {
+        sensors = doc["xiaomi"].createNestedArray("sensors");
+    }
+
+    JsonObject sensor = sensors.createNestedObject();
+    sensor["mac"] = "11:22:33:44:55:66";
+    sensor["name"] = "Plant 1";
+    sensor["short_name"] = "P1";
+    return sensor;
+}
+
+void checkDefaults(const Config& config) {
+    const Config defaults{};
+
+    CHECK_EQ(config.forecast.updateIntervalMinutes, defaults.forecast.updateIntervalMinutes);
+    CHECK_EQ(config.api.buffer.inMemory, defaults.api.buffer.inMemory);
+    CHECK_EQ(config.api.buffer.drainRateCap, defaults.api.buffer.drainRateCap);
+    CHECK_EQ(config.api.buffer.drainRateTickS, defaults.api.buffer.drainRateTickS);
+    CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
+    CHECK_EQ(config.salah.asrMakruhMinutes, defaults.salah.asrMakruhMinutes);
+    CHECK_EQ(config.salah.hanafiAsr, defaults.salah.hanafiAsr);
+    CHECK_EQ(config.xiaomi.updateIntervalMinutes, defaults.xiaomi.updateIntervalMinutes);
+    CHECK(config.switchbot.sensors.empty());
+    CHECK(config.xiaomi.sensors.empty());
+}
+
+TEST_CASE("config example is valid") {
+    expectValid(exampleConfig());
+}
+
+TEST_CASE("config uses defaults when optional fields are omitted") {
+    Config config;
+    REQUIRE(parses(exampleWithoutOptionalFields(), config));
+    checkDefaults(config);
+}
+
+TEST_CASE("config rejects malformed JSON") {
+    Config config;
+    CHECK_FALSE(parseConfigText(R"json({ "forecast": { "openmeteo_pem_file": "/openmeteo.pem", } })json",
+                                config,
+                                false));
+}
+
+TEST_CASE("config requires critical top-level sections") {
+    for (const char* section : {"forecast", "api", "location", "salah", "wifi"}) {
+        CAPTURE(section);
+        auto doc = exampleConfig();
+        doc.remove(section);
+        expectInvalid(doc);
     }
 }
-)json";
-}
 
-void testParseValidConfig() {
-    Config config;
-    const bool ok = parseConfigText(validConfigJson(), config, false);
+TEST_CASE("config requires critical leaf fields") {
+    struct Field {
+        const char* section;
+        const char* key;
+    };
 
-    assertTrue(ok, "valid config should parse");
+    const Field fields[] = {
+        {"forecast", "openmeteo_pem_file"},
+        {"api", "base_url"},
+        {"api", "api_key"},
+        {"api", "pem_file"},
+        {"location", "latitude"},
+        {"location", "longitude"},
+        {"location", "timezone"},
+        {"location", "timezone_long"},
+        {"salah", "timezone_offset_minutes"},
+        {"wifi", "ssid"},
+        {"wifi", "password"},
+    };
 
-    assertEqual(config.forecast.openmeteoPem,
-                std::string("-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"),
-                "forecast pem should match");
-    assertEqual(config.forecast.updateIntervalMinutes, 30,
-                "forecast interval should match");
-
-    assertEqual(config.location.latitude, 41.9f,
-                "latitude should match");
-    assertEqual(config.location.longitude, 12.5f,
-                "longitude should match");
-    assertEqual(config.location.timezone, std::string("Europe/Rome"),
-                "timezone should match");
-    assertEqual(config.location.timezoneLong, std::string("CET-1CEST,M3.5.0/2,M10.5.0/3"),
-                "timezone_long should match");
-
-    assertEqual(config.salah.timezoneOffsetMinutes, 60,
-                "salah timezone offset should match");
-    assertEqual(config.salah.dstRule, std::string("eu"),
-                "dst rule should match");
-    assertEqual(config.salah.asrMakruhMinutes, 120,
-                "asr makruh minutes should match");
-    assertTrue(config.salah.hanafiAsr,
-               "hanafi_asr should match");
-
-    assertEqual(config.switchbot.sensors.size(), std::size_t(2),
-                "sensor count should match");
-    assertEqual(config.switchbot.sensors[0].mac, std::string("AA:BB:CC:DD:EE:FF"),
-                "first sensor mac should match");
-    assertEqual(config.switchbot.sensors[0].name, std::string("Living Room"),
-                "first sensor name should match");
-    assertEqual(config.switchbot.sensors[0].shortName, std::string("LR"),
-                "first sensor short name should match");
-
-    assertEqual(config.xiaomi.updateIntervalMinutes, 60,
-                "xiaomi interval should match");
-    assertEqual(config.xiaomi.sensors.size(), std::size_t(2),
-                "xiaomi sensor count should match");
-    assertEqual(config.xiaomi.sensors[0].mac, std::string("AA:AA:AA:AA:AA:AA"),
-                "first xiaomi sensor mac should match");
-    assertEqual(config.xiaomi.sensors[0].name, std::string("Plant 1"),
-                "first xiaomi sensor name should match");
-    assertEqual(config.xiaomi.sensors[0].shortName, std::string("P1"),
-                "first xiaomi sensor short name should match");
-
-    assertEqual(config.wifi.ssid, std::string("TestWifi"),
-                "ssid should match");
-    assertEqual(config.wifi.password, std::string("Secret123"),
-                "password should match");
-}
-
-void testMissingForecastFails() {
-    const std::string text = R"json(
-{
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    for (const Field& field : fields) {
+        CAPTURE(field.section);
+        CAPTURE(field.key);
+        auto doc = exampleConfig();
+        removePath(doc, field.section, field.key);
+        expectInvalid(doc);
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "missing forecast should fail");
-}
+TEST_CASE("config validates forecast values") {
+    SUBCASE("forecast pem file must be a string") {
+        auto doc = exampleConfig();
+        doc["forecast"]["openmeteo_pem_file"] = 123;
+        expectInvalid(doc);
+    }
 
-void testInvalidForecastIntervalFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 0
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    SUBCASE("forecast interval must be an int") {
+        auto doc = exampleConfig();
+        doc["forecast"]["update_interval_minutes"] = "30";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("forecast interval must be positive") {
+        auto doc = exampleConfig();
+        doc["forecast"]["update_interval_minutes"] = 0;
+        expectInvalid(doc);
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "non-positive forecast interval should fail");
-}
+TEST_CASE("config validates API values") {
+    SUBCASE("API strings must be strings") {
+        for (const char* key : {"base_url", "api_key", "pem_file"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            doc["api"][key] = 123;
+            expectInvalid(doc);
+        }
+    }
 
-void testInvalidLatitudeFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 200.0,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    SUBCASE("API buffer values must be ints") {
+        for (const char* key : {"in_memory", "drain_rate_cap", "drain_rate_tick_s"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            doc["api"]["buffer"][key] = "1";
+            expectInvalid(doc);
+        }
+    }
+
+    SUBCASE("API buffer values must be positive") {
+        for (const char* key : {"in_memory", "drain_rate_cap", "drain_rate_tick_s"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            doc["api"]["buffer"][key] = 0;
+            expectInvalid(doc);
+        }
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "out of range latitude should fail");
-}
+TEST_CASE("config validates location values") {
+    SUBCASE("latitude must be a number") {
+        auto doc = exampleConfig();
+        doc["location"]["latitude"] = "48.9";
+        expectInvalid(doc);
+    }
 
-void testUnsupportedDstRuleFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "mars",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    SUBCASE("latitude must be in range") {
+        auto doc = exampleConfig();
+        doc["location"]["latitude"] = 200.0;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("longitude must be a number") {
+        auto doc = exampleConfig();
+        doc["location"]["longitude"] = "2.3";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("longitude must be in range") {
+        auto doc = exampleConfig();
+        doc["location"]["longitude"] = 200.0;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("timezone fields must be strings") {
+        for (const char* key : {"timezone", "timezone_long"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            doc["location"][key] = 123;
+            expectInvalid(doc);
+        }
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "unsupported dst rule should fail");
-}
+TEST_CASE("config validates salah values") {
+    SUBCASE("timezone offset must be an int") {
+        auto doc = exampleConfig();
+        doc["salah"]["timezone_offset_minutes"] = "60";
+        expectInvalid(doc);
+    }
 
-void testNegativeAsrMakruhFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": -1,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    SUBCASE("timezone offset must be in range") {
+        auto doc = exampleConfig();
+        doc["salah"]["timezone_offset_minutes"] = 900;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("dst rule must be a string") {
+        auto doc = exampleConfig();
+        doc["salah"]["dst_rule"] = true;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("dst rule must be supported") {
+        auto doc = exampleConfig();
+        doc["salah"]["dst_rule"] = "mars";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("asr makruh must be an int") {
+        auto doc = exampleConfig();
+        doc["salah"]["asr_makruh_minutes"] = "20";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("asr makruh cannot be negative") {
+        auto doc = exampleConfig();
+        doc["salah"]["asr_makruh_minutes"] = -1;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("hanafi_asr must be a bool") {
+        auto doc = exampleConfig();
+        doc["salah"]["hanafi_asr"] = "false";
+        expectInvalid(doc);
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "negative asr makruh should fail");
-}
+TEST_CASE("config validates switchbot sensors") {
+    SUBCASE("sensors must be an array when present") {
+        auto doc = exampleConfig();
+        doc["switchbot"]["sensors"] = 123;
+        expectInvalid(doc);
+    }
 
-void testMissingSwitchbotSensorsFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {},
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    SUBCASE("sensor fields must be strings") {
+        for (const char* key : {"mac", "name", "short_name"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            JsonObject sensor = addSwitchbotSensor(doc);
+            sensor[key] = 123;
+            expectInvalid(doc);
+        }
+    }
+
+    SUBCASE("no sensors is valid") {
+        auto doc = exampleConfig();
+        removePath(doc, "switchbot", "sensors");
+        expectValid(doc);
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "missing switchbot.sensors should fail");
-}
+TEST_CASE("config validates xiaomi values") {
+    SUBCASE("interval must be an int") {
+        auto doc = exampleConfig();
+        doc["xiaomi"]["update_interval_minutes"] = "60";
+        expectInvalid(doc);
+    }
 
-void testWrongSensorFieldTypesFail() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": [
-            {
-                "mac": 123,
-                "name": true,
-                "short_name": []
-            }
-        ]
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
+    SUBCASE("interval must be positive") {
+        auto doc = exampleConfig();
+        doc["xiaomi"]["update_interval_minutes"] = 0;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("sensors must be an array when present") {
+        auto doc = exampleConfig();
+        doc["xiaomi"]["sensors"] = 123;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("sensor fields must be strings") {
+        for (const char* key : {"mac", "name", "short_name"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            JsonObject sensor = addXiaomiSensor(doc);
+            sensor[key] = 123;
+            expectInvalid(doc);
+        }
+    }
+
+    SUBCASE("no sensors is valid") {
+        auto doc = exampleConfig();
+        removePath(doc, "xiaomi", "sensors");
+        expectValid(doc);
     }
 }
-)json";
 
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "wrong sensor field types should fail");
-}
-
-void testMissingWifiFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "xiaomi": {
-        "update_interval_minutes": 60,
-        "sensors": []
+TEST_CASE("config validates wifi values") {
+    for (const char* key : {"ssid", "password"}) {
+        CAPTURE(key);
+        auto doc = exampleConfig();
+        doc["wifi"][key] = 123;
+        expectInvalid(doc);
     }
-}
-)json";
-
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "missing wifi should fail");
-}
-
-void testInvalidJsonFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30,
-    }
-}
-)json";
-
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "invalid json should fail");
-}
-
-void testMissingXiaomiFails() {
-    const std::string text = R"json(
-{
-    "forecast": {
-        "openmeteo_pem": "pem",
-        "update_interval_minutes": 30
-    },
-    "location": {
-        "latitude": 41.9,
-        "longitude": 12.5,
-        "timezone": "Europe/Rome",
-        "timezone_long": "CET-1CEST,M3.5.0/2,M10.5.0/3"
-    },
-    "salah": {
-        "timezone_offset_minutes": 60,
-        "dst_rule": "eu",
-        "asr_makruh_minutes": 120,
-        "hanafi_asr": true
-    },
-    "switchbot": {
-        "sensors": []
-    },
-    "wifi": {
-        "ssid": "TestWifi",
-        "password": "Secret123"
-    }
-}
-)json";
-
-    Config config;
-    const bool ok = parseConfigText(text, config, false);
-    assertTrue(!ok, "missing xiaomi should fail");
 }
 
 } // namespace
-
-void runConfigTests() {
-    testParseValidConfig();
-    testMissingForecastFails();
-    testInvalidForecastIntervalFails();
-    testInvalidLatitudeFails();
-    testUnsupportedDstRuleFails();
-    testNegativeAsrMakruhFails();
-    testMissingSwitchbotSensorsFails();
-    testWrongSensorFieldTypesFail();
-    testMissingWifiFails();
-    testInvalidJsonFails();
-    testMissingXiaomiFails();
-}

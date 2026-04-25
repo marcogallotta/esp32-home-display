@@ -30,12 +30,12 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (!forecast["openmeteo_pem_file"].is<const char*>()) {
         return fail("forecast.openmeteo_pem_file is not a string");
     }
-    if (!forecast["update_interval_minutes"].is<int>()) {
+    if (!forecast["update_interval_minutes"].isNull() && !forecast["update_interval_minutes"].is<int>()) {
         return fail("forecast.update_interval_minutes is not an int");
     }
 
     const char* openmeteoPemFile = forecast["openmeteo_pem_file"].as<const char*>();
-    const int updateIntervalMinutes = forecast["update_interval_minutes"].as<int>();
+    const int updateIntervalMinutes = forecast["update_interval_minutes"] | config.forecast.updateIntervalMinutes;
     if (updateIntervalMinutes <= 0) {
         return fail("forecast.update_interval_minutes must be > 0");
     }
@@ -55,25 +55,29 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     }
 
     const JsonObject apiBuffer = api["buffer"];
-    if (apiBuffer.isNull()) {
-        return fail("api.buffer is not an object");
-    }
-    if (!apiBuffer["in_memory"].is<int>()) {
-        return fail("api.buffer.in_memory is not an int");
-    }
-    if (!apiBuffer["drain_rate_cap"].is<int>()) {
-        return fail("api.buffer.drain_rate_cap is not an int");
-    }
-    if (!apiBuffer["drain_rate_tick_s"].is<int>()) {
-        return fail("api.buffer.drain_rate_tick_s is not an int");
+    int apiBufferInMemory = config.api.buffer.inMemory;
+    int apiBufferDrainRateCap = config.api.buffer.drainRateCap;
+    int apiBufferDrainRateTickS = config.api.buffer.drainRateTickS;
+
+    if (!apiBuffer.isNull()) {
+        if (!apiBuffer["in_memory"].isNull() && !apiBuffer["in_memory"].is<int>()) {
+            return fail("api.buffer.in_memory is not an int");
+        }
+        if (!apiBuffer["drain_rate_cap"].isNull() && !apiBuffer["drain_rate_cap"].is<int>()) {
+            return fail("api.buffer.drain_rate_cap is not an int");
+        }
+        if (!apiBuffer["drain_rate_tick_s"].isNull() && !apiBuffer["drain_rate_tick_s"].is<int>()) {
+            return fail("api.buffer.drain_rate_tick_s is not an int");
+        }
+
+        apiBufferInMemory = apiBuffer["in_memory"] | apiBufferInMemory;
+        apiBufferDrainRateCap = apiBuffer["drain_rate_cap"] | apiBufferDrainRateCap;
+        apiBufferDrainRateTickS = apiBuffer["drain_rate_tick_s"] | apiBufferDrainRateTickS;
     }
 
     const char* apiBaseUrl = api["base_url"].as<const char*>();
     const char* apiKey = api["api_key"].as<const char*>();
     const char* apiPemFile = api["pem_file"].as<const char*>();
-    const int apiBufferInMemory = apiBuffer["in_memory"].as<int>();
-    const int apiBufferDrainRateCap = apiBuffer["drain_rate_cap"].as<int>();
-    const int apiBufferDrainRateTickS = apiBuffer["drain_rate_tick_s"].as<int>();
 
     if (apiBufferInMemory <= 0) {
         return fail("api.buffer.in_memory must be > 0");
@@ -121,20 +125,20 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (!salah["timezone_offset_minutes"].is<int>()) {
         return fail("salah.timezone_offset_minutes is not an int");
     }
-    if (!salah["dst_rule"].is<const char*>()) {
+    if (!salah["dst_rule"].isNull() && !salah["dst_rule"].is<const char*>()) {
         return fail("salah.dst_rule is not a string");
     }
-    if (!salah["asr_makruh_minutes"].is<int>()) {
+    if (!salah["asr_makruh_minutes"].isNull() && !salah["asr_makruh_minutes"].is<int>()) {
         return fail("salah.asr_makruh_minutes is not an int");
     }
-    if (!salah["hanafi_asr"].is<bool>()) {
+    if (!salah["hanafi_asr"].isNull() && !salah["hanafi_asr"].is<bool>()) {
         return fail("salah.hanafi_asr is not a bool");
     }
 
     const int timezoneOffsetMinutes = salah["timezone_offset_minutes"].as<int>();
-    const char* dstRule = salah["dst_rule"].as<const char*>();
-    const int asrMakruhMinutes = salah["asr_makruh_minutes"].as<int>();
-    const bool hanafiAsr = salah["hanafi_asr"].as<bool>();
+    const char* dstRule = salah["dst_rule"] | config.salah.dstRule.c_str();
+    const int asrMakruhMinutes = salah["asr_makruh_minutes"] | config.salah.asrMakruhMinutes;
+    const bool hanafiAsr = salah["hanafi_asr"] | config.salah.hanafiAsr;
 
     if (timezoneOffsetMinutes < -720 || timezoneOffsetMinutes > 840) {
         return fail("salah.timezone_offset_minutes is out of range");
@@ -154,7 +158,7 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     }
 
     const JsonArray sensors = switchbot["sensors"];
-    if (sensors.isNull()) {
+    if (!switchbot["sensors"].isNull() && sensors.isNull()) {
         return fail("switchbot.sensors is not an array");
     }
 
@@ -182,17 +186,17 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (xiaomi.isNull()) {
         return fail("xiaomi is not an object");
     }
-    if (!xiaomi["update_interval_minutes"].is<int>()) {
+    if (!xiaomi["update_interval_minutes"].isNull() && !xiaomi["update_interval_minutes"].is<int>()) {
         return fail("xiaomi.update_interval_minutes is not an int");
     }
 
-    const int xiaomiUpdateIntervalMinutes = xiaomi["update_interval_minutes"].as<int>();
+    const int xiaomiUpdateIntervalMinutes = xiaomi["update_interval_minutes"] | config.xiaomi.updateIntervalMinutes;
     if (xiaomiUpdateIntervalMinutes <= 0) {
         return fail("xiaomi.update_interval_minutes must be > 0");
     }
 
     const JsonArray xiaomiSensors = xiaomi["sensors"];
-    if (xiaomiSensors.isNull()) {
+    if (!xiaomi["sensors"].isNull() && xiaomiSensors.isNull()) {
         return fail("xiaomi.sensors is not an array");
     }
 

@@ -1,27 +1,23 @@
 #pragma once
 
-#include <stdexcept>
+#include "doctest/doctest.h"
+
 #include <string>
 
-inline void fail(const std::string& message) {
-    throw std::runtime_error(message);
+template <typename T, typename U>
+void assertEqual(const T& actual, const U& expected, const std::string& message) {
+    INFO(message);
+    CHECK_EQ(actual, expected);
 }
 
 inline void assertTrue(bool condition, const std::string& message) {
-    if (!condition) {
-        fail(message);
-    }
+    INFO(message);
+    CHECK(condition);
 }
 
-template <typename T, typename U>
-inline void assertEqual(const T& actual, const U& expected, const std::string& message) {
-    if (!(actual == expected)) {
-        fail(message);
-    }
-}
-
-inline void assertInRange(int value, int lowInclusive, int highInclusive, const std::string& message) {
-    if (value < lowInclusive || value > highInclusive) {
-        fail(message);
-    }
+template <typename T>
+void assertInRange(const T& actual, const T& min, const T& max, const std::string& message) {
+    INFO(message);
+    CHECK_GE(actual, min);
+    CHECK_LE(actual, max);
 }
