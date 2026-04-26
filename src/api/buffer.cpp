@@ -224,18 +224,15 @@ BufferInsertResult bufferRequest(
         return bufferToDisk(buffer, request, config, store, nowMs);
     }
 
-    const bool wasEmpty = buffer.requests.empty();
     buffer.requests.push_back(std::move(request));
     markDrainDelayed(buffer, config, nowMs);
 
-    if (wasEmpty) {
-        logLine(
-            LogLevel::Warn,
-            "Network issue; buffering API requests (" +
-            std::to_string(buffer.requests.size()) +
-            "/" + std::to_string(config.inMemory) + " queued)"
-        );
-    }
+    logLine(
+        LogLevel::Warn,
+        "Network issue; buffering API requests (" +
+        std::to_string(buffer.requests.size()) +
+        "/" + std::to_string(config.inMemory) + " queued)"
+    );
 
     return BufferInsertResult::Buffered;
 }
