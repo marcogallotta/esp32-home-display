@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include <cstring>
 
+#include <ArduinoJson.h>
+
 #include "../log.h"
 
 #ifdef ARDUINO
@@ -94,6 +96,17 @@ bool makeRequestPath(std::uint32_t sequence, char* out, std::size_t outSize) {
     const int n = std::snprintf(out, outSize, "spool/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
 #endif
     return n > 0 && static_cast<std::size_t>(n) < outSize;
+}
+
+std::string extractMacFromBody(const std::string& body) {
+    DynamicJsonDocument doc(body.size() + 128);
+    const DeserializationError error = deserializeJson(doc, body);
+    if (error) {
+        return {};
+    }
+
+    const char* mac = doc["mac"];
+    return mac == nullptr ? std::string{} : std::string(mac);
 }
 
 #ifdef ARDUINO
@@ -392,6 +405,7 @@ bool readRequest(std::uint32_t sequence, BufferedRequest& out) {
 
     out.path = requestPath;
     out.body = body;
+    out.mac = extractMacFromBody(out.body);
     out.timeoutRetryCount = header.timeoutRetryCount;
     out.tlsRetryCount = header.tlsRetryCount;
     return true;
