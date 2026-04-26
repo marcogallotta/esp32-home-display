@@ -56,7 +56,8 @@ db-reset-schema: db-start db-wait
 run-server:
 	uvicorn main:app --reload --host 0.0.0.0 \
 		--ssl-keyfile certs/key.pem \
-		--ssl-certfile certs/cert.pem
+		--ssl-certfile certs/cert.pem \
+		--log-config logging.yaml
 
 test:
 	ENV=test $(MAKE) db-reset-schema

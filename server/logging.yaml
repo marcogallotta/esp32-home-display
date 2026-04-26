@@ -1,0 +1,35 @@
+version: 1
+formatters:
+  default:
+    "()": uvicorn.logging.DefaultFormatter
+    format: "%(asctime)s %(levelprefix)s %(name)s: %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+    use_colors: true
+
+  access:
+    "()": uvicorn.logging.AccessFormatter
+    format: "%(asctime)s %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+    use_colors: true
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: default
+
+  access_console:
+    class: logging.StreamHandler
+    formatter: access
+
+loggers:
+  uvicorn.error:
+    handlers: [console]
+    level: INFO
+
+  uvicorn.access:
+    handlers: [access_console]
+    level: INFO
+
+root:
+  handlers: [console]
+  level: INFO
