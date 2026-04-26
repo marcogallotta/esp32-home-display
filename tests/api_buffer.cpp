@@ -222,7 +222,7 @@ TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM F
     CHECK_EQ(store.requests[0].path, "/third");
 }
 
-TEST_CASE("buffer sends new requests to disk while disk backlog exists") {
+TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exists") {
     api::BufferState buffer;
     FakeRequestStore store;
     store.index.tail = 1;
@@ -235,9 +235,9 @@ TEST_CASE("buffer sends new requests to disk while disk backlog exists") {
         api::bufferRequest(buffer, request("new"), c, store, 0ULL);
 
     CHECK_EQ(result, api::BufferInsertResult::Buffered);
-    CHECK(buffer.requests.empty());
-    CHECK_EQ(buffer.disk.count, 2U);
-    CHECK_EQ(store.requests[1].path, "/new");
+    REQUIRE_EQ(buffer.requests.size(), 1U);
+    CHECK_EQ(buffer.requests.front().path, "/new");
+    CHECK_EQ(store.requests.count(1), 0U);
 }
 
 TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails") {
