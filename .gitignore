@@ -2,6 +2,7 @@
 .build_desktop
 .pio
 .vscode
+spool
 data/laptop.pem
 data/config.json
 esp32-build

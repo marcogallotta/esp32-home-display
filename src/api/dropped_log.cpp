@@ -23,7 +23,7 @@ constexpr std::size_t kMaxDroppedLogBytes = 256 * 1024;
 #ifdef ARDUINO
 constexpr const char* kDroppedLogPath = "/dropped_requests.jsonl";
 #else
-constexpr const char* kDroppedLogPath = "dropped_requests.jsonl";
+constexpr const char* kDroppedLogPath = "spool/dropped_requests.jsonl";
 #endif
 
 struct UsageWarningState {

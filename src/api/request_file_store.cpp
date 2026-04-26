@@ -31,8 +31,8 @@ constexpr std::size_t kMaxBodyBytes = 4096;
 constexpr const char* kIndexAPath = "/api_idx_a.bin";
 constexpr const char* kIndexBPath = "/api_idx_b.bin";
 #else
-constexpr const char* kIndexAPath = "api_idx_a.bin";
-constexpr const char* kIndexBPath = "api_idx_b.bin";
+constexpr const char* kIndexAPath = "spool/api_idx_a.bin";
+constexpr const char* kIndexBPath = "spool/api_idx_b.bin";
 #endif
 
 struct IndexRecord {
@@ -91,7 +91,7 @@ bool makeRequestPath(std::uint32_t sequence, char* out, std::size_t outSize) {
 #ifdef ARDUINO
     const int n = std::snprintf(out, outSize, "/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
 #else
-    const int n = std::snprintf(out, outSize, "api_req_%08lu.bin", static_cast<unsigned long>(sequence));
+    const int n = std::snprintf(out, outSize, "spool/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
 #endif
     return n > 0 && static_cast<std::size_t>(n) < outSize;
 }
