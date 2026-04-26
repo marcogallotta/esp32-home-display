@@ -229,15 +229,26 @@ TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exist
     store.index.count = 1;
     store.requests[0] = request("existing");
 
-    const ApiBufferConfig c = config(/*capacity=*/10);
+    const ApiBufferConfig c = config(/*capacity=*/2);
 
-    const api::BufferInsertResult result =
-        api::bufferRequest(buffer, request("new"), c, store, 0ULL);
+    const api::BufferInsertResult first =
+        api::bufferRequest(buffer, request("first-ram"), c, store, 0ULL);
+    const api::BufferInsertResult second =
+        api::bufferRequest(buffer, request("second-ram"), c, store, 0ULL);
+    const api::BufferInsertResult third =
+        api::bufferRequest(buffer, request("third-disk"), c, store, 0ULL);
 
-    CHECK_EQ(result, api::BufferInsertResult::Buffered);
-    REQUIRE_EQ(buffer.requests.size(), 1U);
-    CHECK_EQ(buffer.requests.front().path, "/new");
-    CHECK_EQ(store.requests.count(1), 0U);
+    CHECK_EQ(first, api::BufferInsertResult::Buffered);
+    CHECK_EQ(second, api::BufferInsertResult::Buffered);
+    CHECK_EQ(third, api::BufferInsertResult::Buffered);
+
+    REQUIRE_EQ(buffer.requests.size(), 2U);
+    CHECK_EQ(buffer.requests[0].path, "/first-ram");
+    CHECK_EQ(buffer.requests[1].path, "/second-ram");
+
+    CHECK_EQ(buffer.disk.count, 2U);
+    CHECK_EQ(store.requests[0].path, "/existing");
+    CHECK_EQ(store.requests[1].path, "/third-disk");
 }
 
 TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails") {
@@ -282,6 +293,72 @@ TEST_CASE("buffer drains oldest requests first") {
     CHECK_EQ(poster.calls()[0].path, "/first");
     CHECK_EQ(poster.calls()[1].path, "/second");
     CHECK_EQ(poster.calls()[2].path, "/third");
+}
+
+TEST_CASE("startup drain sends persisted disk backlog immediately") {
+    api::BufferState buffer;
+    FakeRequestStore store;
+    FakePoster poster;
+    const ApiBufferConfig c = config(/*capacity=*/2, /*drainCap=*/10, /*drainTickS=*/60);
+
+    store.index.head = 0;
+    store.index.tail = 2;
+    store.index.count = 2;
+    store.requests[0] = request("persisted-first");
+    store.requests[1] = request("persisted-second");
+
+    poster.respondWith(httpOk());
+    poster.respondWith(httpOk());
+
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 0ULL, c, poster, store);
+
+    CHECK_EQ(result.attempted, 2);
+    CHECK_EQ(result.sent, 2);
+    CHECK_EQ(result.dropped, 0);
+    CHECK_FALSE(result.notDueYet);
+    CHECK_FALSE(result.blockedByRetryableFailure);
+
+    CHECK(buffer.requests.empty());
+    CHECK_EQ(buffer.disk.count, 0U);
+    CHECK_EQ(store.index.count, 0U);
+    CHECK(store.requests.empty());
+
+    REQUIRE_EQ(poster.calls().size(), 2U);
+    CHECK_EQ(poster.calls()[0].path, "/persisted-first");
+    CHECK_EQ(poster.calls()[1].path, "/persisted-second");
+}
+
+TEST_CASE("retryable failure during startup drain preserves persisted disk backlog") {
+    api::BufferState buffer;
+    FakeRequestStore store;
+    FakePoster poster;
+    const ApiBufferConfig c = config(/*capacity=*/2, /*drainCap=*/10, /*drainTickS=*/60);
+
+    store.index.head = 0;
+    store.index.tail = 2;
+    store.index.count = 2;
+    store.requests[0] = request("persisted-first");
+    store.requests[1] = request("persisted-second");
+
+    poster.respondWith(transportFailure(network::TransportResult::NetworkError));
+
+    const api::BufferDrainResult result =
+        api::maybeDrainBuffer(buffer, 0ULL, c, poster, store);
+
+    CHECK_EQ(result.attempted, 1);
+    CHECK_EQ(result.sent, 0);
+    CHECK_EQ(result.dropped, 0);
+    CHECK(result.blockedByRetryableFailure);
+
+    CHECK(buffer.requests.empty());
+    CHECK_EQ(buffer.disk.count, 2U);
+    CHECK_EQ(store.index.count, 2U);
+    CHECK_EQ(store.requests[0].path, "/persisted-first");
+    CHECK_EQ(store.requests[1].path, "/persisted-second");
+
+    REQUIRE_EQ(poster.calls().size(), 1U);
+    CHECK_EQ(poster.calls()[0].path, "/persisted-first");
 }
 
 TEST_CASE("drain cap limits how many requests are sent per tick") {
