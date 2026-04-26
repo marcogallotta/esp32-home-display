@@ -90,214 +90,306 @@ public:
     }
 };
 
-api::BufferedRequest request(std::string name) {
+api::BufferedRequest bufferedReading(const std::string& name) {
     api::BufferedRequest out;
     out.path = "/" + name;
-    out.mac = "AA:BB:CC:DD:EE:" + name;
+    out.mac = "mac-for-" + name;
     out.body = "{\"name\":\"" + name + "\"}";
     return out;
 }
 
-ApiBufferConfig config() {
+ApiBufferConfig bufferConfig() {
     ApiBufferConfig out;
     out.diskReserveBytes = 1024;
     return out;
 }
 
-void expectRequestNamed(const api::BufferedRequest& actual, const char* name) {
-    CHECK_EQ(actual.path, std::string("/") + name);
-    CHECK_EQ(actual.mac, std::string("AA:BB:CC:DD:EE:") + name);
-    CHECK_EQ(actual.body, std::string("{\"name\":\"") + name + "\"}");
+class DiskBufferScenario {
+public:
+    static DiskBufferScenario emptyDiskBuffer() {
+        return DiskBufferScenario();
+    }
+
+    static DiskBufferScenario withRequestsAlreadyOnDisk(std::vector<std::string> names) {
+        DiskBufferScenario scenario;
+        for (const auto& name : names) {
+            const auto sequence = scenario.store_.index.tail;
+            scenario.store_.requests[sequence] = bufferedReading(name);
+            scenario.store_.index.tail += 1;
+            scenario.store_.index.count += 1;
+        }
+        return scenario;
+    }
+
+    void loadFromDisk() {
+        REQUIRE(api::disk_buffer::load(state_, store_));
+    }
+
+    void restartFromDisk() {
+        state_ = api::disk_buffer::State{};
+        loadFromDisk();
+    }
+
+    void enqueueReading(const std::string& name) {
+        REQUIRE(api::disk_buffer::enqueue(state_, bufferedReading(name), bufferConfig(), store_));
+    }
+
+    bool tryToEnqueueReading(const std::string& name) {
+        return api::disk_buffer::enqueue(state_, bufferedReading(name), bufferConfig(), store_);
+    }
+
+    void consumeConfirmedFront() {
+        REQUIRE(api::disk_buffer::consume(state_, store_));
+    }
+
+    bool tryToConsumeConfirmedFront() {
+        return api::disk_buffer::consume(state_, store_);
+    }
+
+    void dropFront() {
+        REQUIRE(api::disk_buffer::dropFront(state_, store_));
+    }
+
+    void rewriteFrontRetryCounts(int timeoutRetries, int tlsRetries) {
+        api::BufferedRequest front;
+        REQUIRE(api::disk_buffer::peek(state_, front, store_));
+        front.timeoutRetryCount = timeoutRetries;
+        front.tlsRetryCount = tlsRetries;
+        REQUIRE(api::disk_buffer::rewriteFront(state_, front, store_));
+    }
+
+    std::string frontReadingName() {
+        api::BufferedRequest front;
+        REQUIRE(api::disk_buffer::peek(state_, front, store_));
+        return readingName(front);
+    }
+
+    std::vector<std::string> visibleReadingNamesByDrainingCopy() const {
+        DiskBufferScenario copy = *this;
+        std::vector<std::string> names;
+        api::BufferedRequest front;
+        while (api::disk_buffer::peek(copy.state_, front, copy.store_)) {
+            names.push_back(readingName(front));
+            if (!api::disk_buffer::consume(copy.state_, copy.store_)) {
+                break;
+            }
+        }
+        return names;
+    }
+
+    void makeDiskReserveAlreadyExhausted() {
+        store_.availableBytes = bufferConfig().diskReserveBytes;
+    }
+
+    void makeRequestWriteFail() {
+        store_.writeRequestOk = false;
+    }
+
+    void makeIndexWriteFail() {
+        store_.writeIndexOk = false;
+    }
+
+    void makeRequestRemoveFail() {
+        store_.removeRequestOk = false;
+    }
+
+    std::uint32_t queuedCount() const {
+        return state_.count;
+    }
+
+    std::uint32_t headSequence() const {
+        return state_.head;
+    }
+
+    std::uint32_t tailSequence() const {
+        return state_.tail;
+    }
+
+    int readIndexCalls() const {
+        return store_.readIndexCalls;
+    }
+
+    int writeRequestCalls() const {
+        return store_.writeRequestCalls;
+    }
+
+    int writeIndexCalls() const {
+        return store_.writeIndexCalls;
+    }
+
+    int removeRequestCalls() const {
+        return store_.removeRequestCalls;
+    }
+
+    bool durableStoreHasNoRequestFiles() const {
+        return store_.requests.empty();
+    }
+
+    std::vector<std::uint32_t> writtenSequences() const {
+        return store_.writtenSequences;
+    }
+
+    std::vector<std::uint32_t> removedSequences() const {
+        return store_.removedSequences;
+    }
+
+    api::BufferedRequest frontRequest() {
+        api::BufferedRequest front;
+        REQUIRE(api::disk_buffer::peek(state_, front, store_));
+        return front;
+    }
+
+private:
+    static std::string readingName(const api::BufferedRequest& request) {
+        const std::string marker = "\"name\":\"";
+        const auto start = request.body.find(marker);
+        if (start == std::string::npos) {
+            return "";
+        }
+        const auto valueStart = start + marker.size();
+        const auto valueEnd = request.body.find('"', valueStart);
+        if (valueEnd == std::string::npos) {
+            return "";
+        }
+        return request.body.substr(valueStart, valueEnd - valueStart);
+    }
+
+    FakeRequestStore store_;
+    api::disk_buffer::State state_;
+};
+
+void expectVisibleReadings(DiskBufferScenario scenario, std::vector<std::string> expectedNames) {
+    CHECK_EQ(scenario.visibleReadingNamesByDrainingCopy(), expectedNames);
 }
 
 } // namespace
 
-TEST_CASE("disk buffer loads existing index once") {
-    FakeRequestStore store;
-    store.index.head = 4;
-    store.index.tail = 7;
-    store.index.count = 3;
-    store.requests[4] = request("first");
+TEST_CASE("disk buffer loads queued readings once and reuses the loaded state") {
+    auto buffer = DiskBufferScenario::withRequestsAlreadyOnDisk({"first reading", "second reading", "third reading"});
 
-    api::disk_buffer::State state;
+    buffer.loadFromDisk();
 
-    api::BufferedRequest front;
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "first");
+    CHECK_EQ(buffer.frontReadingName(), "first reading");
+    CHECK_EQ(buffer.queuedCount(), 3U);
+    CHECK_EQ(buffer.readIndexCalls(), 1);
 
-    CHECK_EQ(state.head, 4U);
-    CHECK_EQ(state.tail, 7U);
-    CHECK_EQ(state.count, 3U);
-    CHECK(state.loaded);
-    CHECK_EQ(store.readIndexCalls, 1);
-
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    CHECK_EQ(store.readIndexCalls, 1);
+    CHECK_EQ(buffer.frontReadingName(), "first reading");
+    CHECK_EQ(buffer.readIndexCalls(), 1);
 }
 
-TEST_CASE("disk buffer enqueue appends at tail and advances index") {
-    FakeRequestStore store;
-    store.index.head = 10;
-    store.index.tail = 12;
-    store.index.count = 2;
+TEST_CASE("disk buffer appends a new reading after the existing disk backlog") {
+    auto buffer = DiskBufferScenario::withRequestsAlreadyOnDisk({"older reading", "middle reading"});
 
-    api::disk_buffer::State state;
+    buffer.enqueueReading("newest reading");
 
-    REQUIRE(api::disk_buffer::enqueue(state, request("third"), config(), store));
-
-    CHECK_EQ(store.writtenSequences.size(), 1U);
-    CHECK_EQ(store.writtenSequences[0], 12U);
-    CHECK_EQ(store.index.head, 10U);
-    CHECK_EQ(store.index.tail, 13U);
-    CHECK_EQ(store.index.count, 3U);
-    CHECK_EQ(state.head, 10U);
-    CHECK_EQ(state.tail, 13U);
-    CHECK_EQ(state.count, 3U);
+    CHECK_EQ(buffer.writtenSequences(), std::vector<std::uint32_t>{2});
+    CHECK_EQ(buffer.headSequence(), 0U);
+    CHECK_EQ(buffer.tailSequence(), 3U);
+    CHECK_EQ(buffer.queuedCount(), 3U);
+    expectVisibleReadings(buffer, {"older reading", "middle reading", "newest reading"});
 }
 
-TEST_CASE("disk buffer refuses enqueue when disk reserve would be crossed") {
-    FakeRequestStore store;
-    store.availableBytes = config().diskReserveBytes;
+TEST_CASE("disk buffer refuses a new reading when the reserved filesystem space would be crossed") {
+    auto buffer = DiskBufferScenario::emptyDiskBuffer();
+    buffer.makeDiskReserveAlreadyExhausted();
 
-    api::disk_buffer::State state;
+    CHECK_FALSE(buffer.tryToEnqueueReading("reading while disk is reserved"));
 
-    CHECK_FALSE(api::disk_buffer::enqueue(state, request("first"), config(), store));
-
-    CHECK_EQ(store.writeRequestCalls, 0);
-    CHECK_EQ(store.writeIndexCalls, 0);
-    CHECK_EQ(state.count, 0U);
+    CHECK_EQ(buffer.writeRequestCalls(), 0);
+    CHECK_EQ(buffer.writeIndexCalls(), 0);
+    CHECK_EQ(buffer.queuedCount(), 0U);
 }
 
-TEST_CASE("disk buffer does not advance when request write fails") {
-    FakeRequestStore store;
-    store.writeRequestOk = false;
+TEST_CASE("disk buffer does not queue a reading when writing the request fails") {
+    auto buffer = DiskBufferScenario::emptyDiskBuffer();
+    buffer.makeRequestWriteFail();
 
-    api::disk_buffer::State state;
+    CHECK_FALSE(buffer.tryToEnqueueReading("reading that cannot be written"));
 
-    CHECK_FALSE(api::disk_buffer::enqueue(state, request("first"), config(), store));
-
-    CHECK_EQ(store.writeRequestCalls, 1);
-    CHECK_EQ(store.writeIndexCalls, 0);
-    CHECK_EQ(state.head, 0U);
-    CHECK_EQ(state.tail, 0U);
-    CHECK_EQ(state.count, 0U);
+    CHECK_EQ(buffer.writeRequestCalls(), 1);
+    CHECK_EQ(buffer.writeIndexCalls(), 0);
+    CHECK_EQ(buffer.queuedCount(), 0U);
 }
 
-TEST_CASE("disk buffer does not advance when enqueue index write fails") {
-    FakeRequestStore store;
-    store.writeIndexOk = false;
+TEST_CASE("disk buffer failed enqueue must not leave a durable orphan request") {
+    auto buffer = DiskBufferScenario::emptyDiskBuffer();
+    buffer.makeIndexWriteFail();
 
-    api::disk_buffer::State state;
+    CHECK_FALSE(buffer.tryToEnqueueReading("reading whose index update fails"));
 
-    CHECK_FALSE(api::disk_buffer::enqueue(state, request("first"), config(), store));
-
-    CHECK_EQ(store.writeRequestCalls, 1);
-    CHECK_EQ(store.writeIndexCalls, 1);
-    CHECK_EQ(state.head, 0U);
-    CHECK_EQ(state.tail, 0U);
-    CHECK_EQ(state.count, 0U);
+    CHECK_EQ(buffer.writeRequestCalls(), 1);
+    CHECK_EQ(buffer.writeIndexCalls(), 1);
+    CHECK_EQ(buffer.queuedCount(), 0U);
+    CHECK(buffer.durableStoreHasNoRequestFiles());
 }
 
-TEST_CASE("disk buffer preserves FIFO order across consume") {
-    FakeRequestStore store;
-    api::disk_buffer::State state;
+TEST_CASE("disk buffer preserves queued reading order while consuming confirmed sends") {
+    auto buffer = DiskBufferScenario::emptyDiskBuffer();
+    buffer.enqueueReading("first reading");
+    buffer.enqueueReading("second reading");
+    buffer.enqueueReading("third reading");
 
-    REQUIRE(api::disk_buffer::enqueue(state, request("first"), config(), store));
-    REQUIRE(api::disk_buffer::enqueue(state, request("second"), config(), store));
-    REQUIRE(api::disk_buffer::enqueue(state, request("third"), config(), store));
+    CHECK_EQ(buffer.frontReadingName(), "first reading");
+    buffer.consumeConfirmedFront();
 
-    api::BufferedRequest front;
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "first");
+    CHECK_EQ(buffer.frontReadingName(), "second reading");
+    buffer.consumeConfirmedFront();
 
-    REQUIRE(api::disk_buffer::consume(state, store));
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "second");
-
-    REQUIRE(api::disk_buffer::consume(state, store));
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "third");
-
-    CHECK_EQ(store.removedSequences.size(), 2U);
-    CHECK_EQ(store.removedSequences[0], 0U);
-    CHECK_EQ(store.removedSequences[1], 1U);
+    CHECK_EQ(buffer.frontReadingName(), "third reading");
+    CHECK_EQ(buffer.removedSequences(), std::vector<std::uint32_t>{0, 1});
 }
 
-TEST_CASE("disk buffer drop front removes only the oldest request") {
-    FakeRequestStore store;
-    api::disk_buffer::State state;
+TEST_CASE("disk buffer drop front removes only the oldest queued reading") {
+    auto buffer = DiskBufferScenario::emptyDiskBuffer();
+    buffer.enqueueReading("oldest reading");
+    buffer.enqueueReading("newer reading");
 
-    REQUIRE(api::disk_buffer::enqueue(state, request("first"), config(), store));
-    REQUIRE(api::disk_buffer::enqueue(state, request("second"), config(), store));
+    buffer.dropFront();
 
-    REQUIRE(api::disk_buffer::dropFront(state, store));
-
-    api::BufferedRequest front;
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "second");
-    CHECK_EQ(state.head, 1U);
-    CHECK_EQ(state.count, 1U);
+    CHECK_EQ(buffer.frontReadingName(), "newer reading");
+    CHECK_EQ(buffer.headSequence(), 1U);
+    CHECK_EQ(buffer.queuedCount(), 1U);
 }
 
-TEST_CASE("disk buffer does not advance when consume index write fails") {
-    FakeRequestStore store;
-    store.index.count = 1;
-    store.index.tail = 1;
-    store.requests[0] = request("first");
+TEST_CASE("disk buffer does not consume a confirmed send when the state update fails") {
+    auto buffer = DiskBufferScenario::withRequestsAlreadyOnDisk({"reading still pending"});
+    buffer.loadFromDisk();
+    buffer.makeIndexWriteFail();
 
-    api::disk_buffer::State state;
-    REQUIRE(api::disk_buffer::load(state, store));
+    CHECK_FALSE(buffer.tryToConsumeConfirmedFront());
 
-    store.writeIndexOk = false;
-    CHECK_FALSE(api::disk_buffer::consume(state, store));
-
-    CHECK_EQ(state.head, 0U);
-    CHECK_EQ(state.tail, 1U);
-    CHECK_EQ(state.count, 1U);
-    CHECK_EQ(store.removeRequestCalls, 0);
+    CHECK_EQ(buffer.headSequence(), 0U);
+    CHECK_EQ(buffer.tailSequence(), 1U);
+    CHECK_EQ(buffer.queuedCount(), 1U);
+    CHECK_EQ(buffer.removeRequestCalls(), 0);
 }
 
-TEST_CASE("disk buffer advances even if old request delete fails after index update") {
-    FakeRequestStore store;
-    store.index.count = 2;
-    store.index.tail = 2;
-    store.requests[0] = request("first");
-    store.requests[1] = request("second");
+TEST_CASE("disk buffer failed consume must leave the request visible after restart") {
+    auto buffer = DiskBufferScenario::withRequestsAlreadyOnDisk({"first reading", "second reading"});
+    buffer.loadFromDisk();
+    buffer.makeRequestRemoveFail();
 
-    api::disk_buffer::State state;
-    REQUIRE(api::disk_buffer::load(state, store));
+    CHECK_FALSE(buffer.tryToConsumeConfirmedFront());
 
-    store.removeRequestOk = false;
-    REQUIRE(api::disk_buffer::consume(state, store));
+    CHECK_EQ(buffer.headSequence(), 0U);
+    CHECK_EQ(buffer.queuedCount(), 2U);
 
-    CHECK_EQ(state.head, 1U);
-    CHECK_EQ(state.count, 1U);
-
-    api::BufferedRequest front;
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "second");
+    buffer.restartFromDisk();
+    CHECK_EQ(buffer.frontReadingName(), "first reading");
 }
 
 TEST_CASE("disk buffer rewrite front updates retry metadata without changing order") {
-    FakeRequestStore store;
-    api::disk_buffer::State state;
+    auto buffer = DiskBufferScenario::emptyDiskBuffer();
+    buffer.enqueueReading("first reading");
+    buffer.enqueueReading("second reading");
 
-    REQUIRE(api::disk_buffer::enqueue(state, request("first"), config(), store));
-    REQUIRE(api::disk_buffer::enqueue(state, request("second"), config(), store));
+    buffer.rewriteFrontRetryCounts(2, 1);
 
-    api::BufferedRequest retried = request("first");
-    retried.timeoutRetryCount = 2;
-    retried.tlsRetryCount = 1;
-
-    REQUIRE(api::disk_buffer::rewriteFront(state, retried, store));
-
-    api::BufferedRequest front;
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "first");
+    const auto front = buffer.frontRequest();
+    CHECK_EQ(buffer.frontReadingName(), "first reading");
     CHECK_EQ(front.timeoutRetryCount, 2);
     CHECK_EQ(front.tlsRetryCount, 1);
 
-    REQUIRE(api::disk_buffer::consume(state, store));
-    REQUIRE(api::disk_buffer::peek(state, front, store));
-    expectRequestNamed(front, "second");
+    buffer.consumeConfirmedFront();
+    CHECK_EQ(buffer.frontReadingName(), "second reading");
 }
