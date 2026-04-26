@@ -319,7 +319,4 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-
-#else
-#error main_test_api.cpp is desktop-only.
 #endif
