@@ -10,6 +10,7 @@
 #include "disk_buffer.h"
 #include "dropped_log.h"
 #include "payloads.h"
+#include "response_policy.h"
 
 namespace api {
 namespace {
@@ -32,33 +33,25 @@ bool hasBacklog(BufferState& buffer, RequestStore& store) {
     return buffer.disk.count > 0;
 }
 
-bool isAcceptedHttp(const network::HttpResponse& response) {
-    return response.transport == network::TransportResult::Ok &&
-           response.statusCode >= 200 &&
-           response.statusCode < 300;
-}
+FreshRequestDecision decideFreshResponse(const network::HttpResponse& response) {
+    switch (classifyApiResponse(response)) {
+        case ApiResponseKind::Accepted:
+            return FreshRequestDecision::Sent;
 
-FreshRequestDecision classifyFreshResponse(const network::HttpResponse& response) {
-    if (isAcceptedHttp(response)) {
-        return FreshRequestDecision::Sent;
+        case ApiResponseKind::TransportNetworkError:
+        case ApiResponseKind::TransportTimeout:
+        case ApiResponseKind::TransportTlsError:
+        case ApiResponseKind::HttpRetryableServerError:
+            return FreshRequestDecision::Buffer;
+
+        case ApiResponseKind::TransportInternalError:
+        case ApiResponseKind::HttpClientError:
+        case ApiResponseKind::HttpPermanentServerError:
+        case ApiResponseKind::HttpUnexpectedStatus:
+            return FreshRequestDecision::DropPermanent;
     }
 
-    if (response.transport == network::TransportResult::InternalError) {
-        return FreshRequestDecision::DropPermanent;
-    }
-
-    if (response.transport == network::TransportResult::Ok &&
-        response.statusCode >= 400 &&
-        response.statusCode <= 499) {
-        return FreshRequestDecision::DropPermanent;
-    }
-
-    if (response.transport == network::TransportResult::Ok &&
-        (response.statusCode == 500 || response.statusCode >= 505)) {
-        return FreshRequestDecision::DropPermanent;
-    }
-
-    return FreshRequestDecision::Buffer;
+    return FreshRequestDecision::DropPermanent;
 }
 
 WriteStatus mapBufferInsertResult(BufferInsertResult result) {
@@ -249,7 +242,7 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
 
     const network::HttpResponse response = client_.postJson(request.path, request.body);
 
-    switch (classifyFreshResponse(response)) {
+    switch (decideFreshResponse(response)) {
         case FreshRequestDecision::Sent:
             return makeWriteResult(
                 WriteStatus::Sent,

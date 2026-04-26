@@ -5,6 +5,7 @@
 #include "../log.h"
 #include "disk_buffer.h"
 #include "dropped_log.h"
+#include "response_policy.h"
 
 namespace api {
 namespace {
@@ -14,12 +15,6 @@ enum class BufferDecision {
     KeepBuffered,
     Drop,
 };
-
-bool isSuccessfulSend(const network::HttpResponse& response) {
-    return response.transport == network::TransportResult::Ok &&
-           response.statusCode >= 200 &&
-           response.statusCode < 300;
-}
 
 std::uint64_t drainDelayMs(const ApiBufferConfig& config) {
     return static_cast<std::uint64_t>(config.drainRateTickS) * 1000;
@@ -75,40 +70,33 @@ BufferDecision decideBufferedResponse(
     BufferedRequest& request,
     const network::HttpResponse& response
 ) {
-    if (isSuccessfulSend(response)) {
-        return BufferDecision::Sent;
-    }
+    switch (classifyApiResponse(response)) {
+        case ApiResponseKind::Accepted:
+            return BufferDecision::Sent;
 
-    if (response.transport == network::TransportResult::NetworkError) {
-        return BufferDecision::KeepBuffered;
-    }
-
-    if (response.transport == network::TransportResult::Timeout) {
-        if (request.timeoutRetryCount < 2) {
-            request.timeoutRetryCount += 1;
+        case ApiResponseKind::TransportNetworkError:
+        case ApiResponseKind::HttpRetryableServerError:
             return BufferDecision::KeepBuffered;
-        }
-        return BufferDecision::Drop;
-    }
 
-    if (response.transport == network::TransportResult::TlsError) {
-        if (request.tlsRetryCount < 2) {
-            request.tlsRetryCount += 1;
-            return BufferDecision::KeepBuffered;
-        }
-        return BufferDecision::Drop;
-    }
+        case ApiResponseKind::TransportTimeout:
+            if (request.timeoutRetryCount < 2) {
+                request.timeoutRetryCount += 1;
+                return BufferDecision::KeepBuffered;
+            }
+            return BufferDecision::Drop;
 
-    if (response.transport == network::TransportResult::InternalError) {
-        return BufferDecision::Drop;
-    }
+        case ApiResponseKind::TransportTlsError:
+            if (request.tlsRetryCount < 2) {
+                request.tlsRetryCount += 1;
+                return BufferDecision::KeepBuffered;
+            }
+            return BufferDecision::Drop;
 
-    if (response.statusCode >= 400 && response.statusCode <= 499) {
-        return BufferDecision::Drop;
-    }
-
-    if (response.statusCode >= 502 && response.statusCode <= 504) {
-        return BufferDecision::KeepBuffered;
+        case ApiResponseKind::TransportInternalError:
+        case ApiResponseKind::HttpClientError:
+        case ApiResponseKind::HttpPermanentServerError:
+        case ApiResponseKind::HttpUnexpectedStatus:
+            return BufferDecision::Drop;
     }
 
     return BufferDecision::Drop;
