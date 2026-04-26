@@ -216,10 +216,6 @@ BufferInsertResult bufferRequest(
     RequestStore& store,
     std::uint64_t nowMs
 ) {
-    if (hasDiskBacklog(buffer, store)) {
-        return bufferToDisk(buffer, request, config, store, nowMs);
-    }
-
     if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
         return bufferToDisk(buffer, request, config, store, nowMs);
     }
