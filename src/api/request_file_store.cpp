@@ -319,6 +319,54 @@ bool recoverIndexFromRequestFiles(Index& out) {
     return true;
 }
 
+bool indexContains(const Index& index, std::uint32_t sequence) {
+    return index.count > 0 && sequence >= index.head && sequence < index.tail;
+}
+
+bool sanitizeIndexedRange(const Index& input, Index& out) {
+    out = Index{};
+
+    std::uint32_t scanned = 0;
+    for (std::uint32_t sequence = input.head;
+         sequence < input.tail && scanned < input.count;
+         ++sequence, ++scanned) {
+        BufferedRequest request;
+        if (!readRequest(sequence, request)) {
+            if (out.count == 0) {
+                continue;
+            }
+            break;
+        }
+
+        if (out.count == 0) {
+            out.head = sequence;
+            out.tail = sequence;
+        }
+
+        out.tail = sequence + 1;
+        out.count += 1;
+    }
+
+    if (out.count == 0) {
+        out.head = input.tail;
+        out.tail = input.tail;
+    }
+
+    return true;
+}
+
+void deleteRequestsOutsideLiveIndex(const Index& live) {
+    std::vector<std::uint32_t> sequences;
+    if (!listRequestSequences(sequences)) {
+        return;
+    }
+
+    for (std::uint32_t sequence : sequences) {
+        if (!indexContains(live, sequence)) {
+            removeRequest(sequence);
+        }
+    }
+}
 bool sameIndex(const Index& a, const Index& b) {
     return a.head == b.head && a.tail == b.tail && a.count == b.count;
 }
@@ -369,15 +417,13 @@ bool readIndex(Index& out) {
         return false;
     }
 
-    Index fromFiles;
-    if (!recoverIndexFromRequestFiles(fromFiles)) {
-        return false;
-    }
-
     IndexRecord record;
     bool fromA = true;
     if (!readBestIndexRecord(record, fromA)) {
-        out = fromFiles;
+        if (!recoverIndexFromRequestFiles(out)) {
+            return false;
+        }
+        deleteRequestsOutsideLiveIndex(out);
         if (out.count > 0) {
             writeIndex(out);
         }
@@ -389,14 +435,18 @@ bool readIndex(Index& out) {
     fromIndex.tail = record.tail;
     fromIndex.count = record.count;
 
-    out = fromFiles;
-    if (!sameIndex(fromIndex, fromFiles)) {
-        writeIndex(fromFiles);
+    if (!sanitizeIndexedRange(fromIndex, out)) {
+        return false;
+    }
+
+    deleteRequestsOutsideLiveIndex(out);
+
+    if (!sameIndex(fromIndex, out)) {
+        writeIndex(out);
     }
 
     return true;
 }
-
 bool writeIndex(const Index& index) {
     if (!mount()) {
         return false;

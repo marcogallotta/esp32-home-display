@@ -62,14 +62,15 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
         return false;
     }
 
+    state = next;
+
     if (!store.removeRequest(oldHead)) {
         logLine(
             LogLevel::Warn,
-            std::string("API disk buffer ") + actionName + " warning: request delete failed"
+            std::string("API disk buffer ") + actionName + " cleanup failed: request delete failed"
         );
     }
 
-    state = next;
     return true;
 }
 

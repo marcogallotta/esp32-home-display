@@ -380,7 +380,7 @@ TEST_CASE("request store falls back to the older index copy when the newer copy 
     expectQueuedReadings(store, {"Bed before outage", "Kitchen before outage"});
 }
 
-TEST_CASE("request store recovers a valid buffered reading that was written but never indexed") {
+TEST_CASE("request store treats a written-but-unindexed reading as an orphan when the index is valid") {
     auto store = RequestStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("indexed reading");
@@ -389,7 +389,7 @@ TEST_CASE("request store recovers a valid buffered reading that was written but 
 
     store.restartStoreFromDisk();
 
-    expectQueuedReadings(store, {"indexed reading", "written but not indexed reading"});
+    expectQueuedReadings(store, {"indexed reading"});
 }
 
 TEST_CASE("request store ignores a missing trailing request file that the index still mentions") {

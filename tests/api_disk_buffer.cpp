@@ -311,7 +311,7 @@ TEST_CASE("disk buffer does not queue a reading when writing the request fails")
     CHECK_EQ(buffer.queuedCount(), 0U);
 }
 
-TEST_CASE("disk buffer failed enqueue must not leave a durable orphan request") {
+TEST_CASE("disk buffer failed enqueue does not make the new reading visible") {
     auto buffer = DiskBufferScenario::emptyDiskBuffer();
     buffer.makeIndexWriteFail();
 
@@ -320,7 +320,7 @@ TEST_CASE("disk buffer failed enqueue must not leave a durable orphan request") 
     CHECK_EQ(buffer.writeRequestCalls(), 1);
     CHECK_EQ(buffer.writeIndexCalls(), 1);
     CHECK_EQ(buffer.queuedCount(), 0U);
-    CHECK(buffer.durableStoreHasNoRequestFiles());
+    expectVisibleReadings(buffer, {});
 }
 
 TEST_CASE("disk buffer preserves queued reading order while consuming confirmed sends") {
@@ -364,18 +364,18 @@ TEST_CASE("disk buffer does not consume a confirmed send when the state update f
     CHECK_EQ(buffer.removeRequestCalls(), 0);
 }
 
-TEST_CASE("disk buffer failed consume must leave the request visible after restart") {
+TEST_CASE("disk buffer delete failure after consume does not block forward progress") {
     auto buffer = DiskBufferScenario::withRequestsAlreadyOnDisk({"first reading", "second reading"});
     buffer.loadFromDisk();
     buffer.makeRequestRemoveFail();
 
-    CHECK_FALSE(buffer.tryToConsumeConfirmedFront());
+    CHECK(buffer.tryToConsumeConfirmedFront());
 
-    CHECK_EQ(buffer.headSequence(), 0U);
-    CHECK_EQ(buffer.queuedCount(), 2U);
+    CHECK_EQ(buffer.headSequence(), 1U);
+    CHECK_EQ(buffer.queuedCount(), 1U);
 
     buffer.restartFromDisk();
-    CHECK_EQ(buffer.frontReadingName(), "first reading");
+    CHECK_EQ(buffer.frontReadingName(), "second reading");
 }
 
 TEST_CASE("disk buffer rewrite front updates retry metadata without changing order") {
