@@ -144,6 +144,11 @@ void syncApiState(
 
         logApiWriteResult("SwitchBot", sensor.identity, response);
 
+        if (response.status == api::WriteStatus::Buffered) {
+            lastSent = current;
+            continue;
+        }
+
         if (response.status != api::WriteStatus::Sent) {
             continue;
         }
@@ -191,6 +196,12 @@ void syncApiState(
             client.postXiaomiReading(sensor.identity, pending.reading);
 
         logApiWriteResult("Xiaomi", sensor.identity, response);
+
+        if (response.status == api::WriteStatus::Buffered) {
+            lastSent = pending.reading;
+            resetPending(pending);
+            continue;
+        }
 
         if (response.status != api::WriteStatus::Sent) {
             continue;
