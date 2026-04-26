@@ -250,6 +250,12 @@ int main(int argc, char** argv) {
     api::State apiState;
     auto& store = api::request_file_store::defaultStore();
     api::disk_buffer::load(apiState.buffer.disk, store);
+    logLine(
+        LogLevel::Info,
+        "API disk buffer loaded: head " + std::to_string(apiState.buffer.disk.head) +
+        ", tail " + std::to_string(apiState.buffer.disk.tail) +
+        ", count " + std::to_string(apiState.buffer.disk.count)
+    );
 
     api::Client apiClient(config);
     api::BufferedClient bufferedClient(config, apiState.buffer, apiClient, store);

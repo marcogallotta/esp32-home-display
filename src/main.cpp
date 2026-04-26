@@ -11,6 +11,7 @@
 
 #include "api/buffered_client.h"
 #include "api/client.h"
+#include "api/disk_buffer.h"
 #include "api/request_file_store.h"
 #include "api/state.h"
 #include "api_sync.h"
@@ -114,6 +115,14 @@ void initStateStorage(AppContext& app) {
     app.previousState.xiaomiSensors.resize(xiaomiSensorCount);
 
     api::initState(app.currentState, app.apiState);
+
+    api::disk_buffer::load(app.apiState.buffer.disk, api::request_file_store::defaultStore());
+    logLine(
+        LogLevel::Info,
+        "API disk buffer loaded: head " + std::to_string(app.apiState.buffer.disk.head) +
+        ", tail " + std::to_string(app.apiState.buffer.disk.tail) +
+        ", count " + std::to_string(app.apiState.buffer.disk.count)
+    );
 }
 
 void initCallbacks(AppContext& app) {
