@@ -12,7 +12,6 @@ struct ForecastConfig {
 
 struct ApiBufferConfig {
     int inMemory = 32;
-    std::uint32_t diskMaxBytes = 512 * 1024;
     std::uint32_t diskReserveBytes = 256 * 1024;
     int drainRateCap = 4;
     int drainRateTickS = 5;
