@@ -236,10 +236,9 @@ WriteResult BufferedClient::postXiaomiReading(
 }
 
 WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
-    const std::uint64_t nowMs = platform::millis();
     if (hasBacklog(buffer_, store_)) {
         const BufferInsertResult insertResult =
-            bufferRequest(buffer_, request, config_.api.buffer, store_, nowMs);
+            bufferRequest(buffer_, request, config_.api.buffer, store_, platform::millis());
 
         if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
             logDroppedBufferFullRequest(request);
@@ -270,7 +269,7 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
 
         case FreshRequestDecision::Buffer: {
             const BufferInsertResult insertResult =
-                bufferRequest(buffer_, request, config_.api.buffer, store_, nowMs);
+                bufferRequest(buffer_, request, config_.api.buffer, store_, platform::millis());
 
             if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
                 logDroppedBufferFullRequest(request);
