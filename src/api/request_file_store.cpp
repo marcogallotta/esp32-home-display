@@ -2,11 +2,15 @@
 
 #include "buffer.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <sys/stat.h>
 #include <cstring>
+#include <set>
+#include <string>
+#include <sys/stat.h>
+#include <vector>
 
 #include <ArduinoJson.h>
 
@@ -96,6 +100,30 @@ bool makeRequestPath(std::uint32_t sequence, char* out, std::size_t outSize) {
     const int n = std::snprintf(out, outSize, "spool/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
 #endif
     return n > 0 && static_cast<std::size_t>(n) < outSize;
+}
+
+
+bool parseRequestSequenceFromName(const char* name, std::uint32_t& out) {
+    if (name == nullptr) {
+        return false;
+    }
+
+    unsigned long value = 0;
+    char suffix = '\0';
+    if (std::sscanf(name, "api_req_%08lu.bin%c", &value, &suffix) != 1) {
+        return false;
+    }
+
+    if (value > 0xFFFFFFFFul) {
+        return false;
+    }
+
+    out = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool requestFileExists(std::uint32_t sequence, const std::set<std::uint32_t>& sequences) {
+    return sequences.find(sequence) != sequences.end();
 }
 
 std::string extractMacFromBody(const std::string& body) {
@@ -196,6 +224,105 @@ bool writeIndexRecord(const char* path, const IndexRecord& record) {
 
 #endif
 
+
+bool listRequestSequences(std::vector<std::uint32_t>& out) {
+    out.clear();
+
+#ifdef ARDUINO
+    File root = LittleFS.open("/");
+    if (!root) {
+        return false;
+    }
+
+    File file = root.openNextFile();
+    while (file) {
+        const char* rawName = file.name();
+        const char* name = rawName;
+        if (name != nullptr && name[0] == '/') {
+            ++name;
+        }
+
+        std::uint32_t sequence = 0;
+        if (parseRequestSequenceFromName(name, sequence)) {
+            out.push_back(sequence);
+        }
+
+        file.close();
+        file = root.openNextFile();
+    }
+
+    root.close();
+#else
+    std::error_code ec;
+    if (!std::filesystem::exists("spool", ec)) {
+        return true;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator("spool", ec)) {
+        if (ec) {
+            return false;
+        }
+
+        if (!entry.is_regular_file(ec)) {
+            continue;
+        }
+
+        const std::string name = entry.path().filename().string();
+        std::uint32_t sequence = 0;
+        if (parseRequestSequenceFromName(name.c_str(), sequence)) {
+            out.push_back(sequence);
+        }
+    }
+#endif
+
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return true;
+}
+
+bool recoverIndexFromRequestFiles(Index& out) {
+    std::vector<std::uint32_t> sequences;
+    if (!listRequestSequences(sequences)) {
+        return false;
+    }
+
+    out = Index{};
+    if (sequences.empty()) {
+        return true;
+    }
+
+    const std::set<std::uint32_t> existing(sequences.begin(), sequences.end());
+    const std::uint32_t head = sequences.front();
+
+    std::uint32_t count = 0;
+    std::uint32_t sequence = head;
+    for (;;) {
+        if (!requestFileExists(sequence, existing)) {
+            break;
+        }
+
+        BufferedRequest request;
+        if (!readRequest(sequence, request)) {
+            break;
+        }
+
+        ++count;
+        if (sequence == 0xFFFFFFFFu) {
+            break;
+        }
+        ++sequence;
+    }
+
+    out.head = head;
+    out.tail = head + count;
+    out.count = count;
+    return true;
+}
+
+bool sameIndex(const Index& a, const Index& b) {
+    return a.head == b.head && a.tail == b.tail && a.count == b.count;
+}
+
 bool readBestIndexRecord(IndexRecord& out, bool& fromA) {
     IndexRecord a;
     IndexRecord b;
@@ -242,17 +369,31 @@ bool readIndex(Index& out) {
         return false;
     }
 
+    Index fromFiles;
+    if (!recoverIndexFromRequestFiles(fromFiles)) {
+        return false;
+    }
+
     IndexRecord record;
     bool fromA = true;
-
     if (!readBestIndexRecord(record, fromA)) {
-        out = Index{};
+        out = fromFiles;
+        if (out.count > 0) {
+            writeIndex(out);
+        }
         return true;
     }
 
-    out.head = record.head;
-    out.tail = record.tail;
-    out.count = record.count;
+    Index fromIndex;
+    fromIndex.head = record.head;
+    fromIndex.tail = record.tail;
+    fromIndex.count = record.count;
+
+    out = fromFiles;
+    if (!sameIndex(fromIndex, fromFiles)) {
+        writeIndex(fromFiles);
+    }
+
     return true;
 }
 
