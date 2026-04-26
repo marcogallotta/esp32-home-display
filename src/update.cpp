@@ -1,5 +1,6 @@
 #include "update.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <iomanip>
 #include <optional>
@@ -26,6 +27,13 @@ std::string formatDate(const std::tm& time) {
         << std::setw(2) << (time.tm_mon + 1) << '-'
         << std::setw(2) << time.tm_mday;
     return out.str();
+}
+
+std::optional<std::int64_t> validEpochOrNull(std::int64_t epochS) {
+    if (epochS <= 0) {
+        return std::nullopt;
+    }
+    return epochS;
 }
 
 std::string switchbotLabel(const SwitchbotSensorState& row) {
@@ -58,9 +66,19 @@ void logSwitchbotSummary(const State& state, std::time_t now) {
 
         msg += " " + label +
             "=" + formatFloat1(*row.reading.temperatureC) + "C/" +
-            std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%" +
-            "/" + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m" +
-            "/RSSI " + std::to_string(*row.reading.rssi) + ";";
+            std::to_string(static_cast<int>(*row.reading.humidityPct)) + "%";
+
+        if (row.reading.lastSeenEpochS.has_value()) {
+            msg += "/" + std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m";
+        } else {
+            msg += "/?m";
+        }
+
+        if (row.reading.rssi.has_value()) {
+            msg += "/RSSI " + std::to_string(*row.reading.rssi);
+        }
+
+        msg += ";";
     }
 
     if (missing > 0) {
@@ -177,7 +195,7 @@ void updateSwitchbotState(
         const auto& reading = it->second;
         row.reading.temperatureC = reading.temperature_c;
         row.reading.humidityPct = reading.humidity;
-        row.reading.lastSeenEpochS = reading.last_seen_epoch_s;
+        row.reading.lastSeenEpochS = validEpochOrNull(reading.last_seen_epoch_s);
         row.reading.rssi = reading.rssi;
     }
 
@@ -217,7 +235,7 @@ void updateXiaomiState(
             reading.hasLux ? std::optional<int>(reading.lux) : std::nullopt;
         row.reading.conductivityUsCm =
             reading.hasConductivity ? std::optional<int>(reading.conductivityUsCm) : std::nullopt;
-        row.reading.lastSeenEpochS = reading.lastSeenEpochS;
+        row.reading.lastSeenEpochS = validEpochOrNull(reading.lastSeenEpochS);
         row.reading.rssi = reading.rssi;
     }
 

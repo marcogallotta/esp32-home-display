@@ -1,5 +1,6 @@
 #include "api_sync.h"
 
+#include <cstdint>
 #include <ctime>
 #include <string>
 
@@ -12,6 +13,21 @@ bool isAccepted(api::BackendWriteResult result) {
     return result == api::BackendWriteResult::Created ||
            result == api::BackendWriteResult::Duplicate ||
            result == api::BackendWriteResult::Merged;
+}
+
+bool hasValidApiTimestamp(const std::optional<std::int64_t>& timestamp) {
+    return timestamp.has_value() && *timestamp > 0;
+}
+
+void logSkippedInvalidTimestamp(
+    const char* sensorType,
+    const SensorIdentity& identity
+) {
+    logLine(
+        LogLevel::Debug,
+        std::string("Skipping API write for ") + sensorType + " " + identity.name +
+        ": sensor timestamp is not available yet"
+    );
 }
 
 const char* writeStatusName(api::WriteStatus status) {
@@ -139,6 +155,11 @@ void syncApiState(
             continue;
         }
 
+        if (!hasValidApiTimestamp(current.lastSeenEpochS)) {
+            logSkippedInvalidTimestamp("SwitchBot", sensor.identity);
+            continue;
+        }
+
         const api::WriteResult response =
             client.postSwitchbotReading(sensor.identity, current);
 
@@ -169,10 +190,16 @@ void syncApiState(
         auto& lastSent = apiState.xiaomi.lastSent[i];
         auto& pending = apiState.xiaomi.pending[i];
 
+        if (current.hasAnyValue() && !hasValidApiTimestamp(current.lastSeenEpochS)) {
+            logSkippedInvalidTimestamp("Xiaomi", sensor.identity);
+            resetPending(pending);
+            continue;
+        }
+
         if (current.hasAnyValue() && differsFromLastSent(current, lastSent)) {
             if (!pending.active) {
                 pending.active = true;
-                pending.openedAtEpochS = current.lastSeenEpochS.value_or(now);
+                pending.openedAtEpochS = *current.lastSeenEpochS;
             }
 
             if (!sameBufferedData(current, pending.reading)) {
@@ -189,6 +216,12 @@ void syncApiState(
             now >= pending.openedAtEpochS + kXiaomiBufferWindowSeconds;
 
         if (!flushDueToComplete && !flushDueToTimeout) {
+            continue;
+        }
+
+        if (!hasValidApiTimestamp(pending.reading.lastSeenEpochS)) {
+            logSkippedInvalidTimestamp("Xiaomi", sensor.identity);
+            resetPending(pending);
             continue;
         }
 
