@@ -387,16 +387,11 @@ void logInvalidTimeApiSyncSkipped(std::uint64_t nowMs) {
 
 void syncOutputs(AppContext& app, std::time_t now) {
     (void)now;
+
     const std::uint64_t nowMs = platform::millis();
 
     if (!app.hasValidTime && platform::hasValidTime()) {
         app.hasValidTime = true;
-    }
-
-    if (app.hasValidTime) {
-        syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
-    } else {
-        logInvalidTimeApiSyncSkipped(nowMs);
     }
 
     api::maybeDrainBuffer(
@@ -406,6 +401,12 @@ void syncOutputs(AppContext& app, std::time_t now) {
         app.apiClient,
         api::request_file_store::defaultStore()
     );
+
+    if (app.hasValidTime) {
+        syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
+    } else {
+        logInvalidTimeApiSyncSkipped(nowMs);
+    }
 
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);

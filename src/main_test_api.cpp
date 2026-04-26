@@ -210,6 +210,14 @@ bool shouldSendXiaomi(const Options& options, std::uint64_t seq) {
     return seq % 5 == 4;
 }
 
+void logTimeInvalid(std::uint64_t nowMs) {
+    logLine(
+        LogLevel::Error,
+        "API harness skipped simulated write: time not initialized, uptimeMs=" +
+        std::to_string(nowMs)
+    );
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -249,6 +257,8 @@ int main(int argc, char** argv) {
     const SensorIdentity sb = switchbotIdentity(config);
     const SensorIdentity xm = xiaomiIdentity(config);
 
+    bool hasValidTime = platform::hasValidTime();
+
     logLine(
         LogLevel::Info,
         "API harness started: baseUrl=" + config.api.baseUrl +
@@ -261,38 +271,47 @@ int main(int argc, char** argv) {
     std::uint64_t seq = 0;
     while (options.count == 0 || static_cast<int>(seq) < options.count) {
         const std::uint64_t nowMs = platform::millis();
-        const std::time_t epoch = std::time(nullptr);
 
-        if (!options.drainOnly) {
-            if (shouldSendXiaomi(options, seq)) {
-                const auto result = postXiaomiCompat(
-                    bufferedClient,
-                    xm,
-                    makeXiaomiReading(static_cast<std::int64_t>(epoch), seq),
-                    nowMs,
-                    0
-                );
-                logWrite("Xiaomi", result);
-            } else {
-                const auto result = postSwitchbotCompat(
-                    bufferedClient,
-                    sb,
-                    makeSwitchbotReading(static_cast<std::int64_t>(epoch), seq),
-                    nowMs,
-                    0
-                );
-                logWrite("SwitchBot", result);
-            }
+        if (!hasValidTime && platform::hasValidTime()) {
+            hasValidTime = true;
         }
 
         const api::BufferDrainResult drain = api::maybeDrainBuffer(
             apiState.buffer,
-            platform::millis(),
+            nowMs,
             config.api.buffer,
             apiClient,
             store
         );
         logDrain(drain, apiState.buffer);
+
+        if (!options.drainOnly) {
+            if (!hasValidTime) {
+                logTimeInvalid(nowMs);
+            } else {
+                const std::time_t epoch = std::time(nullptr);
+
+                if (shouldSendXiaomi(options, seq)) {
+                    const auto result = postXiaomiCompat(
+                        bufferedClient,
+                        xm,
+                        makeXiaomiReading(static_cast<std::int64_t>(epoch), seq),
+                        nowMs,
+                        0
+                    );
+                    logWrite("Xiaomi", result);
+                } else {
+                    const auto result = postSwitchbotCompat(
+                        bufferedClient,
+                        sb,
+                        makeSwitchbotReading(static_cast<std::int64_t>(epoch), seq),
+                        nowMs,
+                        0
+                    );
+                    logWrite("SwitchBot", result);
+                }
+            }
+        }
 
         ++seq;
         platform::delayMs(options.intervalMs);
