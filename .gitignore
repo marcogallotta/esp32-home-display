@@ -3,6 +3,7 @@
 .pio
 .vscode
 spool
+spool_harness
 data/laptop.pem
 data/config.json
 esp32-build

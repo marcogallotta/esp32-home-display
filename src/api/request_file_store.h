@@ -13,6 +13,7 @@ struct Index {
 };
 
 bool mount();
+void setBasePath(const char* path);
 
 bool readIndex(Index& out);
 bool writeIndex(const Index& index);

@@ -31,14 +31,15 @@ constexpr std::uint32_t kRequestMagic = 0x41504952; // APIR
 constexpr std::uint16_t kFormatVersion = 1;
 
 constexpr std::size_t kMaxPathBytes = 96;
+constexpr std::size_t kMaxFilePathBytes = 128;
 constexpr std::size_t kMaxBodyBytes = 4096;
 
 #ifdef ARDUINO
 constexpr const char* kIndexAPath = "/api_idx_a.bin";
 constexpr const char* kIndexBPath = "/api_idx_b.bin";
 #else
-constexpr const char* kIndexAPath = "spool/api_idx_a.bin";
-constexpr const char* kIndexBPath = "spool/api_idx_b.bin";
+constexpr const char* kIndexAFileName = "api_idx_a.bin";
+constexpr const char* kIndexBFileName = "api_idx_b.bin";
 #endif
 
 struct IndexRecord {
@@ -93,11 +94,28 @@ std::uint32_t requestCrc(
     return crc;
 }
 
+#ifndef ARDUINO
+std::string& basePath() {
+    static std::string path = "spool";
+    return path;
+}
+
+std::string storePath(const char* filename) {
+    return basePath() + "/" + filename;
+}
+#endif
+
 bool makeRequestPath(std::uint32_t sequence, char* out, std::size_t outSize) {
 #ifdef ARDUINO
     const int n = std::snprintf(out, outSize, "/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
 #else
-    const int n = std::snprintf(out, outSize, "spool/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
+    const int n = std::snprintf(
+        out,
+        outSize,
+        "%s/api_req_%08lu.bin",
+        basePath().c_str(),
+        static_cast<unsigned long>(sequence)
+    );
 #endif
     return n > 0 && static_cast<std::size_t>(n) < outSize;
 }
@@ -254,11 +272,11 @@ bool listRequestSequences(std::vector<std::uint32_t>& out) {
     root.close();
 #else
     std::error_code ec;
-    if (!std::filesystem::exists("spool", ec)) {
+    if (!std::filesystem::exists(basePath(), ec)) {
         return true;
     }
 
-    for (const auto& entry : std::filesystem::directory_iterator("spool", ec)) {
+    for (const auto& entry : std::filesystem::directory_iterator(basePath(), ec)) {
         if (ec) {
             return false;
         }
@@ -375,8 +393,15 @@ bool readBestIndexRecord(IndexRecord& out, bool& fromA) {
     IndexRecord a;
     IndexRecord b;
 
+#ifdef ARDUINO
     const bool hasA = readIndexRecord(kIndexAPath, a);
     const bool hasB = readIndexRecord(kIndexBPath, b);
+#else
+    const std::string indexAPath = storePath(kIndexAFileName);
+    const std::string indexBPath = storePath(kIndexBFileName);
+    const bool hasA = readIndexRecord(indexAPath.c_str(), a);
+    const bool hasB = readIndexRecord(indexBPath.c_str(), b);
+#endif
 
     if (!hasA && !hasB) {
         return false;
@@ -408,7 +433,25 @@ bool mount() {
 
     return mounted;
 #else
+    std::error_code ec;
+    std::filesystem::create_directories(basePath(), ec);
+    if (ec) {
+        logLine(LogLevel::Warn, "Request file store directory create failed");
+        return false;
+    }
     return true;
+#endif
+}
+
+void setBasePath(const char* path) {
+#ifdef ARDUINO
+    (void)path;
+#else
+    std::string next = (path == nullptr || path[0] == '\0') ? std::string("spool") : std::string(path);
+    while (next.size() > 1 && next.back() == '/') {
+        next.pop_back();
+    }
+    basePath() = next;
 #endif
 }
 
@@ -463,9 +506,15 @@ bool writeIndex(const Index& index) {
     next.count = index.count;
     next.crc = indexCrc(next);
 
+#ifdef ARDUINO
     const char* targetPath = hasPrevious && previousFromA ? kIndexBPath : kIndexAPath;
-
     if (!writeIndexRecord(targetPath, next)) {
+#else
+    const std::string targetPath = hasPrevious && previousFromA
+        ? storePath(kIndexBFileName)
+        : storePath(kIndexAFileName);
+    if (!writeIndexRecord(targetPath.c_str(), next)) {
+#endif
         logLine(LogLevel::Warn, "Request file store index write failed");
         return false;
     }
@@ -484,7 +533,7 @@ bool writeRequest(std::uint32_t sequence, const BufferedRequest& request) {
         return false;
     }
 
-    char path[32];
+    char path[kMaxFilePathBytes];
     if (!makeRequestPath(sequence, path, sizeof(path))) {
         return false;
     }
@@ -528,7 +577,7 @@ bool readRequest(std::uint32_t sequence, BufferedRequest& out) {
         return false;
     }
 
-    char path[32];
+    char path[kMaxFilePathBytes];
     if (!makeRequestPath(sequence, path, sizeof(path))) {
         return false;
     }
@@ -607,7 +656,7 @@ bool removeRequest(std::uint32_t sequence) {
         return false;
     }
 
-    char path[32];
+    char path[kMaxFilePathBytes];
     if (!makeRequestPath(sequence, path, sizeof(path))) {
         return false;
     }
@@ -629,7 +678,7 @@ std::uint64_t freeBytes() {
     return LittleFS.totalBytes() - LittleFS.usedBytes();
 #else
     std::error_code ec;
-    const auto info = std::filesystem::space(".", ec);
+    const auto info = std::filesystem::space(basePath(), ec);
     if (ec) {
         return 0;
     }

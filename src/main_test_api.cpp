@@ -240,6 +240,8 @@ int main(int argc, char** argv) {
         config.api.apiKey = options.apiKey;
     }
 
+    api::request_file_store::setBasePath("spool_harness");
+
     if (!api::request_file_store::mount()) {
         logLine(LogLevel::Error, "Failed to mount request file store");
         return 1;
