@@ -137,16 +137,25 @@ void logDroppedBufferedRequest(
     const BufferedRequest& request,
     const network::HttpResponse& response
 ) {
-    logLine(
-        LogLevel::Warn,
+    std::string message =
         "Dropping buffered request to " + request.path +
         " for " + request.mac +
         ": " + transportResultName(response.transport) +
-        ", HTTP " + std::to_string(response.statusCode) +
-        ", timeout retries " + std::to_string(request.timeoutRetryCount) +
-        ", TLS retries " + std::to_string(request.tlsRetryCount) +
-        ", " + response.error
-    );
+        ", HTTP " + std::to_string(response.statusCode);
+
+    if (response.transport == network::TransportResult::Timeout) {
+        message += ", timeout retries " + std::to_string(request.timeoutRetryCount);
+    }
+
+    if (response.transport == network::TransportResult::TlsError) {
+        message += ", TLS retries " + std::to_string(request.tlsRetryCount);
+    }
+
+    if (!response.error.empty()) {
+        message += ", " + response.error;
+    }
+
+    logLine(LogLevel::Warn, message);
 
     dropped_log::appendDroppedRequest(
         droppedReason(request, response),
