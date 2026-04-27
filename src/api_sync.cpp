@@ -121,13 +121,6 @@ bool hasCompleteXiaomiReading(const XiaomiReading& reading) {
            reading.conductivityUsCm.has_value();
 }
 
-bool differsFromLastSent(const XiaomiReading& current, const XiaomiReading& lastSent) {
-    return api::shouldSendXiaomiTemperature(current, lastSent) ||
-           api::shouldSendXiaomiMoisture(current, lastSent) ||
-           api::shouldSendXiaomiLux(current, lastSent) ||
-           api::shouldSendXiaomiConductivity(current, lastSent);
-}
-
 bool sameBufferedData(const XiaomiReading& a, const XiaomiReading& b) {
     return a.temperatureC == b.temperatureC &&
            a.moisturePct == b.moisturePct &&
@@ -142,6 +135,7 @@ void resetPending(api::XiaomiBufferedState& pending) {
 } // namespace
 
 void syncApiState(
+    const Config& config,
     const State& appState,
     api::State& apiState,
     api::BufferedClient& client
@@ -151,7 +145,7 @@ void syncApiState(
         const auto& current = sensor.reading;
         auto& lastSent = apiState.switchbot.lastSent[i];
 
-        if (!api::shouldSendSwitchbot(current, lastSent)) {
+        if (!api::shouldSendSwitchbot(config, current, lastSent)) {
             continue;
         }
 
@@ -196,7 +190,7 @@ void syncApiState(
             continue;
         }
 
-        if (current.hasAnyValue() && differsFromLastSent(current, lastSent)) {
+        if (current.hasAnyValue() && api::shouldSendXiaomi(config, current, lastSent)) {
             if (!pending.active) {
                 pending.active = true;
                 pending.openedAtEpochS = *current.lastSeenEpochS;

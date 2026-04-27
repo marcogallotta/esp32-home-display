@@ -105,8 +105,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (!sensorWritePolicy.isNull() &&
         (!readOptionalInt(sensorWritePolicy, "heartbeat_minutes", sensorWritePolicyConfig.heartbeatMinutes, "api.sensor_write_policy.heartbeat_minutes") ||
          !readOptionalFloat(sensorWritePolicy, "temperature_delta_c", sensorWritePolicyConfig.temperatureDeltaC, "api.sensor_write_policy.temperature_delta_c") ||
-         !readOptionalFloat(sensorWritePolicy, "humidity_delta_pct", sensorWritePolicyConfig.humidityDeltaPct, "api.sensor_write_policy.humidity_delta_pct") ||
-         !readOptionalFloat(sensorWritePolicy, "moisture_delta_pct", sensorWritePolicyConfig.moistureDeltaPct, "api.sensor_write_policy.moisture_delta_pct") ||
+         !readOptionalInt(sensorWritePolicy, "humidity_delta_pct", sensorWritePolicyConfig.humidityDeltaPct, "api.sensor_write_policy.humidity_delta_pct") ||
+         !readOptionalInt(sensorWritePolicy, "moisture_delta_pct", sensorWritePolicyConfig.moistureDeltaPct, "api.sensor_write_policy.moisture_delta_pct") ||
          !readOptionalUint32(sensorWritePolicy, "conductivity_delta_us_cm", sensorWritePolicyConfig.conductivityDeltaUsCm, "api.sensor_write_policy.conductivity_delta_us_cm") ||
          !readOptionalUint32(sensorWritePolicy, "lux_delta_cap", sensorWritePolicyConfig.luxDeltaCap, "api.sensor_write_policy.lux_delta_cap") ||
          !readOptionalFloat(sensorWritePolicy, "lux_delta_fraction", sensorWritePolicyConfig.luxDeltaFraction, "api.sensor_write_policy.lux_delta_fraction"))) {
@@ -132,10 +132,10 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (sensorWritePolicyConfig.temperatureDeltaC <= 0.0f) {
         return fail("api.sensor_write_policy.temperature_delta_c must be > 0");
     }
-    if (sensorWritePolicyConfig.humidityDeltaPct <= 0.0f) {
+    if (sensorWritePolicyConfig.humidityDeltaPct <= 0) {
         return fail("api.sensor_write_policy.humidity_delta_pct must be > 0");
     }
-    if (sensorWritePolicyConfig.moistureDeltaPct <= 0.0f) {
+    if (sensorWritePolicyConfig.moistureDeltaPct <= 0) {
         return fail("api.sensor_write_policy.moisture_delta_pct must be > 0");
     }
     if (sensorWritePolicyConfig.conductivityDeltaUsCm == 0) {

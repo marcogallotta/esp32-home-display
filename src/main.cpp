@@ -412,7 +412,7 @@ void syncOutputs(AppContext& app, std::time_t now) {
     );
 
     if (app.hasValidTime) {
-        syncApiState(app.currentState, app.apiState, app.bufferedApiClient);
+        syncApiState(app.config, app.currentState, app.apiState, app.bufferedApiClient);
     } else {
         logInvalidTimeApiSyncSkipped(nowMs);
     }

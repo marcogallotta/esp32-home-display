@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "../config.h"
 #include "../sensor_readings.h"
 #include "../state.h"
 #include "buffer.h"
@@ -33,26 +34,49 @@ struct State {
 void initState(const ::State& appState, State& apiState);
 
 bool shouldSendSwitchbot(
+    const SensorWritePolicyConfig& policy,
     const SwitchbotReading& current,
     const SwitchbotReading& lastSent
 );
 
+bool shouldSendSwitchbot(
+    const Config& config,
+    const SwitchbotReading& current,
+    const SwitchbotReading& lastSent
+);
+
+bool shouldSendXiaomi(
+    const SensorWritePolicyConfig& policy,
+    const XiaomiReading& current,
+    const XiaomiReading& lastSent
+);
+
+bool shouldSendXiaomi(
+    const Config& config,
+    const XiaomiReading& current,
+    const XiaomiReading& lastSent
+);
+
 bool shouldSendXiaomiTemperature(
+    const SensorWritePolicyConfig& policy,
     const XiaomiReading& current,
     const XiaomiReading& lastSent
 );
 
 bool shouldSendXiaomiMoisture(
+    const SensorWritePolicyConfig& policy,
     const XiaomiReading& current,
     const XiaomiReading& lastSent
 );
 
 bool shouldSendXiaomiLux(
+    const SensorWritePolicyConfig& policy,
     const XiaomiReading& current,
     const XiaomiReading& lastSent
 );
 
 bool shouldSendXiaomiConductivity(
+    const SensorWritePolicyConfig& policy,
     const XiaomiReading& current,
     const XiaomiReading& lastSent
 );

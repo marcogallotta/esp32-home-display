@@ -20,8 +20,8 @@ struct ApiBufferConfig {
 struct SensorWritePolicyConfig {
     int heartbeatMinutes = 60;
     float temperatureDeltaC = 0.3f;
-    float humidityDeltaPct = 2.0f;
-    float moistureDeltaPct = 2.0f;
+    int humidityDeltaPct = 2;
+    int moistureDeltaPct = 2;
     std::uint32_t conductivityDeltaUsCm = 10;
     // Lux threshold is min(luxDeltaCap, baseline lux * luxDeltaFraction).
     std::uint32_t luxDeltaCap = 2000;
