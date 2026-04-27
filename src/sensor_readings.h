@@ -15,7 +15,6 @@ public:
     std::optional<float> temperatureC;
     std::optional<std::uint8_t> humidityPct;
     std::optional<std::int64_t> lastSeenEpochS;
-    std::optional<int> rssi;
 
     bool hasAnyValue() const;
     bool hasCompleteReading() const;
@@ -31,7 +30,6 @@ public:
     std::optional<int> lux;
     std::optional<int> conductivityUsCm;
     std::optional<std::int64_t> lastSeenEpochS;
-    std::optional<int> rssi;
 
     bool hasAnyValue() const;
 

@@ -17,7 +17,6 @@ struct SensorReading {
     float temperature_c;
     std::uint8_t humidity;
     std::int64_t last_seen_epoch_s;
-    int rssi;
 };
 
 using SensorMap = std::map<std::string, SensorReading>;

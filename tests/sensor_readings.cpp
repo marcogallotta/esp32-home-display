@@ -41,10 +41,6 @@ TEST_CASE("switchbot reading reports whether it has any value") {
     reading = SwitchbotReading{};
     reading.lastSeenEpochS = 12345;
     CHECK(reading.hasAnyValue());
-
-    reading = SwitchbotReading{};
-    reading.rssi = -71;
-    CHECK(reading.hasAnyValue());
 }
 
 TEST_CASE("switchbot reading is complete only when temperature and humidity are present") {
@@ -106,10 +102,6 @@ TEST_CASE("xiaomi reading reports whether it has any value") {
 
     reading = XiaomiReading{};
     reading.lastSeenEpochS = 12345;
-    CHECK(reading.hasAnyValue());
-
-    reading = XiaomiReading{};
-    reading.rssi = -80;
     CHECK(reading.hasAnyValue());
 }
 

@@ -11,7 +11,6 @@ namespace ble {
 
 struct AdvertisementEvent {
     std::string address;
-    int rssi = 0;
     std::map<std::uint16_t, std::vector<std::uint8_t>> manufacturerData;
     std::map<std::string, std::vector<std::uint8_t>> serviceData;
 };

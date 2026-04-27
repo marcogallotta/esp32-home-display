@@ -74,9 +74,6 @@ void logSwitchbotSummary(const State& state, std::time_t now) {
             msg += "/?m";
         }
 
-        if (row.reading.rssi.has_value()) {
-            msg += "/RSSI " + std::to_string(*row.reading.rssi);
-        }
 
         msg += ";";
     }
@@ -125,9 +122,6 @@ void logXiaomiSummary(const State& state, std::time_t now) {
         }
         if (row.reading.lastSeenEpochS.has_value()) {
             appendPart(std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m");
-        }
-        if (row.reading.rssi.has_value()) {
-            appendPart("RSSI " + std::to_string(*row.reading.rssi));
         }
 
         msg += ";";
@@ -196,7 +190,6 @@ void updateSwitchbotState(
         row.reading.temperatureC = reading.temperature_c;
         row.reading.humidityPct = reading.humidity;
         row.reading.lastSeenEpochS = validEpochOrNull(reading.last_seen_epoch_s);
-        row.reading.rssi = reading.rssi;
     }
 
     logSwitchbotSummary(state, now);
@@ -236,7 +229,6 @@ void updateXiaomiState(
         row.reading.conductivityUsCm =
             reading.hasConductivity ? std::optional<int>(reading.conductivityUsCm) : std::nullopt;
         row.reading.lastSeenEpochS = validEpochOrNull(reading.lastSeenEpochS);
-        row.reading.rssi = reading.rssi;
     }
 
     logXiaomiSummary(state, now);

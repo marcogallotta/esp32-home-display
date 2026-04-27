@@ -30,7 +30,6 @@ State makeBaseState() {
     state.switchbotSensors[0].reading.temperatureC = 21.2f;
     state.switchbotSensors[0].reading.humidityPct = 55;
     state.switchbotSensors[0].reading.lastSeenEpochS = 1000;
-    state.switchbotSensors[0].reading.rssi = -60;
 
     state.hasForecast = true;
     state.forecast.count = 2;
@@ -130,7 +129,6 @@ TEST_CASE("sensor reading changes dirty only affected sensor rows") {
         current.switchbotSensors[1].reading.temperatureC = 19.0f;
         current.switchbotSensors[1].reading.humidityPct = 44;
         current.switchbotSensors[1].reading.lastSeenEpochS = 1234;
-        current.switchbotSensors[1].reading.rssi = -70;
 
         const DirtyRegions dirty = computeDirtyRegions(previous, current);
 

@@ -140,7 +140,6 @@ struct Scanner::Impl {
 
         AdvertisementEvent event;
         event.address = addr;
-        event.rssi = static_cast<int>(getInt16Property(props, "RSSI").value_or(0));
 
         if (manufacturerData.has_value()) {
             event.manufacturerData = *manufacturerData;

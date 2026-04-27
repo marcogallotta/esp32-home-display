@@ -58,7 +58,6 @@ struct Scanner::Impl {
             SensorReading& reading = sensors[event.address];
             reading.name = sensor->name;
             reading.shortName = sensor->shortName;
-            reading.rssi = event.rssi;
             reading.lastSeenEpochS =
                 platform::hasValidTime() ? static_cast<std::int64_t>(std::time(nullptr)) : 0;
 

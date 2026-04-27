@@ -109,7 +109,6 @@ SwitchbotReading makeSwitchbotReading(std::int64_t epochS, std::uint64_t seq) {
     reading.temperatureC = 20.0f + static_cast<float>(seq % 10) * 0.1f;
     reading.humidityPct = static_cast<std::uint8_t>(40 + (seq % 10));
     reading.lastSeenEpochS = epochS;
-    reading.rssi = -60;
     return reading;
 }
 
@@ -120,7 +119,6 @@ XiaomiReading makeXiaomiReading(std::int64_t epochS, std::uint64_t seq) {
     reading.lux = 1000 + static_cast<int>((seq % 20) * 100);
     reading.conductivityUsCm = 80 + static_cast<int>(seq % 10);
     reading.lastSeenEpochS = epochS;
-    reading.rssi = -70;
     return reading;
 }
 

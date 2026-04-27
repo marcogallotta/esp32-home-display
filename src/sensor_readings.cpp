@@ -16,8 +16,7 @@ std::optional<int> roundedTemp(const std::optional<float>& value) {
 bool SwitchbotReading::hasAnyValue() const {
     return temperatureC.has_value() ||
            humidityPct.has_value() ||
-           lastSeenEpochS.has_value() ||
-           rssi.has_value();
+           lastSeenEpochS.has_value();
 }
 
 bool SwitchbotReading::hasCompleteReading() const {
@@ -46,8 +45,7 @@ bool XiaomiReading::hasAnyValue() const {
            moisturePct.has_value() ||
            lux.has_value() ||
            conductivityUsCm.has_value() ||
-           lastSeenEpochS.has_value() ||
-           rssi.has_value();
+           lastSeenEpochS.has_value();
 }
 
 bool XiaomiReading::equalsForDisplay(const XiaomiReading& other) const {

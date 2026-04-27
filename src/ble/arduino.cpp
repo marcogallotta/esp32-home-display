@@ -67,7 +67,6 @@ struct Scanner::Impl {
                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
             event.address = std::move(addr);
-            event.rssi = advertisedDevice->getRSSI();
 
             if (advertisedDevice->haveManufacturerData()) {
                 const std::string manufacturerData = advertisedDevice->getManufacturerData();

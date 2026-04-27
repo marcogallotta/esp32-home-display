@@ -28,7 +28,6 @@ struct SensorReading {
     int conductivityUsCm = 0;
 
     std::int64_t lastSeenEpochS = 0;
-    int rssi = 0;
 };
 
 using SensorMap = std::map<std::string, SensorReading>;

@@ -29,7 +29,6 @@ struct Scanner::Impl {
 
     void upsertReading(
         const std::string& addr,
-        int rssi,
         const std::vector<std::uint8_t>& payload
     ) {
         if (!isMeterPayload(payload)) {
@@ -50,7 +49,6 @@ struct Scanner::Impl {
             reading->temperature_c,
             reading->humidity,
             lastSeenEpochS,
-            rssi,
         };
 
         UpdateCallback cb;
@@ -72,7 +70,7 @@ struct Scanner::Impl {
             return;
         }
 
-        upsertReading(event.address, event.rssi, it->second);
+        upsertReading(event.address, it->second);
     }
 
     void setUpdateCallback(UpdateCallback callback) {
