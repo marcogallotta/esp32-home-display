@@ -16,11 +16,47 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return false;
     }
 
-    auto fail = [&](const char* msg) {
+    auto fail = [&](const std::string& msg) {
         if (logErrors) {
             std::cerr << "Failed to parse config JSON: " << msg << std::endl;
         }
         return false;
+    };
+
+    auto readOptionalInt = [&](JsonObject obj, const char* key, int& value, const char* path) {
+        const JsonVariant field = obj[key];
+        if (field.isNull()) {
+            return true;
+        }
+        if (!field.is<int>()) {
+            return fail(std::string(path) + " is not an int");
+        }
+        value = field.as<int>();
+        return true;
+    };
+
+    auto readOptionalFloat = [&](JsonObject obj, const char* key, float& value, const char* path) {
+        const JsonVariant field = obj[key];
+        if (field.isNull()) {
+            return true;
+        }
+        if (!field.is<float>()) {
+            return fail(std::string(path) + " is not a number");
+        }
+        value = field.as<float>();
+        return true;
+    };
+
+    auto readOptionalUint32 = [&](JsonObject obj, const char* key, std::uint32_t& value, const char* path) {
+        const JsonVariant field = obj[key];
+        if (field.isNull()) {
+            return true;
+        }
+        if (!field.is<unsigned int>()) {
+            return fail(std::string(path) + " is not an unsigned int");
+        }
+        value = field.as<std::uint32_t>();
+        return true;
     };
 
     const JsonObject forecast = json["forecast"];
@@ -54,44 +90,62 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("api.pem_file is not a string");
     }
 
+    ApiBufferConfig apiBufferConfig = config.api.buffer;
     const JsonObject apiBuffer = api["buffer"];
-    int apiBufferInMemory = config.api.buffer.inMemory;
-    std::uint32_t apiBufferDiskReserveBytes = config.api.buffer.diskReserveBytes;
-    int apiBufferDrainRateCap = config.api.buffer.drainRateCap;
-    int apiBufferDrainRateTickS = config.api.buffer.drainRateTickS;
+    if (!apiBuffer.isNull() &&
+        (!readOptionalInt(apiBuffer, "in_memory", apiBufferConfig.inMemory, "api.buffer.in_memory") ||
+         !readOptionalUint32(apiBuffer, "disk_reserve_bytes", apiBufferConfig.diskReserveBytes, "api.buffer.disk_reserve_bytes") ||
+         !readOptionalInt(apiBuffer, "drain_rate_cap", apiBufferConfig.drainRateCap, "api.buffer.drain_rate_cap") ||
+         !readOptionalInt(apiBuffer, "drain_rate_tick_s", apiBufferConfig.drainRateTickS, "api.buffer.drain_rate_tick_s"))) {
+        return false;
+    }
 
-    if (!apiBuffer.isNull()) {
-        if (!apiBuffer["in_memory"].isNull() && !apiBuffer["in_memory"].is<int>()) {
-            return fail("api.buffer.in_memory is not an int");
-        }
-        if (!apiBuffer["disk_reserve_bytes"].isNull() && !apiBuffer["disk_reserve_bytes"].is<unsigned int>()) {
-            return fail("api.buffer.disk_reserve_bytes is not an unsigned int");
-        }
-        if (!apiBuffer["drain_rate_cap"].isNull() && !apiBuffer["drain_rate_cap"].is<int>()) {
-            return fail("api.buffer.drain_rate_cap is not an int");
-        }
-        if (!apiBuffer["drain_rate_tick_s"].isNull() && !apiBuffer["drain_rate_tick_s"].is<int>()) {
-            return fail("api.buffer.drain_rate_tick_s is not an int");
-        }
-
-        apiBufferInMemory = apiBuffer["in_memory"] | apiBufferInMemory;
-        apiBufferDiskReserveBytes = apiBuffer["disk_reserve_bytes"] | apiBufferDiskReserveBytes;
-        apiBufferDrainRateCap = apiBuffer["drain_rate_cap"] | apiBufferDrainRateCap;
-        apiBufferDrainRateTickS = apiBuffer["drain_rate_tick_s"] | apiBufferDrainRateTickS;
+    SensorWritePolicyConfig sensorWritePolicyConfig = config.api.sensorWritePolicy;
+    const JsonObject sensorWritePolicy = api["sensor_write_policy"];
+    if (!sensorWritePolicy.isNull() &&
+        (!readOptionalInt(sensorWritePolicy, "heartbeat_minutes", sensorWritePolicyConfig.heartbeatMinutes, "api.sensor_write_policy.heartbeat_minutes") ||
+         !readOptionalFloat(sensorWritePolicy, "temperature_delta_c", sensorWritePolicyConfig.temperatureDeltaC, "api.sensor_write_policy.temperature_delta_c") ||
+         !readOptionalFloat(sensorWritePolicy, "humidity_delta_pct", sensorWritePolicyConfig.humidityDeltaPct, "api.sensor_write_policy.humidity_delta_pct") ||
+         !readOptionalFloat(sensorWritePolicy, "moisture_delta_pct", sensorWritePolicyConfig.moistureDeltaPct, "api.sensor_write_policy.moisture_delta_pct") ||
+         !readOptionalUint32(sensorWritePolicy, "conductivity_delta_us_cm", sensorWritePolicyConfig.conductivityDeltaUsCm, "api.sensor_write_policy.conductivity_delta_us_cm") ||
+         !readOptionalUint32(sensorWritePolicy, "lux_delta_cap", sensorWritePolicyConfig.luxDeltaCap, "api.sensor_write_policy.lux_delta_cap") ||
+         !readOptionalFloat(sensorWritePolicy, "lux_delta_fraction", sensorWritePolicyConfig.luxDeltaFraction, "api.sensor_write_policy.lux_delta_fraction"))) {
+        return false;
     }
 
     const char* apiBaseUrl = api["base_url"].as<const char*>();
     const char* apiKey = api["api_key"].as<const char*>();
     const char* apiPemFile = api["pem_file"].as<const char*>();
 
-    if (apiBufferInMemory <= 0) {
+    if (apiBufferConfig.inMemory <= 0) {
         return fail("api.buffer.in_memory must be > 0");
     }
-    if (apiBufferDrainRateCap <= 0) {
+    if (apiBufferConfig.drainRateCap <= 0) {
         return fail("api.buffer.drain_rate_cap must be > 0");
     }
-    if (apiBufferDrainRateTickS <= 0) {
+    if (apiBufferConfig.drainRateTickS <= 0) {
         return fail("api.buffer.drain_rate_tick_s must be > 0");
+    }
+    if (sensorWritePolicyConfig.heartbeatMinutes <= 0) {
+        return fail("api.sensor_write_policy.heartbeat_minutes must be > 0");
+    }
+    if (sensorWritePolicyConfig.temperatureDeltaC <= 0.0f) {
+        return fail("api.sensor_write_policy.temperature_delta_c must be > 0");
+    }
+    if (sensorWritePolicyConfig.humidityDeltaPct <= 0.0f) {
+        return fail("api.sensor_write_policy.humidity_delta_pct must be > 0");
+    }
+    if (sensorWritePolicyConfig.moistureDeltaPct <= 0.0f) {
+        return fail("api.sensor_write_policy.moisture_delta_pct must be > 0");
+    }
+    if (sensorWritePolicyConfig.conductivityDeltaUsCm == 0) {
+        return fail("api.sensor_write_policy.conductivity_delta_us_cm must be > 0");
+    }
+    if (sensorWritePolicyConfig.luxDeltaCap == 0) {
+        return fail("api.sensor_write_policy.lux_delta_cap must be > 0");
+    }
+    if (sensorWritePolicyConfig.luxDeltaFraction <= 0.0f) {
+        return fail("api.sensor_write_policy.lux_delta_fraction must be > 0");
     }
 
     const JsonObject location = json["location"];
@@ -247,10 +301,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.api.apiKey = apiKey;
     config.api.pemFile = apiPemFile;
     config.api.pem.clear();
-    config.api.buffer.inMemory = apiBufferInMemory;
-    config.api.buffer.diskReserveBytes = apiBufferDiskReserveBytes;
-    config.api.buffer.drainRateCap = apiBufferDrainRateCap;
-    config.api.buffer.drainRateTickS = apiBufferDrainRateTickS;
+    config.api.buffer = apiBufferConfig;
+    config.api.sensorWritePolicy = sensorWritePolicyConfig;
 
     config.location.latitude = latitude;
     config.location.longitude = longitude;

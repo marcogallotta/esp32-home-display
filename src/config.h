@@ -17,12 +17,24 @@ struct ApiBufferConfig {
     int drainRateTickS = 5;
 };
 
+struct SensorWritePolicyConfig {
+    int heartbeatMinutes = 60;
+    float temperatureDeltaC = 0.3f;
+    float humidityDeltaPct = 2.0f;
+    float moistureDeltaPct = 2.0f;
+    std::uint32_t conductivityDeltaUsCm = 10;
+    // Lux threshold is min(luxDeltaCap, baseline lux * luxDeltaFraction).
+    std::uint32_t luxDeltaCap = 2000;
+    float luxDeltaFraction = 0.10f;
+};
+
 struct ApiConfig {
     std::string baseUrl;
     std::string apiKey;
     std::string pemFile;
     std::string pem;
     ApiBufferConfig buffer;
+    SensorWritePolicyConfig sensorWritePolicy;
 };
 
 struct LocationConfig {
