@@ -178,12 +178,31 @@ const char* writeStatusName(api::WriteStatus status) {
     return "unknown";
 }
 
+const char* writeBufferReasonName(api::WriteBufferReason reason) {
+    switch (reason) {
+        case api::WriteBufferReason::None: return "none";
+        case api::WriteBufferReason::BacklogPresent: return "backlog_present_post_skipped";
+        case api::WriteBufferReason::RetryableFailure: return "retryable_failure";
+    }
+    return "unknown";
+}
+
 void logWrite(const std::string& label, const api::WriteResult& result) {
-    logLine(
-        LogLevel::Info,
-        label + " write result: " + writeStatusName(result.status) +
-        ", HTTP " + std::to_string(result.httpStatusCode)
-    );
+    std::string message =
+        label + " write result: " + writeStatusName(result.status);
+
+    if (result.status == api::WriteStatus::Buffered) {
+        message += ", reason " + std::string(writeBufferReasonName(result.bufferReason));
+        if (result.bufferReason == api::WriteBufferReason::BacklogPresent) {
+            message += ", HTTP not attempted";
+        } else {
+            message += ", HTTP " + std::to_string(result.httpStatusCode);
+        }
+    } else {
+        message += ", HTTP " + std::to_string(result.httpStatusCode);
+    }
+
+    logLine(LogLevel::Info, message);
 }
 
 void logDrain(const api::BufferDrainResult& result, const api::BufferState& buffer) {
@@ -193,7 +212,7 @@ void logDrain(const api::BufferDrainResult& result, const api::BufferState& buff
         ", sent " + std::to_string(result.sent) +
         ", dropped " + std::to_string(result.dropped) +
         ", blocked " + std::to_string(result.blockedByRetryableFailure ? 1 : 0) +
-        ", notDue " + std::to_string(result.notDueYet ? 1 : 0) +
+        ", drainNotDue " + std::to_string(result.notDueYet ? 1 : 0) +
         ", RAM " + std::to_string(buffer.requests.size()) +
         ", disk " + std::to_string(buffer.disk.count) +
         ", nextDrainMs " + std::to_string(buffer.nextDrainAllowedAtMs)

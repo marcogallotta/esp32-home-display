@@ -107,13 +107,15 @@ WriteResult makeWriteResult(
     WriteStatus status,
     BackendWriteResult backendResult = BackendWriteResult::Failed,
     int httpStatusCode = 0,
-    std::string body = ""
+    std::string body = "",
+    WriteBufferReason bufferReason = WriteBufferReason::None
 ) {
     WriteResult result;
     result.status = status;
     result.backendResult = backendResult;
     result.httpStatusCode = httpStatusCode;
     result.body = std::move(body);
+    result.bufferReason = bufferReason;
     return result;
 }
 
@@ -237,7 +239,15 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
             logDroppedBufferFullRequest(request);
         }
 
-        return makeWriteResult(mapBufferInsertResult(insertResult));
+        return makeWriteResult(
+            mapBufferInsertResult(insertResult),
+            BackendWriteResult::Failed,
+            0,
+            "",
+            insertResult == BufferInsertResult::Buffered
+                ? WriteBufferReason::BacklogPresent
+                : WriteBufferReason::None
+        );
     }
 
     const network::HttpResponse response = client_.postJson(request.path, request.body);
@@ -272,7 +282,10 @@ WriteResult BufferedClient::postBufferedRequest(BufferedRequest request) {
                 mapBufferInsertResult(insertResult),
                 BackendWriteResult::Failed,
                 response.statusCode,
-                response.body
+                response.body,
+                insertResult == BufferInsertResult::Buffered
+                    ? WriteBufferReason::RetryableFailure
+                    : WriteBufferReason::None
             );
         }
     }

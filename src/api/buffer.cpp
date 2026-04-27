@@ -213,9 +213,9 @@ BufferInsertResult bufferRequest(
 
     logLine(
         LogLevel::Warn,
-        "Network issue; buffering API requests (" +
+        "Buffered API request in memory: " +
         std::to_string(buffer.requests.size()) +
-        "/" + std::to_string(config.inMemory) + " queued)"
+        "/" + std::to_string(config.inMemory) + " queued"
     );
 
     return BufferInsertResult::Buffered;
