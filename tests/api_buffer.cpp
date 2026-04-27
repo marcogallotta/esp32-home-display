@@ -173,6 +173,135 @@ void removeDroppedLogFile() {
     std::remove("dropped_requests.jsonl");
 }
 
+
+std::string requestName(const api::BufferedRequest& request) {
+    const std::string marker = "\"name\":\"";
+    const auto start = request.body.find(marker);
+    if (start == std::string::npos) {
+        return "";
+    }
+
+    const auto valueStart = start + marker.size();
+    const auto valueEnd = request.body.find('"', valueStart);
+    if (valueEnd == std::string::npos) {
+        return "";
+    }
+
+    return request.body.substr(valueStart, valueEnd - valueStart);
+}
+
+class ApiBufferDrainScenario {
+public:
+    static ApiBufferDrainScenario withPersistedDiskReadings(std::vector<std::string> names) {
+        ApiBufferDrainScenario scenario;
+        scenario.persistReadingsOnDisk(names);
+        return scenario;
+    }
+
+    ApiBufferDrainScenario& withDrainCap(int drainCap) {
+        config_.drainRateCap = drainCap;
+        return *this;
+    }
+
+    void backendWillAcceptNextRequests(int count) {
+        for (int i = 0; i < count; ++i) {
+            poster_.respondWith(httpOk());
+        }
+    }
+
+    void backendWillRejectNextRequestPermanently() {
+        poster_.respondWith(httpStatus(400));
+    }
+
+    void backendWillFailNextRequestTransiently() {
+        poster_.respondWith(transportFailure(network::TransportResult::NetworkError));
+    }
+
+    void corruptPersistedReading(const std::string& name) {
+        for (auto& entry : store_.requests) {
+            if (requestName(entry.second) == name) {
+                store_.requests.erase(entry.first);
+                return;
+            }
+        }
+        FAIL("test tried to corrupt missing persisted reading: " << name);
+    }
+
+    void drainBuffer() {
+        lastDrain_ = api::maybeDrainBuffer(buffer_, nowMs_, config_, poster_, store_);
+        nowMs_ += ms(100);
+    }
+
+    void restartBufferStateFromDisk() {
+        buffer_ = api::BufferState{};
+        lastDrain_ = api::BufferDrainResult{};
+    }
+
+    void expectBackendReceived(std::vector<std::string> names) const {
+        REQUIRE_EQ(poster_.calls().size(), names.size());
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            CHECK_EQ(nameFromPostedBody(poster_.calls()[i].body), names[i]);
+        }
+    }
+
+    void expectDiskBacklog(std::vector<std::string> names) const {
+        std::vector<std::string> visible;
+        for (std::uint32_t sequence = store_.index.head; sequence < store_.index.tail; ++sequence) {
+            const auto it = store_.requests.find(sequence);
+            if (it != store_.requests.end()) {
+                visible.push_back(requestName(it->second));
+            }
+        }
+        CHECK_EQ(visible, names);
+        CHECK_EQ(store_.index.count, static_cast<std::uint32_t>(names.size()));
+    }
+
+    void expectBufferEmpty() const {
+        CHECK(buffer_.requests.empty());
+        CHECK_EQ(buffer_.disk.count, 0U);
+        CHECK_EQ(store_.index.count, 0U);
+    }
+
+    void expectDrainSent(int count) const {
+        CHECK_EQ(lastDrain_.sent, count);
+    }
+
+    void expectDrainDropped(int count) const {
+        CHECK_EQ(lastDrain_.dropped, count);
+    }
+
+    void expectDrainBlockedByRetryableFailure() const {
+        CHECK(lastDrain_.blockedByRetryableFailure);
+    }
+
+private:
+    ApiBufferDrainScenario()
+        : config_(config(/*capacity=*/2, /*drainCap=*/10, /*drainTickS=*/60)) {
+    }
+
+    void persistReadingsOnDisk(const std::vector<std::string>& names) {
+        for (const auto& name : names) {
+            const auto sequence = store_.index.tail;
+            store_.requests[sequence] = request(name);
+            store_.index.tail += 1;
+            store_.index.count += 1;
+        }
+    }
+
+    static std::string nameFromPostedBody(const std::string& body) {
+        api::BufferedRequest posted;
+        posted.body = body;
+        return requestName(posted);
+    }
+
+    api::BufferState buffer_;
+    FakeRequestStore store_;
+    FakePoster poster_;
+    ApiBufferConfig config_;
+    api::BufferDrainResult lastDrain_;
+    std::uint64_t nowMs_ = ms(100);
+};
+
 } // namespace
 
 TEST_CASE("buffer starts empty") {
@@ -512,4 +641,93 @@ TEST_CASE("timeout failure is retried twice and then dropped") {
     CHECK(buffer.requests.empty());
 
     removeDroppedLogFile();
+}
+
+
+TEST_CASE("persisted disk backlog respects the drain cap") {
+    auto scenario = ApiBufferDrainScenario::withPersistedDiskReadings({
+        "disk one",
+        "disk two",
+        "disk three",
+        "disk four",
+        "disk five",
+    }).withDrainCap(2);
+
+    scenario.backendWillAcceptNextRequests(2);
+    scenario.drainBuffer();
+
+    scenario.expectDrainSent(2);
+    scenario.expectBackendReceived({"disk one", "disk two"});
+    scenario.expectDiskBacklog({"disk three", "disk four", "disk five"});
+}
+
+TEST_CASE("partial disk drain survives restart with only unsent readings visible") {
+    auto scenario = ApiBufferDrainScenario::withPersistedDiskReadings({
+        "disk one",
+        "disk two",
+        "disk three",
+        "disk four",
+    }).withDrainCap(2);
+
+    scenario.backendWillAcceptNextRequests(2);
+    scenario.drainBuffer();
+    scenario.restartBufferStateFromDisk();
+
+    scenario.expectDiskBacklog({"disk three", "disk four"});
+}
+
+TEST_CASE("permanent rejection of disk front drops it and continues with later disk readings") {
+    removeDroppedLogFile();
+
+    auto scenario = ApiBufferDrainScenario::withPersistedDiskReadings({
+        "bad disk reading",
+        "good disk reading",
+    });
+
+    scenario.backendWillRejectNextRequestPermanently();
+    scenario.backendWillAcceptNextRequests(1);
+    scenario.drainBuffer();
+
+    scenario.expectDrainDropped(1);
+    scenario.expectDrainSent(1);
+    scenario.expectBackendReceived({"bad disk reading", "good disk reading"});
+    scenario.expectBufferEmpty();
+
+    removeDroppedLogFile();
+}
+
+TEST_CASE("retryable failure on disk front retries the same reading on the next drain") {
+    auto scenario = ApiBufferDrainScenario::withPersistedDiskReadings({
+        "retry me",
+        "send me later",
+    });
+
+    scenario.backendWillFailNextRequestTransiently();
+    scenario.drainBuffer();
+
+    scenario.expectDrainBlockedByRetryableFailure();
+    scenario.expectBackendReceived({"retry me"});
+    scenario.expectDiskBacklog({"retry me", "send me later"});
+
+    scenario.backendWillAcceptNextRequests(2);
+    scenario.drainBuffer();
+
+    scenario.expectBackendReceived({"retry me", "retry me", "send me later"});
+    scenario.expectBufferEmpty();
+}
+
+TEST_CASE("missing indexed disk head is dropped and does not brick later disk readings") {
+    auto scenario = ApiBufferDrainScenario::withPersistedDiskReadings({
+        "missing disk head",
+        "surviving disk reading",
+    });
+    scenario.corruptPersistedReading("missing disk head");
+
+    scenario.backendWillAcceptNextRequests(1);
+    scenario.drainBuffer();
+
+    scenario.expectDrainDropped(1);
+    scenario.expectDrainSent(1);
+    scenario.expectBackendReceived({"surviving disk reading"});
+    scenario.expectBufferEmpty();
 }
