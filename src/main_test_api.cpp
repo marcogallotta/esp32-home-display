@@ -212,8 +212,7 @@ void logDrain(const api::BufferDrainResult& result, const api::BufferState& buff
         ", blocked " + std::to_string(result.blockedByRetryableFailure ? 1 : 0) +
         ", drainNotDue " + std::to_string(result.notDueYet ? 1 : 0) +
         ", RAM " + std::to_string(buffer.requests.size()) +
-        ", disk " + std::to_string(buffer.disk.count) +
-        ", nextDrainMs " + std::to_string(buffer.nextDrainAllowedAtMs)
+        ", disk " + std::to_string(buffer.disk.count)
     );
 }
 

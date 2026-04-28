@@ -262,6 +262,11 @@ void logDroppedBufferFullRequest(const BufferedRequest& request) {
     );
 }
 
+
+std::uint64_t drainDelayMs(const ApiBufferConfig& config) {
+    return static_cast<std::uint64_t>(config.drainRateTickS) * 1000;
+}
+
 void logDrainPaused(
     const BufferedRequest& request,
     const network::HttpResponse& response,
@@ -352,10 +357,20 @@ WriteResult BufferedClient::postXiaomiReading(
     });
 }
 
+void BufferedClient::delayNextDrain(std::uint64_t nowMs) {
+    if (nextDrainAllowedAtMs_ <= nowMs) {
+        nextDrainAllowedAtMs_ = nowMs + drainDelayMs(config_.api.buffer);
+    }
+}
+
 WriteResult BufferedClient::send(BufferedRequest request) {
     if (bufferHasBacklog(buffer_, store_)) {
         const BufferInsertResult insertResult =
-            bufferRequest(buffer_, request, config_.api.buffer, store_, platform::millis());
+            bufferRequest(buffer_, request, config_.api.buffer, store_);
+
+        if (insertResult == BufferInsertResult::Buffered) {
+            delayNextDrain(platform::millis());
+        }
 
         if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
             logDroppedBufferFullRequest(request);
@@ -394,7 +409,11 @@ WriteResult BufferedClient::send(BufferedRequest request) {
 
         case FreshRequestDecision::Buffer: {
             const BufferInsertResult insertResult =
-                bufferRequest(buffer_, request, config_.api.buffer, store_, platform::millis());
+                bufferRequest(buffer_, request, config_.api.buffer, store_);
+
+            if (insertResult == BufferInsertResult::Buffered) {
+                delayNextDrain(platform::millis());
+            }
 
             if (insertResult == BufferInsertResult::DroppedNewRequestBufferFull) {
                 logDroppedBufferFullRequest(request);
@@ -418,7 +437,7 @@ WriteResult BufferedClient::send(BufferedRequest request) {
 BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
     BufferDrainResult result;
 
-    if (nowMs < buffer_.nextDrainAllowedAtMs) {
+    if (nowMs < nextDrainAllowedAtMs_) {
         result.notDueYet = true;
         return result;
     }
@@ -434,7 +453,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
         " queued"
     );
 
-    buffer_.nextDrainAllowedAtMs = nowMs + bufferDrainDelayMs(config_.api.buffer);
+    nextDrainAllowedAtMs_ = nowMs + drainDelayMs(config_.api.buffer);
 
     for (int i = 0; i < config_.api.buffer.drainRateCap; ++i) {
         if (!bufferHasBacklog(buffer_, store_)) {
@@ -476,7 +495,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
                 return result;
             }
 
-            buffer_.nextDrainAllowedAtMs = nowMs + bufferDrainDelayMs(config_.api.buffer);
+            nextDrainAllowedAtMs_ = nowMs + drainDelayMs(config_.api.buffer);
 
             result.blockedByRetryableFailure = true;
             logDrainPaused(request, response, result, buffer_);

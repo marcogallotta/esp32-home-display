@@ -31,7 +31,6 @@ struct BufferedRequest {
 
 struct BufferState {
     std::deque<BufferedRequest> requests;
-    std::uint64_t nextDrainAllowedAtMs = 0;
     disk_buffer::State disk;
 };
 
@@ -52,8 +51,7 @@ BufferInsertResult bufferRequest(
     BufferState& buffer,
     BufferedRequest request,
     const ApiBufferConfig& config,
-    RequestStore& store,
-    std::uint64_t nowMs
+    RequestStore& store
 );
 
 bool bufferHasBacklog(BufferState& buffer, RequestStore& store);
@@ -73,7 +71,5 @@ bool rewriteBufferedRequest(
     RequestStore& store
 );
 
-std::uint64_t bufferDrainDelayMs(const ApiBufferConfig& config);
-void delayNextBufferDrain(BufferState& buffer, const ApiBufferConfig& config, std::uint64_t nowMs);
 
 } // namespace api

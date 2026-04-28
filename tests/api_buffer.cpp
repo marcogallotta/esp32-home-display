@@ -177,7 +177,7 @@ void bufferOrFail(
     const ApiBufferConfig& c
 ) {
     CHECK_EQ(
-        api::bufferRequest(buffer, request(name), c, store, 0ULL),
+        api::bufferRequest(buffer, request(name), c, store),
         api::BufferInsertResult::Buffered
     );
 }
@@ -321,26 +321,27 @@ TEST_CASE("buffer starts empty") {
     api::BufferState buffer;
 
     CHECK(buffer.requests.empty());
-    CHECK_EQ(buffer.nextDrainAllowedAtMs, 0ULL);
     CHECK_EQ(buffer.disk.count, 0U);
 }
 
-TEST_CASE("buffering delays first drain but does not move an existing future drain") {
+TEST_CASE("buffering stores requests without owning drain timing") {
     api::BufferState buffer;
     FakeRequestStore store;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
     CHECK_EQ(
-        api::bufferRequest(buffer, request("first"), c, store, ms(10)),
+        api::bufferRequest(buffer, request("first"), c, store),
         api::BufferInsertResult::Buffered
     );
-    CHECK_EQ(buffer.nextDrainAllowedAtMs, ms(70));
 
     CHECK_EQ(
-        api::bufferRequest(buffer, request("second"), c, store, ms(20)),
+        api::bufferRequest(buffer, request("second"), c, store),
         api::BufferInsertResult::Buffered
     );
-    CHECK_EQ(buffer.nextDrainAllowedAtMs, ms(70));
+
+    REQUIRE_EQ(buffer.requests.size(), 2U);
+    CHECK_EQ(buffer.requests[0].path, "/first");
+    CHECK_EQ(buffer.requests[1].path, "/second");
 }
 
 TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM FIFO contents") {
@@ -352,7 +353,7 @@ TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM F
     bufferOrFail(buffer, store, "second", c);
 
     const api::BufferInsertResult result =
-        api::bufferRequest(buffer, request("third"), c, store, 0ULL);
+        api::bufferRequest(buffer, request("third"), c, store);
 
     CHECK_EQ(result, api::BufferInsertResult::Buffered);
     REQUIRE_EQ(buffer.requests.size(), 2U);
@@ -374,11 +375,11 @@ TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exist
     const ApiBufferConfig c = config(/*capacity=*/2);
 
     const api::BufferInsertResult first =
-        api::bufferRequest(buffer, request("first-ram"), c, store, 0ULL);
+        api::bufferRequest(buffer, request("first-ram"), c, store);
     const api::BufferInsertResult second =
-        api::bufferRequest(buffer, request("second-ram"), c, store, 0ULL);
+        api::bufferRequest(buffer, request("second-ram"), c, store);
     const api::BufferInsertResult third =
-        api::bufferRequest(buffer, request("third-disk"), c, store, 0ULL);
+        api::bufferRequest(buffer, request("third-disk"), c, store);
 
     CHECK_EQ(first, api::BufferInsertResult::Buffered);
     CHECK_EQ(second, api::BufferInsertResult::Buffered);
@@ -402,7 +403,7 @@ TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails")
     bufferOrFail(buffer, store, "first", c);
 
     const api::BufferInsertResult result =
-        api::bufferRequest(buffer, request("second"), c, store, 0ULL);
+        api::bufferRequest(buffer, request("second"), c, store);
 
     CHECK_EQ(result, api::BufferInsertResult::DroppedNewRequestBufferFull);
     REQUIRE_EQ(buffer.requests.size(), 1U);
@@ -515,31 +516,44 @@ TEST_CASE("drain cap limits how many requests are sent per tick") {
     poster.respondWith(httpOk());
     poster.respondWith(httpOk());
 
-    const api::BufferDrainResult result =
-        drainForTest(buffer, ms(100), c, poster, store);
+    Config config;
+    config.api.buffer = c;
+    api::BufferedClient client(config, buffer, poster, store);
+
+    const api::BufferDrainResult result = client.drainPending(ms(100));
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.sent, 2);
     REQUIRE_EQ(buffer.requests.size(), 1U);
     CHECK_EQ(buffer.requests.front().path, "/third");
-    CHECK_EQ(buffer.nextDrainAllowedAtMs, ms(160));
+
+    const api::BufferDrainResult early = client.drainPending(ms(159));
+    CHECK(early.notDueYet);
+    CHECK_EQ(early.attempted, 0);
+    CHECK_EQ(poster.calls().size(), 2U);
 }
 
-TEST_CASE("buffer does not drain before the next allowed tick") {
+TEST_CASE("buffered client does not drain before the next allowed tick") {
     api::BufferState buffer;
     FakeRequestStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
     bufferOrFail(buffer, store, "first", c);
-    buffer.nextDrainAllowedAtMs = ms(160);
+    poster.respondWith(transportFailure(network::TransportResult::NetworkError));
 
-    const api::BufferDrainResult result =
-        drainForTest(buffer, ms(159), c, poster, store);
+    Config config;
+    config.api.buffer = c;
+    api::BufferedClient client(config, buffer, poster, store);
+
+    const api::BufferDrainResult first = client.drainPending(ms(100));
+    CHECK(first.blockedByRetryableFailure);
+
+    const api::BufferDrainResult result = client.drainPending(ms(159));
 
     CHECK(result.notDueYet);
     CHECK_EQ(result.attempted, 0);
-    CHECK_EQ(poster.calls().size(), 0U);
+    CHECK_EQ(poster.calls().size(), 1U);
     REQUIRE_EQ(buffer.requests.size(), 1U);
     CHECK_EQ(buffer.requests.front().path, "/first");
 }

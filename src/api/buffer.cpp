@@ -20,8 +20,7 @@ BufferInsertResult bufferToDisk(
     BufferState& buffer,
     const BufferedRequest& request,
     const ApiBufferConfig& config,
-    RequestStore& store,
-    std::uint64_t nowMs
+    RequestStore& store
 ) {
     if (!disk_buffer::enqueue(buffer.disk, request, config, store)) {
         logLine(
@@ -32,7 +31,6 @@ BufferInsertResult bufferToDisk(
         return BufferInsertResult::DroppedNewRequestBufferFull;
     }
 
-    delayNextBufferDrain(buffer, config, nowMs);
 
     logLine(
         LogLevel::Warn,
@@ -45,30 +43,17 @@ BufferInsertResult bufferToDisk(
 
 } // namespace
 
-std::uint64_t bufferDrainDelayMs(const ApiBufferConfig& config) {
-    return static_cast<std::uint64_t>(config.drainRateTickS) * 1000;
-}
-
-void delayNextBufferDrain(BufferState& buffer, const ApiBufferConfig& config, std::uint64_t nowMs) {
-    const std::uint64_t nextAllowed = nowMs + bufferDrainDelayMs(config);
-    if (buffer.nextDrainAllowedAtMs <= nowMs) {
-        buffer.nextDrainAllowedAtMs = nextAllowed;
-    }
-}
-
 BufferInsertResult bufferRequest(
     BufferState& buffer,
     BufferedRequest request,
     const ApiBufferConfig& config,
-    RequestStore& store,
-    std::uint64_t nowMs
+    RequestStore& store
 ) {
     if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
-        return bufferToDisk(buffer, request, config, store, nowMs);
+        return bufferToDisk(buffer, request, config, store);
     }
 
     buffer.requests.push_back(std::move(request));
-    delayNextBufferDrain(buffer, config, nowMs);
 
     logLine(
         LogLevel::Warn,

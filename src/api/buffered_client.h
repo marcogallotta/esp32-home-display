@@ -56,10 +56,12 @@ public:
     BufferDrainResult drainPending(std::uint64_t nowMs);
 
 private:
+    void delayNextDrain(std::uint64_t nowMs);
     const Config& config_;
     BufferState& buffer_;
     const ApiPoster& poster_;
     RequestStore& store_;
+    std::uint64_t nextDrainAllowedAtMs_ = 0;
 };
 
 } // namespace api
