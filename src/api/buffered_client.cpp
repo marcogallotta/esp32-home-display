@@ -262,6 +262,28 @@ void logDroppedBufferFullRequest(const BufferedRequest& request) {
     );
 }
 
+void logBufferedRequest(
+    const BufferState& buffer,
+    const ApiBufferConfig& config,
+    bool wroteToDisk
+) {
+    if (wroteToDisk) {
+        logLine(
+            LogLevel::Warn,
+            "Buffered API request on disk: " +
+            std::to_string(buffer.disk.count) + " queued"
+        );
+        return;
+    }
+
+    logLine(
+        LogLevel::Warn,
+        "Buffered API request in memory: " +
+        std::to_string(buffer.requests.size()) +
+        "/" + std::to_string(config.inMemory) + " queued"
+    );
+}
+
 
 std::uint64_t drainDelayMs(const ApiBufferConfig& config) {
     return static_cast<std::uint64_t>(config.drainRateTickS) * 1000;
@@ -365,10 +387,13 @@ void BufferedClient::delayNextDrain(std::uint64_t nowMs) {
 
 WriteResult BufferedClient::send(BufferedRequest request) {
     if (bufferHasBacklog(buffer_, store_)) {
+        const bool wroteToDisk =
+            buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
         const BufferInsertResult insertResult =
             bufferRequest(buffer_, request, config_.api.buffer, store_);
 
         if (insertResult == BufferInsertResult::Buffered) {
+            logBufferedRequest(buffer_, config_.api.buffer, wroteToDisk);
             delayNextDrain(platform::millis());
         }
 
@@ -408,10 +433,13 @@ WriteResult BufferedClient::send(BufferedRequest request) {
             );
 
         case FreshRequestDecision::Buffer: {
+            const bool wroteToDisk =
+                buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
             const BufferInsertResult insertResult =
                 bufferRequest(buffer_, request, config_.api.buffer, store_);
 
             if (insertResult == BufferInsertResult::Buffered) {
+                logBufferedRequest(buffer_, config_.api.buffer, wroteToDisk);
                 delayNextDrain(platform::millis());
             }
 

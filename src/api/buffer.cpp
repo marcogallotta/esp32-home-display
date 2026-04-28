@@ -2,7 +2,6 @@
 
 #include <utility>
 
-#include "../log.h"
 #include "disk_buffer.h"
 
 namespace api {
@@ -23,20 +22,8 @@ BufferInsertResult bufferToDisk(
     RequestStore& store
 ) {
     if (!disk_buffer::enqueue(buffer.disk, request, config, store)) {
-        logLine(
-            LogLevel::Warn,
-            "Disk buffer full; dropping new request to " + request.path +
-            " for " + request.mac
-        );
         return BufferInsertResult::DroppedNewRequestBufferFull;
     }
-
-
-    logLine(
-        LogLevel::Warn,
-        "Buffered API request on disk: " +
-        std::to_string(buffer.disk.count) + " queued"
-    );
 
     return BufferInsertResult::Buffered;
 }
@@ -54,13 +41,6 @@ BufferInsertResult bufferRequest(
     }
 
     buffer.requests.push_back(std::move(request));
-
-    logLine(
-        LogLevel::Warn,
-        "Buffered API request in memory: " +
-        std::to_string(buffer.requests.size()) +
-        "/" + std::to_string(config.inMemory) + " queued"
-    );
 
     return BufferInsertResult::Buffered;
 }
