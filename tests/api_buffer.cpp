@@ -1,4 +1,4 @@
-#include "api/buffer.h"
+#include "api/buffered_client.h"
 #include "api/request_store.h"
 
 #include "doctest/doctest.h"
@@ -157,6 +157,19 @@ network::HttpResponse transportFailure(network::TransportResult transport) {
     return r;
 }
 
+api::BufferDrainResult drainForTest(
+    api::BufferState& buffer,
+    std::uint64_t nowMs,
+    const ApiBufferConfig& c,
+    const api::ApiPoster& poster,
+    api::RequestStore& store
+) {
+    Config config;
+    config.api.buffer = c;
+    api::BufferedClient client(config, buffer, poster, store);
+    return client.drainPending(nowMs);
+}
+
 void bufferOrFail(
     api::BufferState& buffer,
     FakeRequestStore& store,
@@ -228,7 +241,7 @@ public:
     }
 
     void drainBuffer() {
-        lastDrain_ = api::maybeDrainBuffer(buffer_, nowMs_, config_, poster_, store_);
+        lastDrain_ = drainForTest(buffer_, nowMs_, config_, poster_, store_);
         nowMs_ += ms(100);
     }
 
@@ -411,7 +424,7 @@ TEST_CASE("buffer drains oldest requests first") {
     poster.respondWith(httpOk());
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
 
     CHECK_EQ(result.attempted, 3);
     CHECK_EQ(result.sent, 3);
@@ -440,7 +453,7 @@ TEST_CASE("startup drain sends persisted disk backlog immediately") {
     poster.respondWith(httpOk());
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, 0ULL, c, poster, store);
+        drainForTest(buffer, 0ULL, c, poster, store);
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.sent, 2);
@@ -473,7 +486,7 @@ TEST_CASE("retryable failure during startup drain preserves persisted disk backl
     poster.respondWith(transportFailure(network::TransportResult::NetworkError));
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, 0ULL, c, poster, store);
+        drainForTest(buffer, 0ULL, c, poster, store);
 
     CHECK_EQ(result.attempted, 1);
     CHECK_EQ(result.sent, 0);
@@ -503,7 +516,7 @@ TEST_CASE("drain cap limits how many requests are sent per tick") {
     poster.respondWith(httpOk());
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.sent, 2);
@@ -522,7 +535,7 @@ TEST_CASE("buffer does not drain before the next allowed tick") {
     buffer.nextDrainAllowedAtMs = ms(160);
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, ms(159), c, poster, store);
+        drainForTest(buffer, ms(159), c, poster, store);
 
     CHECK(result.notDueYet);
     CHECK_EQ(result.attempted, 0);
@@ -542,7 +555,7 @@ TEST_CASE("retryable transport failure keeps first request and blocks later requ
     poster.respondWith(transportFailure(network::TransportResult::NetworkError));
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
 
     CHECK_EQ(result.attempted, 1);
     CHECK_EQ(result.sent, 0);
@@ -568,7 +581,7 @@ TEST_CASE("retryable HTTP failure keeps first request and blocks later requests"
     poster.respondWith(httpStatus(503));
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
 
     CHECK_EQ(result.attempted, 1);
     CHECK(result.blockedByRetryableFailure);
@@ -592,7 +605,7 @@ TEST_CASE("permanent failure drops first request and continues draining") {
     poster.respondWith(httpOk());
 
     const api::BufferDrainResult result =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.dropped, 1);
@@ -621,21 +634,21 @@ TEST_CASE("timeout failure is retried twice and then dropped") {
     poster.respondWith(transportFailure(network::TransportResult::Timeout));
 
     const api::BufferDrainResult first =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
     CHECK_EQ(first.attempted, 1);
     CHECK(first.blockedByRetryableFailure);
     REQUIRE_EQ(buffer.requests.size(), 1U);
     CHECK_EQ(buffer.requests.front().timeoutRetryCount, 1);
 
     const api::BufferDrainResult second =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
     CHECK_EQ(second.attempted, 1);
     CHECK(second.blockedByRetryableFailure);
     REQUIRE_EQ(buffer.requests.size(), 1U);
     CHECK_EQ(buffer.requests.front().timeoutRetryCount, 2);
 
     const api::BufferDrainResult third =
-        api::maybeDrainBuffer(buffer, ms(100), c, poster, store);
+        drainForTest(buffer, ms(100), c, poster, store);
     CHECK_EQ(third.attempted, 1);
     CHECK_EQ(third.dropped, 1);
     CHECK(buffer.requests.empty());

@@ -7,6 +7,7 @@
 #include "backend_result.h"
 #include "buffer.h"
 #include "client.h"
+#include "poster.h"
 #include "request_store.h"
 
 namespace api {
@@ -37,7 +38,7 @@ public:
     BufferedClient(
         const Config& config,
         BufferState& buffer,
-        const Client& client,
+        const ApiPoster& poster,
         RequestStore& store
     );
 
@@ -51,12 +52,13 @@ public:
         const XiaomiReading& reading
     );
 
-private:
-    WriteResult postBufferedRequest(BufferedRequest request);
+    WriteResult send(BufferedRequest request);
+    BufferDrainResult drainPending(std::uint64_t nowMs);
 
+private:
     const Config& config_;
     BufferState& buffer_;
-    const Client& client_;
+    const ApiPoster& poster_;
     RequestStore& store_;
 };
 

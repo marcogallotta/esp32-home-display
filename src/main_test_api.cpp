@@ -301,13 +301,7 @@ int main(int argc, char** argv) {
             hasValidTime = true;
         }
 
-        const api::BufferDrainResult drain = api::maybeDrainBuffer(
-            apiState.buffer,
-            nowMs,
-            config.api.buffer,
-            apiClient,
-            store
-        );
+        const api::BufferDrainResult drain = bufferedClient.drainPending(nowMs);
         logDrain(drain, apiState.buffer);
 
         if (!options.drainOnly) {

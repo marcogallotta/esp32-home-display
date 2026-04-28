@@ -6,8 +6,6 @@
 #include <string>
 
 #include "../config.h"
-#include "../network.h"
-#include "poster.h"
 #include "request_store.h"
 
 namespace api {
@@ -58,12 +56,24 @@ BufferInsertResult bufferRequest(
     std::uint64_t nowMs
 );
 
-BufferDrainResult maybeDrainBuffer(
+bool bufferHasBacklog(BufferState& buffer, RequestStore& store);
+
+bool peekBufferedRequest(
     BufferState& buffer,
-    std::uint64_t nowMs,
-    const ApiBufferConfig& config,
-    const ApiPoster& poster,
+    BufferedRequest& out,
     RequestStore& store
 );
+
+bool consumeBufferedRequest(BufferState& buffer, RequestStore& store);
+bool dropBufferedRequest(BufferState& buffer, RequestStore& store);
+
+bool rewriteBufferedRequest(
+    BufferState& buffer,
+    const BufferedRequest& request,
+    RequestStore& store
+);
+
+std::uint64_t bufferDrainDelayMs(const ApiBufferConfig& config);
+void delayNextBufferDrain(BufferState& buffer, const ApiBufferConfig& config, std::uint64_t nowMs);
 
 } // namespace api

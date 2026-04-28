@@ -155,6 +155,30 @@ bool initApp(AppContext& app) {
     return true;
 }
 
+void prepareCurrentState(State& current, const State& previous) {
+    current.hasSalah = previous.hasSalah;
+    current.salah = previous.salah;
+
+    current.hasForecast = previous.hasForecast;
+    current.forecast = previous.forecast;
+
+    if (current.switchbotSensors.size() != previous.switchbotSensors.size()) {
+        current.switchbotSensors.resize(previous.switchbotSensors.size());
+    }
+    for (std::size_t i = 0; i < previous.switchbotSensors.size(); ++i) {
+        current.switchbotSensors[i].identity = previous.switchbotSensors[i].identity;
+        current.switchbotSensors[i].reading = previous.switchbotSensors[i].reading;
+    }
+
+    if (current.xiaomiSensors.size() != previous.xiaomiSensors.size()) {
+        current.xiaomiSensors.resize(previous.xiaomiSensors.size());
+    }
+    for (std::size_t i = 0; i < previous.xiaomiSensors.size(); ++i) {
+        current.xiaomiSensors[i].identity = previous.xiaomiSensors[i].identity;
+        current.xiaomiSensors[i].reading = previous.xiaomiSensors[i].reading;
+    }
+}
+
 void updateSalahIfDue(AppContext& app, std::time_t now) {
     if (!isSalahDue(now, app.timing)) {
         return;
@@ -379,13 +403,7 @@ void syncOutputs(AppContext& app, std::time_t now) {
         app.hasValidTime = true;
     }
 
-    api::maybeDrainBuffer(
-        app.apiState.buffer,
-        nowMs,
-        app.config.api.buffer,
-        app.apiClient,
-        api::request_file_store::defaultStore()
-    );
+    app.bufferedApiClient.drainPending(nowMs);
 
     if (app.hasValidTime) {
         syncApiState(app.config, app.currentState, app.apiState, app.bufferedApiClient);
@@ -408,7 +426,8 @@ void sleepUntilNextDue(AppContext& app) {
 void tick(AppContext& app) {
     const std::time_t now = std::time(nullptr);
 
-    app.previousState = app.currentState;
+    std::swap(app.previousState, app.currentState);
+    prepareCurrentState(app.currentState, app.previousState);
 
     app.bleScanner.poll();
     updateDomainState(app, now);
