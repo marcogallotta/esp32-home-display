@@ -4,7 +4,7 @@
 
 namespace api {
 
-struct BufferedRequest;
+struct ApiRequest;
 
 struct RequestStoreIndex {
     std::uint32_t head = 0;
@@ -19,8 +19,8 @@ public:
     virtual bool readIndex(RequestStoreIndex& out) = 0;
     virtual bool writeIndex(const RequestStoreIndex& index) = 0;
 
-    virtual bool writeRequest(std::uint32_t sequence, const BufferedRequest& request) = 0;
-    virtual bool readRequest(std::uint32_t sequence, BufferedRequest& out) = 0;
+    virtual bool writeRequest(std::uint32_t sequence, const ApiRequest& request) = 0;
+    virtual bool readRequest(std::uint32_t sequence, ApiRequest& out) = 0;
     virtual bool removeRequest(std::uint32_t sequence) = 0;
 
     virtual std::uint64_t freeBytes() = 0;

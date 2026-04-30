@@ -29,8 +29,8 @@ std::filesystem::path bufferedRequestPath(std::uint32_t sequence) {
     return name;
 }
 
-api::BufferedRequest switchBotReadingNamed(const std::string& readingName) {
-    api::BufferedRequest request;
+api::ApiRequest switchBotReadingNamed(const std::string& readingName) {
+    api::ApiRequest request;
     request.path = "/switchbot/reading";
     request.mac = "";
     request.body = "{\"mac\":\"EC:2E:84:06:4E:9A\",\"name\":\"" + readingName + "\",\"type\":\"switchbot\"}";
@@ -39,8 +39,8 @@ api::BufferedRequest switchBotReadingNamed(const std::string& readingName) {
     return request;
 }
 
-api::BufferedRequest readingWithBody(std::string body) {
-    api::BufferedRequest request;
+api::ApiRequest readingWithBody(std::string body) {
+    api::ApiRequest request;
     request.path = "/switchbot/reading";
     request.body = std::move(body);
     return request;
@@ -192,7 +192,7 @@ public:
     std::vector<std::string> queuedReadingNames() const {
         std::vector<std::string> names;
         for (std::uint32_t sequence = recoveredIndex_.head; sequence < recoveredIndex_.tail; ++sequence) {
-            api::BufferedRequest request;
+            api::ApiRequest request;
             if (api::request_file_store::readRequest(sequence, request)) {
                 names.push_back(extractNameFromBody(request.body));
             }
@@ -249,7 +249,7 @@ public:
         return SingleRequestFileScenario();
     }
 
-    void writeReadingToDisk(api::BufferedRequest request) {
+    void writeReadingToDisk(api::ApiRequest request) {
         original_ = std::move(request);
         REQUIRE(api::request_file_store::writeRequest(kSequence, original_));
     }
@@ -258,19 +258,19 @@ public:
         writeReadingToDisk(switchBotReadingNamed(readingName));
     }
 
-    api::BufferedRequest readReadingBackFromDisk() const {
-        api::BufferedRequest loaded;
+    api::ApiRequest readReadingBackFromDisk() const {
+        api::ApiRequest loaded;
         REQUIRE(api::request_file_store::readRequest(kSequence, loaded));
         return loaded;
     }
 
-    const api::BufferedRequest& originalReading() const {
+    const api::ApiRequest& originalReading() const {
         return original_;
     }
 
 private:
     static constexpr std::uint32_t kSequence = 23;
-    api::BufferedRequest original_;
+    api::ApiRequest original_;
 };
 
 void expectQueuedReadings(RequestStoreScenario& store, std::vector<std::string> expectedNames) {

@@ -52,7 +52,7 @@ public:
         const XiaomiReading& reading
     );
 
-    WriteResult send(BufferedRequest request);
+    WriteResult send(ApiRequest request);
     BufferDrainResult drainPending(std::uint64_t nowMs);
 
 private:

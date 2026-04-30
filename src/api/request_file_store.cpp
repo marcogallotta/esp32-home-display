@@ -319,7 +319,7 @@ bool recoverIndexFromRequestFiles(Index& out) {
             break;
         }
 
-        BufferedRequest request;
+        ApiRequest request;
         if (!readRequest(sequence, request)) {
             break;
         }
@@ -348,7 +348,7 @@ bool sanitizeIndexedRange(const Index& input, Index& out) {
     for (std::uint32_t sequence = input.head;
          sequence < input.tail && scanned < input.count;
          ++sequence, ++scanned) {
-        BufferedRequest request;
+        ApiRequest request;
         if (!readRequest(sequence, request)) {
             if (out.count == 0) {
                 continue;
@@ -522,7 +522,7 @@ bool writeIndex(const Index& index) {
     return true;
 }
 
-bool writeRequest(std::uint32_t sequence, const BufferedRequest& request) {
+bool writeRequest(std::uint32_t sequence, const ApiRequest& request) {
     if (!mount()) {
         return false;
     }
@@ -572,7 +572,7 @@ bool writeRequest(std::uint32_t sequence, const BufferedRequest& request) {
 #endif
 }
 
-bool readRequest(std::uint32_t sequence, BufferedRequest& out) {
+bool readRequest(std::uint32_t sequence, ApiRequest& out) {
     if (!mount()) {
         return false;
     }
@@ -710,11 +710,11 @@ public:
         return api::request_file_store::writeIndex(fileIndex);
     }
 
-    bool writeRequest(std::uint32_t sequence, const BufferedRequest& request) override {
+    bool writeRequest(std::uint32_t sequence, const ApiRequest& request) override {
         return api::request_file_store::writeRequest(sequence, request);
     }
 
-    bool readRequest(std::uint32_t sequence, BufferedRequest& out) override {
+    bool readRequest(std::uint32_t sequence, ApiRequest& out) override {
         return api::request_file_store::readRequest(sequence, out);
     }
 

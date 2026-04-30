@@ -60,7 +60,7 @@ private:
 class FakeRequestStore final : public api::RequestStore {
 public:
     api::RequestStoreIndex index;
-    std::map<std::uint32_t, api::BufferedRequest> requests;
+    std::map<std::uint32_t, api::ApiRequest> requests;
 
     bool readIndexOk = true;
     bool writeIndexOk = true;
@@ -84,7 +84,7 @@ public:
         return true;
     }
 
-    bool writeRequest(std::uint32_t sequence, const api::BufferedRequest& request) override {
+    bool writeRequest(std::uint32_t sequence, const api::ApiRequest& request) override {
         if (!writeRequestOk) {
             return false;
         }
@@ -92,7 +92,7 @@ public:
         return true;
     }
 
-    bool readRequest(std::uint32_t sequence, api::BufferedRequest& out) override {
+    bool readRequest(std::uint32_t sequence, api::ApiRequest& out) override {
         const auto it = requests.find(sequence);
         if (it == requests.end()) {
             return false;
@@ -114,8 +114,8 @@ public:
     }
 };
 
-api::BufferedRequest request(const std::string& name) {
-    api::BufferedRequest r;
+api::ApiRequest request(const std::string& name) {
+    api::ApiRequest r;
     r.path = "/" + name;
     r.mac = "AA:BB:CC:DD:EE:" + name;
     r.body = "{\"name\":\"" + name + "\"}";
@@ -187,7 +187,7 @@ void removeDroppedLogFile() {
 }
 
 
-std::string requestName(const api::BufferedRequest& request) {
+std::string requestName(const api::ApiRequest& request) {
     const std::string marker = "\"name\":\"";
     const auto start = request.body.find(marker);
     if (start == std::string::npos) {
@@ -302,7 +302,7 @@ private:
     }
 
     static std::string nameFromPostedBody(const std::string& body) {
-        api::BufferedRequest posted;
+        api::ApiRequest posted;
         posted.body = body;
         return requestName(posted);
     }

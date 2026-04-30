@@ -18,8 +18,8 @@ void setBasePath(const char* path);
 bool readIndex(Index& out);
 bool writeIndex(const Index& index);
 
-bool writeRequest(std::uint32_t sequence, const BufferedRequest& request);
-bool readRequest(std::uint32_t sequence, BufferedRequest& out);
+bool writeRequest(std::uint32_t sequence, const ApiRequest& request);
+bool readRequest(std::uint32_t sequence, ApiRequest& out);
 bool removeRequest(std::uint32_t sequence);
 
 std::uint64_t freeBytes();

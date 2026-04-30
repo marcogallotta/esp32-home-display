@@ -17,7 +17,7 @@ bool ensureDiskLoaded(BufferState& buffer, RequestStore& store) {
 
 BufferInsertResult bufferToDisk(
     BufferState& buffer,
-    const BufferedRequest& request,
+    const ApiRequest& request,
     const ApiBufferConfig& config,
     RequestStore& store
 ) {
@@ -32,7 +32,7 @@ BufferInsertResult bufferToDisk(
 
 BufferInsertResult bufferRequest(
     BufferState& buffer,
-    BufferedRequest request,
+    ApiRequest request,
     const ApiBufferConfig& config,
     RequestStore& store
 ) {
@@ -55,7 +55,7 @@ bool bufferHasBacklog(BufferState& buffer, RequestStore& store) {
 
 bool peekBufferedRequest(
     BufferState& buffer,
-    BufferedRequest& out,
+    ApiRequest& out,
     RequestStore& store
 ) {
     if (!buffer.requests.empty()) {
@@ -90,7 +90,7 @@ bool dropBufferedRequest(BufferState& buffer, RequestStore& store) {
 
 bool rewriteBufferedRequest(
     BufferState& buffer,
-    const BufferedRequest& request,
+    const ApiRequest& request,
     RequestStore& store
 ) {
     if (!buffer.requests.empty()) {

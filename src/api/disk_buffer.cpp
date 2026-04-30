@@ -89,7 +89,7 @@ bool load(State& state, RequestStore& store) {
 
 bool enqueue(
     State& state,
-    const BufferedRequest& request,
+    const ApiRequest& request,
     const ApiBufferConfig& config,
     RequestStore& store
 ) {
@@ -121,7 +121,7 @@ bool enqueue(
     return true;
 }
 
-bool peek(State& state, BufferedRequest& out, RequestStore& store) {
+bool peek(State& state, ApiRequest& out, RequestStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }
@@ -146,7 +146,7 @@ bool dropFront(State& state, RequestStore& store) {
     return advanceHead(state, "drop front", store);
 }
 
-bool rewriteFront(State& state, const BufferedRequest& request, RequestStore& store) {
+bool rewriteFront(State& state, const ApiRequest& request, RequestStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }

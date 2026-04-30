@@ -21,7 +21,7 @@ struct State {
 
 } // namespace disk_buffer
 
-struct BufferedRequest {
+struct ApiRequest {
     std::string path;
     std::string mac;
     std::string body;
@@ -30,7 +30,7 @@ struct BufferedRequest {
 };
 
 struct BufferState {
-    std::deque<BufferedRequest> requests;
+    std::deque<ApiRequest> requests;
     disk_buffer::State disk;
 };
 
@@ -49,7 +49,7 @@ struct BufferDrainResult {
 
 BufferInsertResult bufferRequest(
     BufferState& buffer,
-    BufferedRequest request,
+    ApiRequest request,
     const ApiBufferConfig& config,
     RequestStore& store
 );
@@ -58,7 +58,7 @@ bool bufferHasBacklog(BufferState& buffer, RequestStore& store);
 
 bool peekBufferedRequest(
     BufferState& buffer,
-    BufferedRequest& out,
+    ApiRequest& out,
     RequestStore& store
 );
 
@@ -67,7 +67,7 @@ bool dropBufferedRequest(BufferState& buffer, RequestStore& store);
 
 bool rewriteBufferedRequest(
     BufferState& buffer,
-    const BufferedRequest& request,
+    const ApiRequest& request,
     RequestStore& store
 );
 

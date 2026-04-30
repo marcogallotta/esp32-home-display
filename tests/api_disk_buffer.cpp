@@ -14,7 +14,7 @@ namespace {
 class FakeRequestStore final : public api::RequestStore {
 public:
     api::RequestStoreIndex index;
-    std::map<std::uint32_t, api::BufferedRequest> requests;
+    std::map<std::uint32_t, api::ApiRequest> requests;
 
     bool readIndexOk = true;
     bool writeIndexOk = true;
@@ -51,7 +51,7 @@ public:
         return true;
     }
 
-    bool writeRequest(std::uint32_t sequence, const api::BufferedRequest& request) override {
+    bool writeRequest(std::uint32_t sequence, const api::ApiRequest& request) override {
         ++writeRequestCalls;
         writtenSequences.push_back(sequence);
         if (!writeRequestOk) {
@@ -61,7 +61,7 @@ public:
         return true;
     }
 
-    bool readRequest(std::uint32_t sequence, api::BufferedRequest& out) override {
+    bool readRequest(std::uint32_t sequence, api::ApiRequest& out) override {
         ++readRequestCalls;
         readSequences.push_back(sequence);
         if (!readRequestOk) {
@@ -90,8 +90,8 @@ public:
     }
 };
 
-api::BufferedRequest bufferedReading(const std::string& name) {
-    api::BufferedRequest out;
+api::ApiRequest bufferedReading(const std::string& name) {
+    api::ApiRequest out;
     out.path = "/" + name;
     out.mac = "mac-for-" + name;
     out.body = "{\"name\":\"" + name + "\"}";
@@ -151,7 +151,7 @@ public:
     }
 
     void rewriteFrontRetryCounts(int timeoutRetries, int tlsRetries) {
-        api::BufferedRequest front;
+        api::ApiRequest front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         front.timeoutRetryCount = timeoutRetries;
         front.tlsRetryCount = tlsRetries;
@@ -159,7 +159,7 @@ public:
     }
 
     std::string frontReadingName() {
-        api::BufferedRequest front;
+        api::ApiRequest front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         return readingName(front);
     }
@@ -167,7 +167,7 @@ public:
     std::vector<std::string> visibleReadingNamesByDrainingCopy() const {
         DiskBufferScenario copy = *this;
         std::vector<std::string> names;
-        api::BufferedRequest front;
+        api::ApiRequest front;
         while (api::disk_buffer::peek(copy.state_, front, copy.store_)) {
             names.push_back(readingName(front));
             if (!api::disk_buffer::consume(copy.state_, copy.store_)) {
@@ -233,14 +233,14 @@ public:
         return store_.removedSequences;
     }
 
-    api::BufferedRequest frontRequest() {
-        api::BufferedRequest front;
+    api::ApiRequest frontRequest() {
+        api::ApiRequest front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         return front;
     }
 
 private:
-    static std::string readingName(const api::BufferedRequest& request) {
+    static std::string readingName(const api::ApiRequest& request) {
         const std::string marker = "\"name\":\"";
         const auto start = request.body.find(marker);
         if (start == std::string::npos) {

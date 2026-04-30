@@ -48,7 +48,7 @@ FreshRequestDecision decideFreshResponse(const network::HttpResponse& response) 
 }
 
 BufferedRequestDecision decideBufferedResponse(
-    BufferedRequest& request,
+    ApiRequest& request,
     const network::HttpResponse& response
 ) {
     switch (classifyApiResponse(response)) {
@@ -149,7 +149,7 @@ WriteResult makeWriteResult(
 }
 
 std::string droppedReason(
-    const BufferedRequest& request,
+    const ApiRequest& request,
     const network::HttpResponse& response
 ) {
     if (response.transport == network::TransportResult::Timeout) {
@@ -180,7 +180,7 @@ std::string droppedReason(
 }
 
 void logDroppedFreshRequest(
-    const BufferedRequest& request,
+    const ApiRequest& request,
     const network::HttpResponse& response
 ) {
     logLine(
@@ -206,7 +206,7 @@ void logDroppedFreshRequest(
 }
 
 void logDroppedBufferedRequest(
-    const BufferedRequest& request,
+    const ApiRequest& request,
     const network::HttpResponse& response
 ) {
     std::string message =
@@ -242,7 +242,7 @@ void logDroppedBufferedRequest(
     );
 }
 
-void logDroppedBufferFullRequest(const BufferedRequest& request) {
+void logDroppedBufferFullRequest(const ApiRequest& request) {
     logLine(
         LogLevel::Warn,
         "Dropping request because buffer is full: " + request.path +
@@ -290,7 +290,7 @@ std::uint64_t drainDelayMs(const ApiBufferConfig& config) {
 }
 
 void logDrainPaused(
-    const BufferedRequest& request,
+    const ApiRequest& request,
     const network::HttpResponse& response,
     const BufferDrainResult& result,
     const BufferState& buffer
@@ -351,7 +351,7 @@ WriteResult BufferedClient::postSwitchbotReading(
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
-    return send(BufferedRequest{
+    return send(ApiRequest{
         "/switchbot/reading",
         identity.mac,
         toJson(*payload),
@@ -372,7 +372,7 @@ WriteResult BufferedClient::postXiaomiReading(
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
-    return send(BufferedRequest{
+    return send(ApiRequest{
         "/xiaomi/reading",
         identity.mac,
         toJson(*payload),
@@ -385,7 +385,7 @@ void BufferedClient::delayNextDrain(std::uint64_t nowMs) {
     }
 }
 
-WriteResult BufferedClient::send(BufferedRequest request) {
+WriteResult BufferedClient::send(ApiRequest request) {
     if (bufferHasBacklog(buffer_, store_)) {
         const bool wroteToDisk =
             buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
@@ -488,7 +488,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
             break;
         }
 
-        BufferedRequest request;
+        ApiRequest request;
         if (!peekBufferedRequest(buffer_, request, store_)) {
             logLine(LogLevel::Warn, "Dropping corrupt disk-buffered API request");
             if (dropBufferedRequest(buffer_, store_)) {
