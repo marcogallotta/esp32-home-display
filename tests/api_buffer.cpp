@@ -270,7 +270,7 @@ public:
     }
 
     void expectBufferEmpty() const {
-        CHECK(buffer_.requests.empty());
+        CHECK(buffer_.ramQueue.empty());
         CHECK_EQ(buffer_.disk.count, 0U);
         CHECK_EQ(store_.index.count, 0U);
     }
@@ -320,7 +320,7 @@ private:
 TEST_CASE("buffer starts empty") {
     api::BufferState buffer;
 
-    CHECK(buffer.requests.empty());
+    CHECK(buffer.ramQueue.empty());
     CHECK_EQ(buffer.disk.count, 0U);
 }
 
@@ -339,9 +339,9 @@ TEST_CASE("buffering stores requests without owning drain timing") {
         api::BufferInsertResult::Buffered
     );
 
-    REQUIRE_EQ(buffer.requests.size(), 2U);
-    CHECK_EQ(buffer.requests[0].path, "/first");
-    CHECK_EQ(buffer.requests[1].path, "/second");
+    REQUIRE_EQ(buffer.ramQueue.size(), 2U);
+    CHECK_EQ(buffer.ramQueue[0].path, "/first");
+    CHECK_EQ(buffer.ramQueue[1].path, "/second");
 }
 
 TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM FIFO contents") {
@@ -356,9 +356,9 @@ TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM F
         api::enqueue(buffer, request("third"), c, store);
 
     CHECK_EQ(result, api::BufferInsertResult::Buffered);
-    REQUIRE_EQ(buffer.requests.size(), 2U);
-    CHECK_EQ(buffer.requests[0].path, "/first");
-    CHECK_EQ(buffer.requests[1].path, "/second");
+    REQUIRE_EQ(buffer.ramQueue.size(), 2U);
+    CHECK_EQ(buffer.ramQueue[0].path, "/first");
+    CHECK_EQ(buffer.ramQueue[1].path, "/second");
 
     CHECK_EQ(buffer.disk.count, 1U);
     REQUIRE_EQ(store.requests.size(), 1U);
@@ -385,9 +385,9 @@ TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exist
     CHECK_EQ(second, api::BufferInsertResult::Buffered);
     CHECK_EQ(third, api::BufferInsertResult::Buffered);
 
-    REQUIRE_EQ(buffer.requests.size(), 2U);
-    CHECK_EQ(buffer.requests[0].path, "/first-ram");
-    CHECK_EQ(buffer.requests[1].path, "/second-ram");
+    REQUIRE_EQ(buffer.ramQueue.size(), 2U);
+    CHECK_EQ(buffer.ramQueue[0].path, "/first-ram");
+    CHECK_EQ(buffer.ramQueue[1].path, "/second-ram");
 
     CHECK_EQ(buffer.disk.count, 2U);
     CHECK_EQ(store.requests[0].path, "/existing");
@@ -406,8 +406,8 @@ TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails")
         api::enqueue(buffer, request("second"), c, store);
 
     CHECK_EQ(result, api::BufferInsertResult::DroppedNewRequestBufferFull);
-    REQUIRE_EQ(buffer.requests.size(), 1U);
-    CHECK_EQ(buffer.requests.front().path, "/first");
+    REQUIRE_EQ(buffer.ramQueue.size(), 1U);
+    CHECK_EQ(buffer.ramQueue.front().path, "/first");
     CHECK_EQ(buffer.disk.count, 0U);
 }
 
@@ -430,7 +430,7 @@ TEST_CASE("buffer drains oldest requests first") {
     CHECK_EQ(result.attempted, 3);
     CHECK_EQ(result.sent, 3);
     CHECK_EQ(result.dropped, 0);
-    CHECK(buffer.requests.empty());
+    CHECK(buffer.ramQueue.empty());
 
     REQUIRE_EQ(poster.calls().size(), 3U);
     CHECK_EQ(poster.calls()[0].path, "/first");
@@ -462,7 +462,7 @@ TEST_CASE("startup drain sends persisted disk backlog immediately") {
     CHECK_FALSE(result.notDueYet);
     CHECK_FALSE(result.blockedByRetryableFailure);
 
-    CHECK(buffer.requests.empty());
+    CHECK(buffer.ramQueue.empty());
     CHECK_EQ(buffer.disk.count, 0U);
     CHECK_EQ(store.index.count, 0U);
     CHECK(store.requests.empty());
@@ -494,7 +494,7 @@ TEST_CASE("retryable failure during startup drain preserves persisted disk backl
     CHECK_EQ(result.dropped, 0);
     CHECK(result.blockedByRetryableFailure);
 
-    CHECK(buffer.requests.empty());
+    CHECK(buffer.ramQueue.empty());
     CHECK_EQ(buffer.disk.count, 2U);
     CHECK_EQ(store.index.count, 2U);
     CHECK_EQ(store.requests[0].path, "/persisted-first");
@@ -524,8 +524,8 @@ TEST_CASE("drain cap limits how many requests are sent per tick") {
 
     CHECK_EQ(result.attempted, 2);
     CHECK_EQ(result.sent, 2);
-    REQUIRE_EQ(buffer.requests.size(), 1U);
-    CHECK_EQ(buffer.requests.front().path, "/third");
+    REQUIRE_EQ(buffer.ramQueue.size(), 1U);
+    CHECK_EQ(buffer.ramQueue.front().path, "/third");
 
     const api::BufferDrainResult early = client.drainPending(ms(159));
     CHECK(early.notDueYet);
@@ -554,8 +554,8 @@ TEST_CASE("buffered client does not drain before the next allowed tick") {
     CHECK(result.notDueYet);
     CHECK_EQ(result.attempted, 0);
     CHECK_EQ(poster.calls().size(), 1U);
-    REQUIRE_EQ(buffer.requests.size(), 1U);
-    CHECK_EQ(buffer.requests.front().path, "/first");
+    REQUIRE_EQ(buffer.ramQueue.size(), 1U);
+    CHECK_EQ(buffer.ramQueue.front().path, "/first");
 }
 
 TEST_CASE("retryable transport failure keeps first request and blocks later requests") {
@@ -576,9 +576,9 @@ TEST_CASE("retryable transport failure keeps first request and blocks later requ
     CHECK_EQ(result.dropped, 0);
     CHECK(result.blockedByRetryableFailure);
 
-    REQUIRE_EQ(buffer.requests.size(), 2U);
-    CHECK_EQ(buffer.requests[0].path, "/first");
-    CHECK_EQ(buffer.requests[1].path, "/second");
+    REQUIRE_EQ(buffer.ramQueue.size(), 2U);
+    CHECK_EQ(buffer.ramQueue[0].path, "/first");
+    CHECK_EQ(buffer.ramQueue[1].path, "/second");
 
     REQUIRE_EQ(poster.calls().size(), 1U);
     CHECK_EQ(poster.calls()[0].path, "/first");
@@ -600,9 +600,9 @@ TEST_CASE("retryable HTTP failure keeps first request and blocks later requests"
     CHECK_EQ(result.attempted, 1);
     CHECK(result.blockedByRetryableFailure);
 
-    REQUIRE_EQ(buffer.requests.size(), 2U);
-    CHECK_EQ(buffer.requests[0].path, "/first");
-    CHECK_EQ(buffer.requests[1].path, "/second");
+    REQUIRE_EQ(buffer.ramQueue.size(), 2U);
+    CHECK_EQ(buffer.ramQueue[0].path, "/first");
+    CHECK_EQ(buffer.ramQueue[1].path, "/second");
 }
 
 TEST_CASE("permanent failure drops first request and continues draining") {
@@ -625,7 +625,7 @@ TEST_CASE("permanent failure drops first request and continues draining") {
     CHECK_EQ(result.dropped, 1);
     CHECK_EQ(result.sent, 1);
     CHECK_FALSE(result.blockedByRetryableFailure);
-    CHECK(buffer.requests.empty());
+    CHECK(buffer.ramQueue.empty());
 
     REQUIRE_EQ(poster.calls().size(), 2U);
     CHECK_EQ(poster.calls()[0].path, "/first");
@@ -651,21 +651,21 @@ TEST_CASE("timeout failure is retried twice and then dropped") {
         drainForTest(buffer, ms(100), c, poster, store);
     CHECK_EQ(first.attempted, 1);
     CHECK(first.blockedByRetryableFailure);
-    REQUIRE_EQ(buffer.requests.size(), 1U);
-    CHECK_EQ(buffer.requests.front().timeoutRetryCount, 1);
+    REQUIRE_EQ(buffer.ramQueue.size(), 1U);
+    CHECK_EQ(buffer.ramQueue.front().timeoutRetryCount, 1);
 
     const api::BufferDrainResult second =
         drainForTest(buffer, ms(100), c, poster, store);
     CHECK_EQ(second.attempted, 1);
     CHECK(second.blockedByRetryableFailure);
-    REQUIRE_EQ(buffer.requests.size(), 1U);
-    CHECK_EQ(buffer.requests.front().timeoutRetryCount, 2);
+    REQUIRE_EQ(buffer.ramQueue.size(), 1U);
+    CHECK_EQ(buffer.ramQueue.front().timeoutRetryCount, 2);
 
     const api::BufferDrainResult third =
         drainForTest(buffer, ms(100), c, poster, store);
     CHECK_EQ(third.attempted, 1);
     CHECK_EQ(third.dropped, 1);
-    CHECK(buffer.requests.empty());
+    CHECK(buffer.ramQueue.empty());
 
     removeDroppedLogFile();
 }

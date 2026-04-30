@@ -279,7 +279,7 @@ void logBufferedRequest(
     logLine(
         LogLevel::Warn,
         "Buffered API request in memory: " +
-        std::to_string(buffer.requests.size()) +
+        std::to_string(buffer.ramQueue.size()) +
         "/" + std::to_string(config.inMemory) + " queued"
     );
 }
@@ -304,7 +304,7 @@ void logDrainPaused(
         ", " + response.error +
         ". Sent " + std::to_string(result.sent) +
         ", dropped " + std::to_string(result.dropped) +
-        ", remaining RAM " + std::to_string(buffer.requests.size()) +
+        ", remaining RAM " + std::to_string(buffer.ramQueue.size()) +
         ", disk " + std::to_string(buffer.disk.count)
     );
 }
@@ -318,7 +318,7 @@ void logDrainSummary(const BufferDrainResult& result, const BufferState& buffer)
         LogLevel::Info,
         "Buffer drain complete: sent " + std::to_string(result.sent) +
         ", dropped " + std::to_string(result.dropped) +
-        ", remaining RAM " + std::to_string(buffer.requests.size()) +
+        ", remaining RAM " + std::to_string(buffer.ramQueue.size()) +
         ", disk " + std::to_string(buffer.disk.count)
     );
 }
@@ -388,7 +388,7 @@ void BufferedClient::delayNextDrain(std::uint64_t nowMs) {
 WriteResult BufferedClient::send(ApiRequest request) {
     if (hasBacklog(buffer_, store_)) {
         const bool wroteToDisk =
-            buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
+            buffer_.ramQueue.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
         const BufferInsertResult insertResult =
             enqueue(buffer_, request, config_.api.buffer, store_);
 
@@ -434,7 +434,7 @@ WriteResult BufferedClient::send(ApiRequest request) {
 
         case FreshRequestDecision::Buffer: {
             const bool wroteToDisk =
-                buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
+                buffer_.ramQueue.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
             const BufferInsertResult insertResult =
                 enqueue(buffer_, request, config_.api.buffer, store_);
 
@@ -476,7 +476,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
 
     logLine(
         LogLevel::Info,
-        "Draining API buffer: RAM " + std::to_string(buffer_.requests.size()) +
+        "Draining API buffer: RAM " + std::to_string(buffer_.ramQueue.size()) +
         ", disk " + std::to_string(buffer_.disk.count) +
         " queued"
     );

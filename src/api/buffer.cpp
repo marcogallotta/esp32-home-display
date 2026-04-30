@@ -36,17 +36,17 @@ BufferInsertResult enqueue(
     const ApiBufferConfig& config,
     RequestStore& store
 ) {
-    if (buffer.requests.size() >= static_cast<std::size_t>(config.inMemory)) {
+    if (buffer.ramQueue.size() >= static_cast<std::size_t>(config.inMemory)) {
         return bufferToDisk(buffer, request, config, store);
     }
 
-    buffer.requests.push_back(std::move(request));
+    buffer.ramQueue.push_back(std::move(request));
 
     return BufferInsertResult::Buffered;
 }
 
 bool hasBacklog(BufferState& buffer, RequestStore& store) {
-    if (!buffer.requests.empty()) {
+    if (!buffer.ramQueue.empty()) {
         return true;
     }
 
@@ -58,8 +58,8 @@ bool peek(
     ApiRequest& out,
     RequestStore& store
 ) {
-    if (!buffer.requests.empty()) {
-        out = buffer.requests.front();
+    if (!buffer.ramQueue.empty()) {
+        out = buffer.ramQueue.front();
         return true;
     }
 
@@ -71,8 +71,8 @@ bool peek(
 }
 
 bool pop(BufferState& buffer, RequestStore& store) {
-    if (!buffer.requests.empty()) {
-        buffer.requests.pop_front();
+    if (!buffer.ramQueue.empty()) {
+        buffer.ramQueue.pop_front();
         return true;
     }
 
@@ -80,8 +80,8 @@ bool pop(BufferState& buffer, RequestStore& store) {
 }
 
 bool dropFront(BufferState& buffer, RequestStore& store) {
-    if (!buffer.requests.empty()) {
-        buffer.requests.pop_front();
+    if (!buffer.ramQueue.empty()) {
+        buffer.ramQueue.pop_front();
         return true;
     }
 
@@ -93,8 +93,8 @@ bool rewriteFront(
     const ApiRequest& request,
     RequestStore& store
 ) {
-    if (!buffer.requests.empty()) {
-        buffer.requests.front() = request;
+    if (!buffer.ramQueue.empty()) {
+        buffer.ramQueue.front() = request;
         return true;
     }
 

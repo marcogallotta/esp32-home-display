@@ -30,7 +30,7 @@ struct ApiRequest {
 };
 
 struct BufferState {
-    std::deque<ApiRequest> requests;
+    std::deque<ApiRequest> ramQueue;
     disk_buffer::State disk;
 };
 
