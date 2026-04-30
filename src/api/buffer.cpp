@@ -30,7 +30,7 @@ BufferInsertResult bufferToDisk(
 
 } // namespace
 
-BufferInsertResult bufferRequest(
+BufferInsertResult enqueue(
     BufferState& buffer,
     ApiRequest request,
     const ApiBufferConfig& config,
@@ -45,7 +45,7 @@ BufferInsertResult bufferRequest(
     return BufferInsertResult::Buffered;
 }
 
-bool bufferHasBacklog(BufferState& buffer, RequestStore& store) {
+bool hasBacklog(BufferState& buffer, RequestStore& store) {
     if (!buffer.requests.empty()) {
         return true;
     }
@@ -53,7 +53,7 @@ bool bufferHasBacklog(BufferState& buffer, RequestStore& store) {
     return ensureDiskLoaded(buffer, store) && buffer.disk.count > 0;
 }
 
-bool peekBufferedRequest(
+bool peek(
     BufferState& buffer,
     ApiRequest& out,
     RequestStore& store
@@ -70,7 +70,7 @@ bool peekBufferedRequest(
     return disk_buffer::peek(buffer.disk, out, store);
 }
 
-bool consumeBufferedRequest(BufferState& buffer, RequestStore& store) {
+bool pop(BufferState& buffer, RequestStore& store) {
     if (!buffer.requests.empty()) {
         buffer.requests.pop_front();
         return true;
@@ -79,7 +79,7 @@ bool consumeBufferedRequest(BufferState& buffer, RequestStore& store) {
     return disk_buffer::consume(buffer.disk, store);
 }
 
-bool dropBufferedRequest(BufferState& buffer, RequestStore& store) {
+bool dropFront(BufferState& buffer, RequestStore& store) {
     if (!buffer.requests.empty()) {
         buffer.requests.pop_front();
         return true;
@@ -88,7 +88,7 @@ bool dropBufferedRequest(BufferState& buffer, RequestStore& store) {
     return disk_buffer::dropFront(buffer.disk, store);
 }
 
-bool rewriteBufferedRequest(
+bool rewriteFront(
     BufferState& buffer,
     const ApiRequest& request,
     RequestStore& store

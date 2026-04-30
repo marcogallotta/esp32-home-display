@@ -386,11 +386,11 @@ void BufferedClient::delayNextDrain(std::uint64_t nowMs) {
 }
 
 WriteResult BufferedClient::send(ApiRequest request) {
-    if (bufferHasBacklog(buffer_, store_)) {
+    if (hasBacklog(buffer_, store_)) {
         const bool wroteToDisk =
             buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
         const BufferInsertResult insertResult =
-            bufferRequest(buffer_, request, config_.api.buffer, store_);
+            enqueue(buffer_, request, config_.api.buffer, store_);
 
         if (insertResult == BufferInsertResult::Buffered) {
             logBufferedRequest(buffer_, config_.api.buffer, wroteToDisk);
@@ -436,7 +436,7 @@ WriteResult BufferedClient::send(ApiRequest request) {
             const bool wroteToDisk =
                 buffer_.requests.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
             const BufferInsertResult insertResult =
-                bufferRequest(buffer_, request, config_.api.buffer, store_);
+                enqueue(buffer_, request, config_.api.buffer, store_);
 
             if (insertResult == BufferInsertResult::Buffered) {
                 logBufferedRequest(buffer_, config_.api.buffer, wroteToDisk);
@@ -470,7 +470,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
         return result;
     }
 
-    if (!bufferHasBacklog(buffer_, store_)) {
+    if (!hasBacklog(buffer_, store_)) {
         return result;
     }
 
@@ -484,14 +484,14 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
     nextDrainAllowedAtMs_ = nowMs + drainDelayMs(config_.api.buffer);
 
     for (int i = 0; i < config_.api.buffer.drainRateCap; ++i) {
-        if (!bufferHasBacklog(buffer_, store_)) {
+        if (!hasBacklog(buffer_, store_)) {
             break;
         }
 
         ApiRequest request;
-        if (!peekBufferedRequest(buffer_, request, store_)) {
+        if (!peek(buffer_, request, store_)) {
             logLine(LogLevel::Warn, "Dropping corrupt disk-buffered API request");
-            if (dropBufferedRequest(buffer_, store_)) {
+            if (dropFront(buffer_, store_)) {
                 result.dropped += 1;
                 continue;
             }
@@ -507,7 +507,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
         const BufferedRequestDecision decision = decideBufferedResponse(request, response);
 
         if (decision == BufferedRequestDecision::Sent) {
-            if (!consumeBufferedRequest(buffer_, store_)) {
+            if (!pop(buffer_, store_)) {
                 result.blockedByRetryableFailure = true;
                 return result;
             }
@@ -518,7 +518,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
         if (decision == BufferedRequestDecision::KeepBuffered) {
             if ((request.timeoutRetryCount != timeoutRetryCount ||
                  request.tlsRetryCount != tlsRetryCount) &&
-                !rewriteBufferedRequest(buffer_, request, store_)) {
+                !rewriteFront(buffer_, request, store_)) {
                 result.blockedByRetryableFailure = true;
                 return result;
             }
@@ -531,13 +531,13 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
         }
 
         logDroppedBufferedRequest(request, response);
-        if (!dropBufferedRequest(buffer_, store_)) {
+        if (!dropFront(buffer_, store_)) {
             result.blockedByRetryableFailure = true;
             return result;
         }
         result.dropped += 1;
 
-        if (!bufferHasBacklog(buffer_, store_)) {
+        if (!hasBacklog(buffer_, store_)) {
             break;
         }
     }

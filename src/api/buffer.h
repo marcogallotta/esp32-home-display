@@ -47,25 +47,25 @@ struct BufferDrainResult {
     bool notDueYet = false;
 };
 
-BufferInsertResult bufferRequest(
+BufferInsertResult enqueue(
     BufferState& buffer,
     ApiRequest request,
     const ApiBufferConfig& config,
     RequestStore& store
 );
 
-bool bufferHasBacklog(BufferState& buffer, RequestStore& store);
+bool hasBacklog(BufferState& buffer, RequestStore& store);
 
-bool peekBufferedRequest(
+bool peek(
     BufferState& buffer,
     ApiRequest& out,
     RequestStore& store
 );
 
-bool consumeBufferedRequest(BufferState& buffer, RequestStore& store);
-bool dropBufferedRequest(BufferState& buffer, RequestStore& store);
+bool pop(BufferState& buffer, RequestStore& store);
+bool dropFront(BufferState& buffer, RequestStore& store);
 
-bool rewriteBufferedRequest(
+bool rewriteFront(
     BufferState& buffer,
     const ApiRequest& request,
     RequestStore& store

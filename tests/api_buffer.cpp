@@ -177,7 +177,7 @@ void bufferOrFail(
     const ApiBufferConfig& c
 ) {
     CHECK_EQ(
-        api::bufferRequest(buffer, request(name), c, store),
+        api::enqueue(buffer, request(name), c, store),
         api::BufferInsertResult::Buffered
     );
 }
@@ -330,12 +330,12 @@ TEST_CASE("buffering stores requests without owning drain timing") {
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
     CHECK_EQ(
-        api::bufferRequest(buffer, request("first"), c, store),
+        api::enqueue(buffer, request("first"), c, store),
         api::BufferInsertResult::Buffered
     );
 
     CHECK_EQ(
-        api::bufferRequest(buffer, request("second"), c, store),
+        api::enqueue(buffer, request("second"), c, store),
         api::BufferInsertResult::Buffered
     );
 
@@ -353,7 +353,7 @@ TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM F
     bufferOrFail(buffer, store, "second", c);
 
     const api::BufferInsertResult result =
-        api::bufferRequest(buffer, request("third"), c, store);
+        api::enqueue(buffer, request("third"), c, store);
 
     CHECK_EQ(result, api::BufferInsertResult::Buffered);
     REQUIRE_EQ(buffer.requests.size(), 2U);
@@ -375,11 +375,11 @@ TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exist
     const ApiBufferConfig c = config(/*capacity=*/2);
 
     const api::BufferInsertResult first =
-        api::bufferRequest(buffer, request("first-ram"), c, store);
+        api::enqueue(buffer, request("first-ram"), c, store);
     const api::BufferInsertResult second =
-        api::bufferRequest(buffer, request("second-ram"), c, store);
+        api::enqueue(buffer, request("second-ram"), c, store);
     const api::BufferInsertResult third =
-        api::bufferRequest(buffer, request("third-disk"), c, store);
+        api::enqueue(buffer, request("third-disk"), c, store);
 
     CHECK_EQ(first, api::BufferInsertResult::Buffered);
     CHECK_EQ(second, api::BufferInsertResult::Buffered);
@@ -403,7 +403,7 @@ TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails")
     bufferOrFail(buffer, store, "first", c);
 
     const api::BufferInsertResult result =
-        api::bufferRequest(buffer, request("second"), c, store);
+        api::enqueue(buffer, request("second"), c, store);
 
     CHECK_EQ(result, api::BufferInsertResult::DroppedNewRequestBufferFull);
     REQUIRE_EQ(buffer.requests.size(), 1U);
