@@ -4,6 +4,7 @@
 .vscode
 spool
 spool_harness
+pqueue_outbox_test_spool/
 data/laptop.pem
 data/config.json
 esp32-build

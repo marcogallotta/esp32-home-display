@@ -43,7 +43,9 @@ COMMON_SRC := \
 	src/log.cpp \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
+	src/pqueue/envelope.cpp \
 	src/pqueue/file_store.cpp \
+	src/pqueue/outbox.cpp \
 	src/pqueue/queue.cpp \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
@@ -74,6 +76,8 @@ TEST_SRC := \
 	tests/config.cpp \
 	tests/main.cpp \
 	tests/pqueue.cpp \
+	tests/pqueue_envelope.cpp \
+	tests/pqueue_outbox.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
