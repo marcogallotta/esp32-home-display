@@ -6,20 +6,10 @@
 #include <string>
 
 #include "../pqueue/types.h"
+#include "disk_buffer.h"
 #include "request_store.h"
 
 namespace api {
-
-namespace disk_buffer {
-
-struct State {
-    std::uint32_t head = 0;
-    std::uint32_t tail = 0;
-    std::uint32_t count = 0;
-    bool loaded = false;
-};
-
-} // namespace disk_buffer
 
 using ApiRequest = pqueue::Record;
 

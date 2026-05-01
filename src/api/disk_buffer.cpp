@@ -32,7 +32,7 @@ bool hasDiskSpace(const pqueue::Config& config, RequestStore& store) {
     const std::uint64_t freeBytes = store.freeBytes();
 
     if (freeBytes <= config.diskReserveBytes) {
-        logLine(LogLevel::Warn, "API disk buffer full: reserve would be crossed");
+        logLine(LogLevel::Warn, "Disk buffer full: reserve would be crossed");
         return false;
     }
 
@@ -57,7 +57,7 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
     if (!store.writeIndex(toIndex(next))) {
         logLine(
             LogLevel::Warn,
-            std::string("API disk buffer ") + actionName + " failed: index write failed"
+            std::string("Disk buffer ") + actionName + " failed: index write failed"
         );
         return false;
     }
@@ -67,7 +67,7 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
     if (!store.removeRequest(oldHead)) {
         logLine(
             LogLevel::Warn,
-            std::string("API disk buffer ") + actionName + " cleanup failed: request delete failed"
+            std::string("Disk buffer ") + actionName + " cleanup failed: request delete failed"
         );
     }
 
@@ -79,7 +79,7 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
 bool load(State& state, RequestStore& store) {
     RequestStoreIndex index;
     if (!store.readIndex(index)) {
-        logLine(LogLevel::Warn, "API disk buffer load failed");
+        logLine(LogLevel::Warn, "Disk buffer load failed");
         return false;
     }
 
@@ -104,7 +104,7 @@ bool enqueue(
     const std::uint32_t sequence = state.tail;
 
     if (!store.writeRequest(sequence, request)) {
-        logLine(LogLevel::Warn, "API disk buffer enqueue failed: request write failed");
+        logLine(LogLevel::Warn, "Disk buffer enqueue failed: request write failed");
         return false;
     }
 
@@ -113,7 +113,7 @@ bool enqueue(
     next.count += 1;
 
     if (!store.writeIndex(toIndex(next))) {
-        logLine(LogLevel::Warn, "API disk buffer enqueue failed: index write failed");
+        logLine(LogLevel::Warn, "Disk buffer enqueue failed: index write failed");
         return false;
     }
 
@@ -131,7 +131,7 @@ bool peek(State& state, pqueue::Record& out, RequestStore& store) {
     }
 
     if (!store.readRequest(state.head, out)) {
-        logLine(LogLevel::Warn, "API disk buffer peek failed: request read failed");
+        logLine(LogLevel::Warn, "Disk buffer peek failed: request read failed");
         return false;
     }
 
@@ -156,7 +156,7 @@ bool rewriteFront(State& state, const pqueue::Record& request, RequestStore& sto
     }
 
     if (!store.writeRequest(state.head, request)) {
-        logLine(LogLevel::Warn, "API disk buffer rewrite failed");
+        logLine(LogLevel::Warn, "Disk buffer rewrite failed");
         return false;
     }
 
