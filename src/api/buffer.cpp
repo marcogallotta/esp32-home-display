@@ -17,8 +17,8 @@ bool ensureDiskLoaded(BufferState& buffer, RequestStore& store) {
 
 BufferInsertResult bufferToDisk(
     BufferState& buffer,
-    const ApiRequest& request,
-    const ApiBufferConfig& config,
+    const pqueue::Record& request,
+    const pqueue::Config& config,
     RequestStore& store
 ) {
     if (!disk_buffer::enqueue(buffer.disk, request, config, store)) {
@@ -32,8 +32,8 @@ BufferInsertResult bufferToDisk(
 
 BufferInsertResult enqueue(
     BufferState& buffer,
-    ApiRequest request,
-    const ApiBufferConfig& config,
+    pqueue::Record request,
+    const pqueue::Config& config,
     RequestStore& store
 ) {
     if (buffer.ramQueue.size() >= static_cast<std::size_t>(config.inMemory)) {
@@ -55,7 +55,7 @@ bool hasBacklog(BufferState& buffer, RequestStore& store) {
 
 bool peek(
     BufferState& buffer,
-    ApiRequest& out,
+    pqueue::Record& out,
     RequestStore& store
 ) {
     if (!buffer.ramQueue.empty()) {
@@ -90,7 +90,7 @@ bool dropFront(BufferState& buffer, RequestStore& store) {
 
 bool rewriteFront(
     BufferState& buffer,
-    const ApiRequest& request,
+    const pqueue::Record& request,
     RequestStore& store
 ) {
     if (!buffer.ramQueue.empty()) {

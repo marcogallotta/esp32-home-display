@@ -5,7 +5,7 @@
 #include <deque>
 #include <string>
 
-#include "../config.h"
+#include "../pqueue/types.h"
 #include "request_store.h"
 
 namespace api {
@@ -21,16 +21,10 @@ struct State {
 
 } // namespace disk_buffer
 
-struct ApiRequest {
-    std::string path;
-    std::string mac;
-    std::string body;
-    int timeoutRetryCount = 0;
-    int tlsRetryCount = 0;
-};
+using ApiRequest = pqueue::Record;
 
 struct BufferState {
-    std::deque<ApiRequest> ramQueue;
+    std::deque<pqueue::Record> ramQueue;
     disk_buffer::State disk;
 };
 
@@ -49,8 +43,8 @@ struct BufferDrainResult {
 
 BufferInsertResult enqueue(
     BufferState& buffer,
-    ApiRequest request,
-    const ApiBufferConfig& config,
+    pqueue::Record request,
+    const pqueue::Config& config,
     RequestStore& store
 );
 
@@ -58,7 +52,7 @@ bool hasBacklog(BufferState& buffer, RequestStore& store);
 
 bool peek(
     BufferState& buffer,
-    ApiRequest& out,
+    pqueue::Record& out,
     RequestStore& store
 );
 
@@ -67,7 +61,7 @@ bool dropFront(BufferState& buffer, RequestStore& store);
 
 bool rewriteFront(
     BufferState& buffer,
-    const ApiRequest& request,
+    const pqueue::Record& request,
     RequestStore& store
 );
 

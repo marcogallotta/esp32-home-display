@@ -2,9 +2,11 @@
 
 #include <cstdint>
 
-namespace api {
+namespace pqueue {
+struct Record;
+}
 
-struct ApiRequest;
+namespace api {
 
 struct RequestStoreIndex {
     std::uint32_t head = 0;
@@ -19,8 +21,8 @@ public:
     virtual bool readIndex(RequestStoreIndex& out) = 0;
     virtual bool writeIndex(const RequestStoreIndex& index) = 0;
 
-    virtual bool writeRequest(std::uint32_t sequence, const ApiRequest& request) = 0;
-    virtual bool readRequest(std::uint32_t sequence, ApiRequest& out) = 0;
+    virtual bool writeRequest(std::uint32_t sequence, const pqueue::Record& request) = 0;
+    virtual bool readRequest(std::uint32_t sequence, pqueue::Record& out) = 0;
     virtual bool removeRequest(std::uint32_t sequence) = 0;
 
     virtual std::uint64_t freeBytes() = 0;

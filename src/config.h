@@ -4,18 +4,15 @@
 #include <string>
 #include <vector>
 
+#include "pqueue/types.h"
+
 struct ForecastConfig {
     std::string openmeteoPemFile;
     std::string openmeteoPem;
     int updateIntervalMinutes = 30;
 };
 
-struct ApiBufferConfig {
-    int inMemory = 32;
-    std::uint32_t diskReserveBytes = 256 * 1024;
-    int drainRateCap = 4;
-    int drainRateTickS = 5;
-};
+struct ApiBufferConfig : pqueue::Config {};
 
 struct SensorWritePolicyConfig {
     int heartbeatMinutes = 60;
