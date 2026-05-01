@@ -11,7 +11,7 @@ namespace api {
 
 class Client : public ApiPoster {
 public:
-    explicit Client(const Config& config);
+    explicit Client(const ::Config& config);
 
     network::HttpResponse postJson(const std::string& path, const std::string& body) const override;
 
@@ -21,7 +21,7 @@ public:
 private:
     std::string joinUrl(const std::string& path) const;
 
-    const Config& config_;
+    const ::Config& config_;
 };
 
 } // namespace api

@@ -14,7 +14,7 @@ namespace {
 class FakeRecordStore final : public api::RecordStore {
 public:
     api::RecordStoreIndex index;
-    std::map<std::uint32_t, pqueue::Record> requests;
+    std::map<std::uint32_t, api::Record> requests;
 
     bool readIndexOk = true;
     bool writeIndexOk = true;
@@ -51,7 +51,7 @@ public:
         return true;
     }
 
-    bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
+    bool writeRecord(std::uint32_t sequence, const api::Record& request) override {
         ++writeRecordCalls;
         writtenSequences.push_back(sequence);
         if (!writeRecordOk) {
@@ -61,7 +61,7 @@ public:
         return true;
     }
 
-    bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
+    bool readRecord(std::uint32_t sequence, api::Record& out) override {
         ++readRecordCalls;
         readSequences.push_back(sequence);
         if (!readRecordOk) {
@@ -90,8 +90,8 @@ public:
     }
 };
 
-pqueue::Record bufferedReading(const std::string& name) {
-    pqueue::Record out;
+api::Record bufferedReading(const std::string& name) {
+    api::Record out;
     out.path = "/" + name;
     out.payload = "{\"name\":\"" + name + "\"}";
     return out;
@@ -150,7 +150,7 @@ public:
     }
 
     void rewriteFrontRetryCounts(int timeoutRetries, int tlsRetries) {
-        pqueue::Record front;
+        api::Record front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         front.timeoutRetryCount = timeoutRetries;
         front.tlsRetryCount = tlsRetries;
@@ -158,7 +158,7 @@ public:
     }
 
     std::string frontReadingName() {
-        pqueue::Record front;
+        api::Record front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         return readingName(front);
     }
@@ -166,7 +166,7 @@ public:
     std::vector<std::string> visibleReadingNamesByDrainingCopy() const {
         DiskBufferScenario copy = *this;
         std::vector<std::string> names;
-        pqueue::Record front;
+        api::Record front;
         while (api::disk_buffer::peek(copy.state_, front, copy.store_)) {
             names.push_back(readingName(front));
             if (!api::disk_buffer::consume(copy.state_, copy.store_)) {
@@ -232,14 +232,14 @@ public:
         return store_.removedSequences;
     }
 
-    pqueue::Record frontRequest() {
-        pqueue::Record front;
+    api::Record frontRequest() {
+        api::Record front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         return front;
     }
 
 private:
-    static std::string readingName(const pqueue::Record& request) {
+    static std::string readingName(const api::Record& request) {
         const std::string marker = "\"name\":\"";
         const auto start = request.payload.find(marker);
         if (start == std::string::npos) {

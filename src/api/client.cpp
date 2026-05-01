@@ -14,7 +14,7 @@ std::string trimTrailingSlash(std::string s) {
 
 } // namespace
 
-Client::Client(const Config& config)
+Client::Client(const ::Config& config)
     : config_(config) {
 }
 

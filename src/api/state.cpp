@@ -97,7 +97,7 @@ bool shouldSendSwitchbot(
 }
 
 bool shouldSendSwitchbot(
-    const Config& config,
+    const ::Config& config,
     const SwitchbotReading& current,
     const SwitchbotReading& lastSent
 ) {
@@ -117,7 +117,7 @@ bool shouldSendXiaomi(
 }
 
 bool shouldSendXiaomi(
-    const Config& config,
+    const ::Config& config,
     const XiaomiReading& current,
     const XiaomiReading& lastSent
 ) {

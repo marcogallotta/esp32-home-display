@@ -18,8 +18,8 @@ void setBasePath(const char* path);
 bool readIndex(Index& out);
 bool writeIndex(const Index& index);
 
-bool writeRecord(std::uint32_t sequence, const pqueue::Record& request);
-bool readRecord(std::uint32_t sequence, pqueue::Record& out);
+bool writeRecord(std::uint32_t sequence, const api::Record& request);
+bool readRecord(std::uint32_t sequence, api::Record& out);
 bool removeRecord(std::uint32_t sequence);
 
 std::uint64_t freeBytes();

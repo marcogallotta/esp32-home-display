@@ -347,7 +347,7 @@ void logDrainSummary(const BufferDrainResult& result, const BufferState& buffer)
 } // namespace
 
 BufferedClient::BufferedClient(
-    const Config& config,
+    const ::Config& config,
     BufferState& buffer,
     const ApiPoster& poster,
     RecordStore& store

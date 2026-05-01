@@ -43,6 +43,8 @@ COMMON_SRC := \
 	src/log.cpp \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
+	src/pqueue/file_store.cpp \
+	src/pqueue/queue.cpp \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
@@ -71,6 +73,7 @@ TEST_SRC := \
 	tests/api_sensor_write_policy.cpp \
 	tests/config.cpp \
 	tests/main.cpp \
+	tests/pqueue.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \

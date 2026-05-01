@@ -1,22 +1,22 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <string>
 
 namespace pqueue {
 
+using Record = std::string;
+
 struct Config {
-    int inMemory = 32;
     std::uint32_t diskReserveBytes = 256 * 1024;
-    int drainRateCap = 4;
-    int drainRateTickS = 5;
+    std::size_t maxRecordBytes = 4096;
+    // TODO: make full-queue behavior configurable instead of always rejecting newest.
 };
 
-struct Record {
-    std::string path;
-    std::string payload;
-    int timeoutRetryCount = 0;
-    int tlsRetryCount = 0;
+struct Stats {
+    std::uint32_t count = 0;
+    std::uint64_t freeBytes = 0;
 };
 
 } // namespace pqueue

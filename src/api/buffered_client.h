@@ -36,7 +36,7 @@ struct WriteResult {
 class BufferedClient {
 public:
     BufferedClient(
-        const Config& config,
+        const ::Config& config,
         BufferState& buffer,
         const ApiPoster& poster,
         RecordStore& store
@@ -57,7 +57,7 @@ public:
 
 private:
     void delayNextDrain(std::uint64_t nowMs);
-    const Config& config_;
+    const ::Config& config_;
     BufferState& buffer_;
     const ApiPoster& poster_;
     RecordStore& store_;

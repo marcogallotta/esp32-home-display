@@ -308,7 +308,7 @@ bool recoverIndexFromRecordFiles(Index& out) {
             break;
         }
 
-        pqueue::Record request;
+        api::Record request;
         if (!readRecord(sequence, request)) {
             break;
         }
@@ -337,7 +337,7 @@ bool sanitizeIndexedRange(const Index& input, Index& out) {
     for (std::uint32_t sequence = input.head;
          sequence < input.tail && scanned < input.count;
          ++sequence, ++scanned) {
-        pqueue::Record request;
+        api::Record request;
         if (!readRecord(sequence, request)) {
             if (out.count == 0) {
                 continue;
@@ -511,7 +511,7 @@ bool writeIndex(const Index& index) {
     return true;
 }
 
-bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
+bool writeRecord(std::uint32_t sequence, const api::Record& request) {
     if (!mount()) {
         return false;
     }
@@ -561,7 +561,7 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
 #endif
 }
 
-bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
+bool readRecord(std::uint32_t sequence, api::Record& out) {
     if (!mount()) {
         return false;
     }
@@ -698,11 +698,11 @@ public:
         return api::record_file_store::writeIndex(fileIndex);
     }
 
-    bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
+    bool writeRecord(std::uint32_t sequence, const api::Record& request) override {
         return api::record_file_store::writeRecord(sequence, request);
     }
 
-    bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
+    bool readRecord(std::uint32_t sequence, api::Record& out) override {
         return api::record_file_store::readRecord(sequence, out);
     }
 

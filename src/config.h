@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "pqueue/types.h"
+#include "api/types.h"
 
 struct ForecastConfig {
     std::string openmeteoPemFile;
@@ -12,7 +12,7 @@ struct ForecastConfig {
     int updateIntervalMinutes = 30;
 };
 
-struct ApiBufferConfig : pqueue::Config {};
+using ApiBufferConfig = api::Config;
 
 struct SensorWritePolicyConfig {
     int heartbeatMinutes = 60;

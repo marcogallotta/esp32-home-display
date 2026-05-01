@@ -29,8 +29,8 @@ std::filesystem::path bufferedRecordPath(std::uint32_t sequence) {
     return name;
 }
 
-pqueue::Record switchBotReadingNamed(const std::string& readingName) {
-    pqueue::Record request;
+api::Record switchBotReadingNamed(const std::string& readingName) {
+    api::Record request;
     request.path = "/switchbot/reading";
     request.payload = "{\"mac\":\"EC:2E:84:06:4E:9A\",\"name\":\"" + readingName + "\",\"type\":\"switchbot\"}";
     request.timeoutRetryCount = 2;
@@ -38,8 +38,8 @@ pqueue::Record switchBotReadingNamed(const std::string& readingName) {
     return request;
 }
 
-pqueue::Record readingWithBody(std::string body) {
-    pqueue::Record request;
+api::Record readingWithBody(std::string body) {
+    api::Record request;
     request.path = "/switchbot/reading";
     request.payload = std::move(body);
     return request;
@@ -191,7 +191,7 @@ public:
     std::vector<std::string> queuedReadingNames() const {
         std::vector<std::string> names;
         for (std::uint32_t sequence = recoveredIndex_.head; sequence < recoveredIndex_.tail; ++sequence) {
-            pqueue::Record request;
+            api::Record request;
             if (api::record_file_store::readRecord(sequence, request)) {
                 names.push_back(extractNameFromBody(request.payload));
             }
@@ -248,7 +248,7 @@ public:
         return SingleRecordFileScenario();
     }
 
-    void writeReadingToDisk(pqueue::Record request) {
+    void writeReadingToDisk(api::Record request) {
         original_ = std::move(request);
         REQUIRE(api::record_file_store::writeRecord(kSequence, original_));
     }
@@ -257,19 +257,19 @@ public:
         writeReadingToDisk(switchBotReadingNamed(readingName));
     }
 
-    pqueue::Record readReadingBackFromDisk() const {
-        pqueue::Record loaded;
+    api::Record readReadingBackFromDisk() const {
+        api::Record loaded;
         REQUIRE(api::record_file_store::readRecord(kSequence, loaded));
         return loaded;
     }
 
-    const pqueue::Record& originalReading() const {
+    const api::Record& originalReading() const {
         return original_;
     }
 
 private:
     static constexpr std::uint32_t kSequence = 23;
-    pqueue::Record original_;
+    api::Record original_;
 };
 
 void expectQueuedReadings(RecordStoreScenario& store, std::vector<std::string> expectedNames) {

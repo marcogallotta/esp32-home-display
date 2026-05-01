@@ -28,7 +28,7 @@ bool ensureLoaded(State& state, RecordStore& store) {
     return load(state, store);
 }
 
-bool hasDiskSpace(const pqueue::Config& config, RecordStore& store) {
+bool hasDiskSpace(const api::Config& config, RecordStore& store) {
     const std::uint64_t freeBytes = store.freeBytes();
 
     if (freeBytes <= config.diskReserveBytes) {
@@ -89,8 +89,8 @@ bool load(State& state, RecordStore& store) {
 
 bool enqueue(
     State& state,
-    const pqueue::Record& request,
-    const pqueue::Config& config,
+    const api::Record& request,
+    const api::Config& config,
     RecordStore& store
 ) {
     if (!ensureLoaded(state, store)) {
@@ -121,7 +121,7 @@ bool enqueue(
     return true;
 }
 
-bool peek(State& state, pqueue::Record& out, RecordStore& store) {
+bool peek(State& state, api::Record& out, RecordStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }
@@ -146,7 +146,7 @@ bool dropFront(State& state, RecordStore& store) {
     return advanceHead(state, "drop front", store);
 }
 
-bool rewriteFront(State& state, const pqueue::Record& request, RecordStore& store) {
+bool rewriteFront(State& state, const api::Record& request, RecordStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }

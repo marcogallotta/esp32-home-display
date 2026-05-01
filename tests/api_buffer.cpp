@@ -60,7 +60,7 @@ private:
 class FakeRecordStore final : public api::RecordStore {
 public:
     api::RecordStoreIndex index;
-    std::map<std::uint32_t, pqueue::Record> requests;
+    std::map<std::uint32_t, api::Record> requests;
 
     bool readIndexOk = true;
     bool writeIndexOk = true;
@@ -84,7 +84,7 @@ public:
         return true;
     }
 
-    bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
+    bool writeRecord(std::uint32_t sequence, const api::Record& request) override {
         if (!writeRecordOk) {
             return false;
         }
@@ -92,7 +92,7 @@ public:
         return true;
     }
 
-    bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
+    bool readRecord(std::uint32_t sequence, api::Record& out) override {
         const auto it = requests.find(sequence);
         if (it == requests.end()) {
             return false;
@@ -114,8 +114,8 @@ public:
     }
 };
 
-pqueue::Record request(const std::string& name) {
-    pqueue::Record r;
+api::Record request(const std::string& name) {
+    api::Record r;
     r.path = "/" + name;
     r.payload = "{\"name\":\"" + name + "\"}";
     return r;
@@ -186,7 +186,7 @@ void removeDroppedLogFile() {
 }
 
 
-std::string requestName(const pqueue::Record& request) {
+std::string requestName(const api::Record& request) {
     const std::string marker = "\"name\":\"";
     const auto start = request.payload.find(marker);
     if (start == std::string::npos) {
@@ -301,7 +301,7 @@ private:
     }
 
     static std::string nameFromPostedBody(const std::string& body) {
-        pqueue::Record posted;
+        api::Record posted;
         posted.payload = body;
         return requestName(posted);
     }
