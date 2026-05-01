@@ -32,7 +32,7 @@ std::filesystem::path bufferedRecordPath(std::uint32_t sequence) {
 pqueue::Record switchBotReadingNamed(const std::string& readingName) {
     pqueue::Record request;
     request.path = "/switchbot/reading";
-    request.body = "{\"mac\":\"EC:2E:84:06:4E:9A\",\"name\":\"" + readingName + "\",\"type\":\"switchbot\"}";
+    request.payload = "{\"mac\":\"EC:2E:84:06:4E:9A\",\"name\":\"" + readingName + "\",\"type\":\"switchbot\"}";
     request.timeoutRetryCount = 2;
     request.tlsRetryCount = 1;
     return request;
@@ -41,7 +41,7 @@ pqueue::Record switchBotReadingNamed(const std::string& readingName) {
 pqueue::Record readingWithBody(std::string body) {
     pqueue::Record request;
     request.path = "/switchbot/reading";
-    request.body = std::move(body);
+    request.payload = std::move(body);
     return request;
 }
 
@@ -193,7 +193,7 @@ public:
         for (std::uint32_t sequence = recoveredIndex_.head; sequence < recoveredIndex_.tail; ++sequence) {
             pqueue::Record request;
             if (api::record_file_store::readRecord(sequence, request)) {
-                names.push_back(extractNameFromBody(request.body));
+                names.push_back(extractNameFromBody(request.payload));
             }
         }
         return names;
@@ -285,7 +285,7 @@ TEST_CASE("record file store preserves the fields needed to resend a buffered re
 
     const auto loaded = file.readReadingBackFromDisk();
     CHECK_EQ(loaded.path, file.originalReading().path);
-    CHECK_EQ(loaded.body, file.originalReading().body);
+    CHECK_EQ(loaded.payload, file.originalReading().payload);
     CHECK_EQ(loaded.timeoutRetryCount, 2);
     CHECK_EQ(loaded.tlsRetryCount, 1);
 }

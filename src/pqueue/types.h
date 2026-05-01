@@ -14,7 +14,7 @@ struct Config {
 
 struct Record {
     std::string path;
-    std::string body;
+    std::string payload;
     int timeoutRetryCount = 0;
     int tlsRetryCount = 0;
 };

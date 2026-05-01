@@ -31,7 +31,7 @@ constexpr std::uint16_t kFormatVersion = 1;
 
 constexpr std::size_t kMaxPathBytes = 96;
 constexpr std::size_t kMaxFilePathBytes = 128;
-constexpr std::size_t kMaxBodyBytes = 4096;
+constexpr std::size_t kMaxPayloadBytes = 4096;
 
 #ifdef ARDUINO
 constexpr const char* kIndexAPath = "/pqueue_idx_a.bin";
@@ -58,7 +58,7 @@ struct RecordHeader {
     std::uint16_t headerBytes = sizeof(RecordHeader);
     std::uint16_t pathBytes = 0;
     std::uint16_t reserved = 0;
-    std::uint32_t bodyBytes = 0;
+    std::uint32_t payloadBytes = 0;
     std::int32_t timeoutRetryCount = 0;
     std::int32_t tlsRetryCount = 0;
     std::uint32_t crc = 0;
@@ -85,11 +85,11 @@ std::uint32_t indexCrc(const IndexRecord& record) {
 std::uint32_t recordCrc(
     const RecordHeader& header,
     const char* path,
-    const char* body
+    const char* payload
 ) {
     std::uint32_t crc = crc32Update(0, &header, offsetof(RecordHeader, crc));
     crc = crc32Update(crc, path, header.pathBytes);
-    crc = crc32Update(crc, body, header.bodyBytes);
+    crc = crc32Update(crc, payload, header.payloadBytes);
     return crc;
 }
 
@@ -518,7 +518,7 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
 
     if (request.path.empty() ||
         request.path.size() > kMaxPathBytes ||
-        request.body.size() > kMaxBodyBytes) {
+        request.payload.size() > kMaxPayloadBytes) {
         return false;
     }
 
@@ -529,10 +529,10 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
 
     RecordHeader header;
     header.pathBytes = static_cast<std::uint16_t>(request.path.size());
-    header.bodyBytes = static_cast<std::uint32_t>(request.body.size());
+    header.payloadBytes = static_cast<std::uint32_t>(request.payload.size());
     header.timeoutRetryCount = request.timeoutRetryCount;
     header.tlsRetryCount = request.tlsRetryCount;
-    header.crc = recordCrc(header, request.path.data(), request.body.data());
+    header.crc = recordCrc(header, request.path.data(), request.payload.data());
 
 #ifdef ARDUINO
     File file = LittleFS.open(path, "w");
@@ -544,7 +544,7 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
     const bool ok =
         writeAll(file, &header, sizeof(header)) &&
         writeAll(file, request.path.data(), request.path.size()) &&
-        writeAll(file, request.body.data(), request.body.size());
+        writeAll(file, request.payload.data(), request.payload.size());
 
     file.close();
     return ok;
@@ -557,7 +557,7 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
 
     return writeAll(file, &header, sizeof(header)) &&
            writeAll(file, request.path.data(), request.path.size()) &&
-           writeAll(file, request.body.data(), request.body.size());
+           writeAll(file, request.payload.data(), request.payload.size());
 #endif
 }
 
@@ -599,7 +599,7 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
         header.headerBytes != sizeof(RecordHeader) ||
         header.pathBytes == 0 ||
         header.pathBytes > kMaxPathBytes ||
-        header.bodyBytes > kMaxBodyBytes) {
+        header.payloadBytes > kMaxPayloadBytes) {
 #ifdef ARDUINO
         file.close();
 #endif
@@ -607,13 +607,13 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
     }
 
     char recordPath[kMaxPathBytes + 1]{};
-    std::string body;
-    body.resize(header.bodyBytes);
+    std::string payload;
+    payload.resize(header.payloadBytes);
 
 #ifdef ARDUINO
     const bool ok =
         readAll(file, recordPath, header.pathBytes) &&
-        readAll(file, body.data(), body.size());
+        readAll(file, payload.data(), payload.size());
     file.close();
 
     if (!ok) {
@@ -621,19 +621,19 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
     }
 #else
     if (!readAll(file, recordPath, header.pathBytes) ||
-        !readAll(file, body.data(), body.size())) {
+        !readAll(file, payload.data(), payload.size())) {
         return false;
     }
 #endif
 
-    if (header.crc != recordCrc(header, recordPath, body.data())) {
+    if (header.crc != recordCrc(header, recordPath, payload.data())) {
         return false;
     }
 
     recordPath[header.pathBytes] = '\0';
 
     out.path = recordPath;
-    out.body = body;
+    out.payload = payload;
     out.timeoutRetryCount = header.timeoutRetryCount;
     out.tlsRetryCount = header.tlsRetryCount;
     return true;

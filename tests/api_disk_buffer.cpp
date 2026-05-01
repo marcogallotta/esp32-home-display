@@ -93,7 +93,7 @@ public:
 pqueue::Record bufferedReading(const std::string& name) {
     pqueue::Record out;
     out.path = "/" + name;
-    out.body = "{\"name\":\"" + name + "\"}";
+    out.payload = "{\"name\":\"" + name + "\"}";
     return out;
 }
 
@@ -241,16 +241,16 @@ public:
 private:
     static std::string readingName(const pqueue::Record& request) {
         const std::string marker = "\"name\":\"";
-        const auto start = request.body.find(marker);
+        const auto start = request.payload.find(marker);
         if (start == std::string::npos) {
             return "";
         }
         const auto valueStart = start + marker.size();
-        const auto valueEnd = request.body.find('"', valueStart);
+        const auto valueEnd = request.payload.find('"', valueStart);
         if (valueEnd == std::string::npos) {
             return "";
         }
-        return request.body.substr(valueStart, valueEnd - valueStart);
+        return request.payload.substr(valueStart, valueEnd - valueStart);
     }
 
     FakeRecordStore store_;

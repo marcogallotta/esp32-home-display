@@ -151,18 +151,18 @@ WriteResult makeWriteResult(
 
 std::string diagnosticMac(const ApiRequest& request) {
     const std::string marker = "\"mac\":\"";
-    const auto start = request.body.find(marker);
+    const auto start = request.payload.find(marker);
     if (start == std::string::npos) {
         return {};
     }
 
     const auto valueStart = start + marker.size();
-    const auto valueEnd = request.body.find('"', valueStart);
+    const auto valueEnd = request.payload.find('"', valueStart);
     if (valueEnd == std::string::npos) {
         return {};
     }
 
-    return request.body.substr(valueStart, valueEnd - valueStart);
+    return request.payload.substr(valueStart, valueEnd - valueStart);
 }
 
 std::string droppedReason(
@@ -214,7 +214,7 @@ void logDroppedFreshRequest(
         droppedReason(request, response),
         request.path,
         mac,
-        request.body,
+        request.payload,
         response.statusCode,
         static_cast<int>(response.transport),
         response.error,
@@ -252,7 +252,7 @@ void logDroppedBufferedRequest(
         droppedReason(request, response),
         request.path,
         mac,
-        request.body,
+        request.payload,
         response.statusCode,
         static_cast<int>(response.transport),
         response.error,
@@ -273,7 +273,7 @@ void logDroppedBufferFullRequest(const ApiRequest& request) {
         "buffer_full",
         request.path,
         mac,
-        request.body,
+        request.payload,
         0,
         -1,
         "",
@@ -431,7 +431,7 @@ WriteResult BufferedClient::send(ApiRequest request) {
         );
     }
 
-    const network::HttpResponse response = poster_.postJson(request.path, request.body);
+    const network::HttpResponse response = poster_.postJson(request.path, request.payload);
 
     switch (decideFreshResponse(response)) {
         case FreshRequestDecision::Sent:
@@ -520,7 +520,7 @@ BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
 
         const int timeoutRetryCount = request.timeoutRetryCount;
         const int tlsRetryCount = request.tlsRetryCount;
-        const network::HttpResponse response = poster_.postJson(request.path, request.body);
+        const network::HttpResponse response = poster_.postJson(request.path, request.payload);
         result.attempted += 1;
 
         const BufferedRequestDecision decision = decideBufferedResponse(request, response);
