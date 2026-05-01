@@ -7,7 +7,7 @@
 namespace api {
 namespace {
 
-bool ensureDiskLoaded(BufferState& buffer, RequestStore& store) {
+bool ensureDiskLoaded(BufferState& buffer, RecordStore& store) {
     if (buffer.disk.loaded) {
         return true;
     }
@@ -19,7 +19,7 @@ BufferInsertResult bufferToDisk(
     BufferState& buffer,
     const pqueue::Record& request,
     const pqueue::Config& config,
-    RequestStore& store
+    RecordStore& store
 ) {
     if (!disk_buffer::enqueue(buffer.disk, request, config, store)) {
         return BufferInsertResult::DroppedNewRequestBufferFull;
@@ -34,7 +34,7 @@ BufferInsertResult enqueue(
     BufferState& buffer,
     pqueue::Record request,
     const pqueue::Config& config,
-    RequestStore& store
+    RecordStore& store
 ) {
     if (buffer.ramQueue.size() >= static_cast<std::size_t>(config.inMemory)) {
         return bufferToDisk(buffer, request, config, store);
@@ -45,7 +45,7 @@ BufferInsertResult enqueue(
     return BufferInsertResult::Buffered;
 }
 
-bool hasBacklog(BufferState& buffer, RequestStore& store) {
+bool hasBacklog(BufferState& buffer, RecordStore& store) {
     if (!buffer.ramQueue.empty()) {
         return true;
     }
@@ -56,7 +56,7 @@ bool hasBacklog(BufferState& buffer, RequestStore& store) {
 bool peek(
     BufferState& buffer,
     pqueue::Record& out,
-    RequestStore& store
+    RecordStore& store
 ) {
     if (!buffer.ramQueue.empty()) {
         out = buffer.ramQueue.front();
@@ -70,7 +70,7 @@ bool peek(
     return disk_buffer::peek(buffer.disk, out, store);
 }
 
-bool pop(BufferState& buffer, RequestStore& store) {
+bool pop(BufferState& buffer, RecordStore& store) {
     if (!buffer.ramQueue.empty()) {
         buffer.ramQueue.pop_front();
         return true;
@@ -79,7 +79,7 @@ bool pop(BufferState& buffer, RequestStore& store) {
     return disk_buffer::consume(buffer.disk, store);
 }
 
-bool dropFront(BufferState& buffer, RequestStore& store) {
+bool dropFront(BufferState& buffer, RecordStore& store) {
     if (!buffer.ramQueue.empty()) {
         buffer.ramQueue.pop_front();
         return true;
@@ -91,7 +91,7 @@ bool dropFront(BufferState& buffer, RequestStore& store) {
 bool rewriteFront(
     BufferState& buffer,
     const pqueue::Record& request,
-    RequestStore& store
+    RecordStore& store
 ) {
     if (!buffer.ramQueue.empty()) {
         buffer.ramQueue.front() = request;

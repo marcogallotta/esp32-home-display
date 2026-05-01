@@ -5,22 +5,22 @@
 namespace api::disk_buffer {
 namespace {
 
-RequestStoreIndex toIndex(const State& state) {
-    RequestStoreIndex index;
+RecordStoreIndex toIndex(const State& state) {
+    RecordStoreIndex index;
     index.head = state.head;
     index.tail = state.tail;
     index.count = state.count;
     return index;
 }
 
-void fromIndex(const RequestStoreIndex& index, State& state) {
+void fromIndex(const RecordStoreIndex& index, State& state) {
     state.head = index.head;
     state.tail = index.tail;
     state.count = index.count;
     state.loaded = true;
 }
 
-bool ensureLoaded(State& state, RequestStore& store) {
+bool ensureLoaded(State& state, RecordStore& store) {
     if (state.loaded) {
         return true;
     }
@@ -28,7 +28,7 @@ bool ensureLoaded(State& state, RequestStore& store) {
     return load(state, store);
 }
 
-bool hasDiskSpace(const pqueue::Config& config, RequestStore& store) {
+bool hasDiskSpace(const pqueue::Config& config, RecordStore& store) {
     const std::uint64_t freeBytes = store.freeBytes();
 
     if (freeBytes <= config.diskReserveBytes) {
@@ -39,7 +39,7 @@ bool hasDiskSpace(const pqueue::Config& config, RequestStore& store) {
     return true;
 }
 
-bool advanceHead(State& state, const char* actionName, RequestStore& store) {
+bool advanceHead(State& state, const char* actionName, RecordStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }
@@ -64,7 +64,7 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
 
     state = next;
 
-    if (!store.removeRequest(oldHead)) {
+    if (!store.removeRecord(oldHead)) {
         logLine(
             LogLevel::Warn,
             std::string("Disk buffer ") + actionName + " cleanup failed: request delete failed"
@@ -76,8 +76,8 @@ bool advanceHead(State& state, const char* actionName, RequestStore& store) {
 
 } // namespace
 
-bool load(State& state, RequestStore& store) {
-    RequestStoreIndex index;
+bool load(State& state, RecordStore& store) {
+    RecordStoreIndex index;
     if (!store.readIndex(index)) {
         logLine(LogLevel::Warn, "Disk buffer load failed");
         return false;
@@ -91,7 +91,7 @@ bool enqueue(
     State& state,
     const pqueue::Record& request,
     const pqueue::Config& config,
-    RequestStore& store
+    RecordStore& store
 ) {
     if (!ensureLoaded(state, store)) {
         return false;
@@ -103,7 +103,7 @@ bool enqueue(
 
     const std::uint32_t sequence = state.tail;
 
-    if (!store.writeRequest(sequence, request)) {
+    if (!store.writeRecord(sequence, request)) {
         logLine(LogLevel::Warn, "Disk buffer enqueue failed: request write failed");
         return false;
     }
@@ -121,7 +121,7 @@ bool enqueue(
     return true;
 }
 
-bool peek(State& state, pqueue::Record& out, RequestStore& store) {
+bool peek(State& state, pqueue::Record& out, RecordStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }
@@ -130,7 +130,7 @@ bool peek(State& state, pqueue::Record& out, RequestStore& store) {
         return false;
     }
 
-    if (!store.readRequest(state.head, out)) {
+    if (!store.readRecord(state.head, out)) {
         logLine(LogLevel::Warn, "Disk buffer peek failed: request read failed");
         return false;
     }
@@ -138,15 +138,15 @@ bool peek(State& state, pqueue::Record& out, RequestStore& store) {
     return true;
 }
 
-bool consume(State& state, RequestStore& store) {
+bool consume(State& state, RecordStore& store) {
     return advanceHead(state, "consume", store);
 }
 
-bool dropFront(State& state, RequestStore& store) {
+bool dropFront(State& state, RecordStore& store) {
     return advanceHead(state, "drop front", store);
 }
 
-bool rewriteFront(State& state, const pqueue::Record& request, RequestStore& store) {
+bool rewriteFront(State& state, const pqueue::Record& request, RecordStore& store) {
     if (!ensureLoaded(state, store)) {
         return false;
     }
@@ -155,7 +155,7 @@ bool rewriteFront(State& state, const pqueue::Record& request, RequestStore& sto
         return false;
     }
 
-    if (!store.writeRequest(state.head, request)) {
+    if (!store.writeRecord(state.head, request)) {
         logLine(LogLevel::Warn, "Disk buffer rewrite failed");
         return false;
     }

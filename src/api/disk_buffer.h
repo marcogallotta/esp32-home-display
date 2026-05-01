@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include "../pqueue/types.h"
-#include "request_store.h"
+#include "record_store.h"
 
 namespace api::disk_buffer {
 
@@ -14,18 +14,18 @@ struct State {
     bool loaded = false;
 };
 
-bool load(State& state, RequestStore& store);
+bool load(State& state, RecordStore& store);
 
 bool enqueue(
     State& state,
     const pqueue::Record& request,
     const pqueue::Config& config,
-    RequestStore& store
+    RecordStore& store
 );
 
-bool peek(State& state, pqueue::Record& out, RequestStore& store);
-bool consume(State& state, RequestStore& store);
-bool dropFront(State& state, RequestStore& store);
-bool rewriteFront(State& state, const pqueue::Record& request, RequestStore& store);
+bool peek(State& state, pqueue::Record& out, RecordStore& store);
+bool consume(State& state, RecordStore& store);
+bool dropFront(State& state, RecordStore& store);
+bool rewriteFront(State& state, const pqueue::Record& request, RecordStore& store);
 
 } // namespace api::disk_buffer

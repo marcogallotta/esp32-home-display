@@ -1,5 +1,5 @@
 #include "api/buffered_client.h"
-#include "api/request_store.h"
+#include "api/record_store.h"
 
 #include "doctest/doctest.h"
 
@@ -57,18 +57,18 @@ private:
     mutable std::vector<PostedRequest> calls_;
 };
 
-class FakeRequestStore final : public api::RequestStore {
+class FakeRecordStore final : public api::RecordStore {
 public:
-    api::RequestStoreIndex index;
-    std::map<std::uint32_t, api::ApiRequest> requests;
+    api::RecordStoreIndex index;
+    std::map<std::uint32_t, pqueue::Record> requests;
 
     bool readIndexOk = true;
     bool writeIndexOk = true;
-    bool writeRequestOk = true;
-    bool removeRequestOk = true;
+    bool writeRecordOk = true;
+    bool removeRecordOk = true;
     std::uint64_t availableBytes = 1024 * 1024;
 
-    bool readIndex(api::RequestStoreIndex& out) override {
+    bool readIndex(api::RecordStoreIndex& out) override {
         if (!readIndexOk) {
             return false;
         }
@@ -76,7 +76,7 @@ public:
         return true;
     }
 
-    bool writeIndex(const api::RequestStoreIndex& next) override {
+    bool writeIndex(const api::RecordStoreIndex& next) override {
         if (!writeIndexOk) {
             return false;
         }
@@ -84,15 +84,15 @@ public:
         return true;
     }
 
-    bool writeRequest(std::uint32_t sequence, const api::ApiRequest& request) override {
-        if (!writeRequestOk) {
+    bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
+        if (!writeRecordOk) {
             return false;
         }
         requests[sequence] = request;
         return true;
     }
 
-    bool readRequest(std::uint32_t sequence, api::ApiRequest& out) override {
+    bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
         const auto it = requests.find(sequence);
         if (it == requests.end()) {
             return false;
@@ -101,8 +101,8 @@ public:
         return true;
     }
 
-    bool removeRequest(std::uint32_t sequence) override {
-        if (!removeRequestOk) {
+    bool removeRecord(std::uint32_t sequence) override {
+        if (!removeRecordOk) {
             return false;
         }
         requests.erase(sequence);
@@ -114,8 +114,8 @@ public:
     }
 };
 
-api::ApiRequest request(const std::string& name) {
-    api::ApiRequest r;
+pqueue::Record request(const std::string& name) {
+    pqueue::Record r;
     r.path = "/" + name;
     r.mac = "AA:BB:CC:DD:EE:" + name;
     r.body = "{\"name\":\"" + name + "\"}";
@@ -162,7 +162,7 @@ api::BufferDrainResult drainForTest(
     std::uint64_t nowMs,
     const ApiBufferConfig& c,
     const api::ApiPoster& poster,
-    api::RequestStore& store
+    api::RecordStore& store
 ) {
     Config config;
     config.api.buffer = c;
@@ -172,7 +172,7 @@ api::BufferDrainResult drainForTest(
 
 void bufferOrFail(
     api::BufferState& buffer,
-    FakeRequestStore& store,
+    FakeRecordStore& store,
     const std::string& name,
     const ApiBufferConfig& c
 ) {
@@ -187,7 +187,7 @@ void removeDroppedLogFile() {
 }
 
 
-std::string requestName(const api::ApiRequest& request) {
+std::string requestName(const pqueue::Record& request) {
     const std::string marker = "\"name\":\"";
     const auto start = request.body.find(marker);
     if (start == std::string::npos) {
@@ -302,13 +302,13 @@ private:
     }
 
     static std::string nameFromPostedBody(const std::string& body) {
-        api::ApiRequest posted;
+        pqueue::Record posted;
         posted.body = body;
         return requestName(posted);
     }
 
     api::BufferState buffer_;
-    FakeRequestStore store_;
+    FakeRecordStore store_;
     FakePoster poster_;
     ApiBufferConfig config_;
     api::BufferDrainResult lastDrain_;
@@ -326,7 +326,7 @@ TEST_CASE("buffer starts empty") {
 
 TEST_CASE("buffering stores requests without owning drain timing") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
     CHECK_EQ(
@@ -346,7 +346,7 @@ TEST_CASE("buffering stores requests without owning drain timing") {
 
 TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM FIFO contents") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     const ApiBufferConfig c = config(/*capacity=*/2);
 
     bufferOrFail(buffer, store, "first", c);
@@ -367,7 +367,7 @@ TEST_CASE("buffer spills newest request to disk when RAM is full and keeps RAM F
 
 TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exists") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     store.index.tail = 1;
     store.index.count = 1;
     store.requests[0] = request("existing");
@@ -396,8 +396,8 @@ TEST_CASE("buffer fills RAM before spilling to disk even when disk backlog exist
 
 TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails") {
     api::BufferState buffer;
-    FakeRequestStore store;
-    store.writeRequestOk = false;
+    FakeRecordStore store;
+    store.writeRecordOk = false;
     const ApiBufferConfig c = config(/*capacity=*/1);
 
     bufferOrFail(buffer, store, "first", c);
@@ -413,7 +413,7 @@ TEST_CASE("buffer drops newest request when RAM is full and disk enqueue fails")
 
 TEST_CASE("buffer drains oldest requests first") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config();
 
@@ -440,7 +440,7 @@ TEST_CASE("buffer drains oldest requests first") {
 
 TEST_CASE("startup drain sends persisted disk backlog immediately") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/2, /*drainCap=*/10, /*drainTickS=*/60);
 
@@ -474,7 +474,7 @@ TEST_CASE("startup drain sends persisted disk backlog immediately") {
 
 TEST_CASE("retryable failure during startup drain preserves persisted disk backlog") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/2, /*drainCap=*/10, /*drainTickS=*/60);
 
@@ -506,7 +506,7 @@ TEST_CASE("retryable failure during startup drain preserves persisted disk backl
 
 TEST_CASE("drain cap limits how many requests are sent per tick") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
@@ -535,7 +535,7 @@ TEST_CASE("drain cap limits how many requests are sent per tick") {
 
 TEST_CASE("buffered client does not drain before the next allowed tick") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/2, /*drainTickS=*/60);
 
@@ -560,7 +560,7 @@ TEST_CASE("buffered client does not drain before the next allowed tick") {
 
 TEST_CASE("retryable transport failure keeps first request and blocks later requests") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/10, /*drainTickS=*/60);
 
@@ -586,7 +586,7 @@ TEST_CASE("retryable transport failure keeps first request and blocks later requ
 
 TEST_CASE("retryable HTTP failure keeps first request and blocks later requests") {
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/10, /*drainTickS=*/60);
 
@@ -609,7 +609,7 @@ TEST_CASE("permanent failure drops first request and continues draining") {
     removeDroppedLogFile();
 
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/10, /*drainTickS=*/60);
 
@@ -638,7 +638,7 @@ TEST_CASE("timeout failure is retried twice and then dropped") {
     removeDroppedLogFile();
 
     api::BufferState buffer;
-    FakeRequestStore store;
+    FakeRecordStore store;
     FakePoster poster;
     const ApiBufferConfig c = config(/*capacity=*/10, /*drainCap=*/1, /*drainTickS=*/0);
 

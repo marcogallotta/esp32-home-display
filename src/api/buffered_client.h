@@ -8,7 +8,7 @@
 #include "buffer.h"
 #include "client.h"
 #include "poster.h"
-#include "request_store.h"
+#include "record_store.h"
 
 namespace api {
 
@@ -39,7 +39,7 @@ public:
         const Config& config,
         BufferState& buffer,
         const ApiPoster& poster,
-        RequestStore& store
+        RecordStore& store
     );
 
     WriteResult postSwitchbotReading(
@@ -60,7 +60,7 @@ private:
     const Config& config_;
     BufferState& buffer_;
     const ApiPoster& poster_;
-    RequestStore& store_;
+    RecordStore& store_;
     std::uint64_t nextDrainAllowedAtMs_ = 0;
 };
 

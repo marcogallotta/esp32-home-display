@@ -1,5 +1,5 @@
 #include "api/disk_buffer.h"
-#include "api/request_store.h"
+#include "api/record_store.h"
 #include "config.h"
 
 #include "doctest/doctest.h"
@@ -11,29 +11,29 @@
 
 namespace {
 
-class FakeRequestStore final : public api::RequestStore {
+class FakeRecordStore final : public api::RecordStore {
 public:
-    api::RequestStoreIndex index;
-    std::map<std::uint32_t, api::ApiRequest> requests;
+    api::RecordStoreIndex index;
+    std::map<std::uint32_t, pqueue::Record> requests;
 
     bool readIndexOk = true;
     bool writeIndexOk = true;
-    bool writeRequestOk = true;
-    bool readRequestOk = true;
-    bool removeRequestOk = true;
+    bool writeRecordOk = true;
+    bool readRecordOk = true;
+    bool removeRecordOk = true;
     std::uint64_t availableBytes = 1024 * 1024;
 
     int readIndexCalls = 0;
     int writeIndexCalls = 0;
-    int writeRequestCalls = 0;
-    int readRequestCalls = 0;
-    int removeRequestCalls = 0;
+    int writeRecordCalls = 0;
+    int readRecordCalls = 0;
+    int removeRecordCalls = 0;
 
     std::vector<std::uint32_t> writtenSequences;
     std::vector<std::uint32_t> readSequences;
     std::vector<std::uint32_t> removedSequences;
 
-    bool readIndex(api::RequestStoreIndex& out) override {
+    bool readIndex(api::RecordStoreIndex& out) override {
         ++readIndexCalls;
         if (!readIndexOk) {
             return false;
@@ -42,7 +42,7 @@ public:
         return true;
     }
 
-    bool writeIndex(const api::RequestStoreIndex& next) override {
+    bool writeIndex(const api::RecordStoreIndex& next) override {
         ++writeIndexCalls;
         if (!writeIndexOk) {
             return false;
@@ -51,20 +51,20 @@ public:
         return true;
     }
 
-    bool writeRequest(std::uint32_t sequence, const api::ApiRequest& request) override {
-        ++writeRequestCalls;
+    bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
+        ++writeRecordCalls;
         writtenSequences.push_back(sequence);
-        if (!writeRequestOk) {
+        if (!writeRecordOk) {
             return false;
         }
         requests[sequence] = request;
         return true;
     }
 
-    bool readRequest(std::uint32_t sequence, api::ApiRequest& out) override {
-        ++readRequestCalls;
+    bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
+        ++readRecordCalls;
         readSequences.push_back(sequence);
-        if (!readRequestOk) {
+        if (!readRecordOk) {
             return false;
         }
         const auto it = requests.find(sequence);
@@ -75,10 +75,10 @@ public:
         return true;
     }
 
-    bool removeRequest(std::uint32_t sequence) override {
-        ++removeRequestCalls;
+    bool removeRecord(std::uint32_t sequence) override {
+        ++removeRecordCalls;
         removedSequences.push_back(sequence);
-        if (!removeRequestOk) {
+        if (!removeRecordOk) {
             return false;
         }
         requests.erase(sequence);
@@ -90,8 +90,8 @@ public:
     }
 };
 
-api::ApiRequest bufferedReading(const std::string& name) {
-    api::ApiRequest out;
+pqueue::Record bufferedReading(const std::string& name) {
+    pqueue::Record out;
     out.path = "/" + name;
     out.mac = "mac-for-" + name;
     out.body = "{\"name\":\"" + name + "\"}";
@@ -151,7 +151,7 @@ public:
     }
 
     void rewriteFrontRetryCounts(int timeoutRetries, int tlsRetries) {
-        api::ApiRequest front;
+        pqueue::Record front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         front.timeoutRetryCount = timeoutRetries;
         front.tlsRetryCount = tlsRetries;
@@ -159,7 +159,7 @@ public:
     }
 
     std::string frontReadingName() {
-        api::ApiRequest front;
+        pqueue::Record front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         return readingName(front);
     }
@@ -167,7 +167,7 @@ public:
     std::vector<std::string> visibleReadingNamesByDrainingCopy() const {
         DiskBufferScenario copy = *this;
         std::vector<std::string> names;
-        api::ApiRequest front;
+        pqueue::Record front;
         while (api::disk_buffer::peek(copy.state_, front, copy.store_)) {
             names.push_back(readingName(front));
             if (!api::disk_buffer::consume(copy.state_, copy.store_)) {
@@ -182,7 +182,7 @@ public:
     }
 
     void makeRequestWriteFail() {
-        store_.writeRequestOk = false;
+        store_.writeRecordOk = false;
     }
 
     void makeIndexWriteFail() {
@@ -190,7 +190,7 @@ public:
     }
 
     void makeRequestRemoveFail() {
-        store_.removeRequestOk = false;
+        store_.removeRecordOk = false;
     }
 
     std::uint32_t queuedCount() const {
@@ -209,16 +209,16 @@ public:
         return store_.readIndexCalls;
     }
 
-    int writeRequestCalls() const {
-        return store_.writeRequestCalls;
+    int writeRecordCalls() const {
+        return store_.writeRecordCalls;
     }
 
     int writeIndexCalls() const {
         return store_.writeIndexCalls;
     }
 
-    int removeRequestCalls() const {
-        return store_.removeRequestCalls;
+    int removeRecordCalls() const {
+        return store_.removeRecordCalls;
     }
 
     bool durableStoreHasNoRequestFiles() const {
@@ -233,14 +233,14 @@ public:
         return store_.removedSequences;
     }
 
-    api::ApiRequest frontRequest() {
-        api::ApiRequest front;
+    pqueue::Record frontRequest() {
+        pqueue::Record front;
         REQUIRE(api::disk_buffer::peek(state_, front, store_));
         return front;
     }
 
 private:
-    static std::string readingName(const api::ApiRequest& request) {
+    static std::string readingName(const pqueue::Record& request) {
         const std::string marker = "\"name\":\"";
         const auto start = request.body.find(marker);
         if (start == std::string::npos) {
@@ -254,7 +254,7 @@ private:
         return request.body.substr(valueStart, valueEnd - valueStart);
     }
 
-    FakeRequestStore store_;
+    FakeRecordStore store_;
     api::disk_buffer::State state_;
 };
 
@@ -295,7 +295,7 @@ TEST_CASE("disk buffer refuses a new reading when the reserved filesystem space 
 
     CHECK_FALSE(buffer.tryToEnqueueReading("reading while disk is reserved"));
 
-    CHECK_EQ(buffer.writeRequestCalls(), 0);
+    CHECK_EQ(buffer.writeRecordCalls(), 0);
     CHECK_EQ(buffer.writeIndexCalls(), 0);
     CHECK_EQ(buffer.queuedCount(), 0U);
 }
@@ -306,7 +306,7 @@ TEST_CASE("disk buffer does not queue a reading when writing the request fails")
 
     CHECK_FALSE(buffer.tryToEnqueueReading("reading that cannot be written"));
 
-    CHECK_EQ(buffer.writeRequestCalls(), 1);
+    CHECK_EQ(buffer.writeRecordCalls(), 1);
     CHECK_EQ(buffer.writeIndexCalls(), 0);
     CHECK_EQ(buffer.queuedCount(), 0U);
 }
@@ -317,7 +317,7 @@ TEST_CASE("disk buffer failed enqueue does not make the new reading visible") {
 
     CHECK_FALSE(buffer.tryToEnqueueReading("reading whose index update fails"));
 
-    CHECK_EQ(buffer.writeRequestCalls(), 1);
+    CHECK_EQ(buffer.writeRecordCalls(), 1);
     CHECK_EQ(buffer.writeIndexCalls(), 1);
     CHECK_EQ(buffer.queuedCount(), 0U);
     expectVisibleReadings(buffer, {});
@@ -361,7 +361,7 @@ TEST_CASE("disk buffer does not consume a confirmed send when the state update f
     CHECK_EQ(buffer.headSequence(), 0U);
     CHECK_EQ(buffer.tailSequence(), 1U);
     CHECK_EQ(buffer.queuedCount(), 1U);
-    CHECK_EQ(buffer.removeRequestCalls(), 0);
+    CHECK_EQ(buffer.removeRecordCalls(), 0);
 }
 
 TEST_CASE("disk buffer delete failure after consume does not block forward progress") {

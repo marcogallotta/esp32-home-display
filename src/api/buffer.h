@@ -7,7 +7,7 @@
 
 #include "../pqueue/types.h"
 #include "disk_buffer.h"
-#include "request_store.h"
+#include "record_store.h"
 
 namespace api {
 
@@ -35,24 +35,24 @@ BufferInsertResult enqueue(
     BufferState& buffer,
     pqueue::Record request,
     const pqueue::Config& config,
-    RequestStore& store
+    RecordStore& store
 );
 
-bool hasBacklog(BufferState& buffer, RequestStore& store);
+bool hasBacklog(BufferState& buffer, RecordStore& store);
 
 bool peek(
     BufferState& buffer,
     pqueue::Record& out,
-    RequestStore& store
+    RecordStore& store
 );
 
-bool pop(BufferState& buffer, RequestStore& store);
-bool dropFront(BufferState& buffer, RequestStore& store);
+bool pop(BufferState& buffer, RecordStore& store);
+bool dropFront(BufferState& buffer, RecordStore& store);
 
 bool rewriteFront(
     BufferState& buffer,
     const pqueue::Record& request,
-    RequestStore& store
+    RecordStore& store
 );
 
 

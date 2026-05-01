@@ -320,7 +320,7 @@ bool recoverIndexFromRequestFiles(Index& out) {
         }
 
         pqueue::Record request;
-        if (!readRequest(sequence, request)) {
+        if (!readRecord(sequence, request)) {
             break;
         }
 
@@ -349,7 +349,7 @@ bool sanitizeIndexedRange(const Index& input, Index& out) {
          sequence < input.tail && scanned < input.count;
          ++sequence, ++scanned) {
         pqueue::Record request;
-        if (!readRequest(sequence, request)) {
+        if (!readRecord(sequence, request)) {
             if (out.count == 0) {
                 continue;
             }
@@ -381,7 +381,7 @@ void deleteRequestsOutsideLiveIndex(const Index& live) {
 
     for (std::uint32_t sequence : sequences) {
         if (!indexContains(live, sequence)) {
-            removeRequest(sequence);
+            removeRecord(sequence);
         }
     }
 }
@@ -522,7 +522,7 @@ bool writeIndex(const Index& index) {
     return true;
 }
 
-bool writeRequest(std::uint32_t sequence, const pqueue::Record& request) {
+bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
     if (!mount()) {
         return false;
     }
@@ -572,7 +572,7 @@ bool writeRequest(std::uint32_t sequence, const pqueue::Record& request) {
 #endif
 }
 
-bool readRequest(std::uint32_t sequence, pqueue::Record& out) {
+bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
     if (!mount()) {
         return false;
     }
@@ -651,7 +651,7 @@ bool readRequest(std::uint32_t sequence, pqueue::Record& out) {
     return true;
 }
 
-bool removeRequest(std::uint32_t sequence) {
+bool removeRecord(std::uint32_t sequence) {
     if (!mount()) {
         return false;
     }
@@ -689,9 +689,9 @@ std::uint64_t freeBytes() {
 
 namespace {
 
-class FileRequestStore final : public api::RequestStore {
+class FileRecordStore final : public api::RecordStore {
 public:
-    bool readIndex(api::RequestStoreIndex& out) override {
+    bool readIndex(api::RecordStoreIndex& out) override {
         Index index;
         if (!api::request_file_store::readIndex(index)) {
             return false;
@@ -702,7 +702,7 @@ public:
         return true;
     }
 
-    bool writeIndex(const api::RequestStoreIndex& index) override {
+    bool writeIndex(const api::RecordStoreIndex& index) override {
         Index fileIndex;
         fileIndex.head = index.head;
         fileIndex.tail = index.tail;
@@ -710,16 +710,16 @@ public:
         return api::request_file_store::writeIndex(fileIndex);
     }
 
-    bool writeRequest(std::uint32_t sequence, const pqueue::Record& request) override {
-        return api::request_file_store::writeRequest(sequence, request);
+    bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
+        return api::request_file_store::writeRecord(sequence, request);
     }
 
-    bool readRequest(std::uint32_t sequence, pqueue::Record& out) override {
-        return api::request_file_store::readRequest(sequence, out);
+    bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
+        return api::request_file_store::readRecord(sequence, out);
     }
 
-    bool removeRequest(std::uint32_t sequence) override {
-        return api::request_file_store::removeRequest(sequence);
+    bool removeRecord(std::uint32_t sequence) override {
+        return api::request_file_store::removeRecord(sequence);
     }
 
     std::uint64_t freeBytes() override {
@@ -729,8 +729,8 @@ public:
 
 } // namespace
 
-RequestStore& defaultStore() {
-    static FileRequestStore store;
+RecordStore& defaultStore() {
+    static FileRecordStore store;
     return store;
 }
 

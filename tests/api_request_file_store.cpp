@@ -29,8 +29,8 @@ std::filesystem::path bufferedRequestPath(std::uint32_t sequence) {
     return name;
 }
 
-api::ApiRequest switchBotReadingNamed(const std::string& readingName) {
-    api::ApiRequest request;
+pqueue::Record switchBotReadingNamed(const std::string& readingName) {
+    pqueue::Record request;
     request.path = "/switchbot/reading";
     request.mac = "";
     request.body = "{\"mac\":\"EC:2E:84:06:4E:9A\",\"name\":\"" + readingName + "\",\"type\":\"switchbot\"}";
@@ -39,8 +39,8 @@ api::ApiRequest switchBotReadingNamed(const std::string& readingName) {
     return request;
 }
 
-api::ApiRequest readingWithBody(std::string body) {
-    api::ApiRequest request;
+pqueue::Record readingWithBody(std::string body) {
+    pqueue::Record request;
     request.path = "/switchbot/reading";
     request.body = std::move(body);
     return request;
@@ -82,15 +82,15 @@ void flipLastByteOfExistingFile(const std::filesystem::path& path) {
 #endif
 }
 
-class RequestStoreScenario {
+class RecordStoreScenario {
 public:
-    static RequestStoreScenario emptySpool() {
+    static RecordStoreScenario emptySpool() {
         cleanSpoolDirectory();
-        return RequestStoreScenario();
+        return RecordStoreScenario();
     }
 
     void writeBufferedSwitchBotReading(const std::string& readingName) {
-        REQUIRE(api::request_file_store::writeRequest(nextSequence_, switchBotReadingNamed(readingName)));
+        REQUIRE(api::request_file_store::writeRecord(nextSequence_, switchBotReadingNamed(readingName)));
         sequenceNames_.push_back(readingName);
         ++nextSequence_;
     }
@@ -167,7 +167,7 @@ public:
     void writeTruncatedTrailingRequestFile() {
 #ifndef ARDUINO
         const auto request = switchBotReadingNamed("truncated trailing reading");
-        REQUIRE(api::request_file_store::writeRequest(nextSequence_, request));
+        REQUIRE(api::request_file_store::writeRecord(nextSequence_, request));
         std::filesystem::resize_file(bufferedRequestPath(nextSequence_), 8);
         ++nextSequence_;
 #else
@@ -192,8 +192,8 @@ public:
     std::vector<std::string> queuedReadingNames() const {
         std::vector<std::string> names;
         for (std::uint32_t sequence = recoveredIndex_.head; sequence < recoveredIndex_.tail; ++sequence) {
-            api::ApiRequest request;
-            if (api::request_file_store::readRequest(sequence, request)) {
+            pqueue::Record request;
+            if (api::request_file_store::readRecord(sequence, request)) {
                 names.push_back(extractNameFromBody(request.body));
             }
         }
@@ -201,14 +201,14 @@ public:
     }
 
     void enqueueAfterRestart(const std::string& readingName) {
-        REQUIRE(api::request_file_store::writeRequest(recoveredIndex_.tail, switchBotReadingNamed(readingName)));
+        REQUIRE(api::request_file_store::writeRecord(recoveredIndex_.tail, switchBotReadingNamed(readingName)));
         recoveredIndex_.tail += 1;
         recoveredIndex_.count += 1;
         REQUIRE(api::request_file_store::writeIndex(recoveredIndex_));
     }
 
 private:
-    RequestStoreScenario() = default;
+    RecordStoreScenario() = default;
 
     void writeQueueIndexForAllCurrentRequestFiles() const {
         writeQueueIndexForFirstReadings(nextSequence_);
@@ -249,31 +249,31 @@ public:
         return SingleRequestFileScenario();
     }
 
-    void writeReadingToDisk(api::ApiRequest request) {
+    void writeReadingToDisk(pqueue::Record request) {
         original_ = std::move(request);
-        REQUIRE(api::request_file_store::writeRequest(kSequence, original_));
+        REQUIRE(api::request_file_store::writeRecord(kSequence, original_));
     }
 
     void writeSwitchBotReadingToDisk(const std::string& readingName) {
         writeReadingToDisk(switchBotReadingNamed(readingName));
     }
 
-    api::ApiRequest readReadingBackFromDisk() const {
-        api::ApiRequest loaded;
-        REQUIRE(api::request_file_store::readRequest(kSequence, loaded));
+    pqueue::Record readReadingBackFromDisk() const {
+        pqueue::Record loaded;
+        REQUIRE(api::request_file_store::readRecord(kSequence, loaded));
         return loaded;
     }
 
-    const api::ApiRequest& originalReading() const {
+    const pqueue::Record& originalReading() const {
         return original_;
     }
 
 private:
     static constexpr std::uint32_t kSequence = 23;
-    api::ApiRequest original_;
+    pqueue::Record original_;
 };
 
-void expectQueuedReadings(RequestStoreScenario& store, std::vector<std::string> expectedNames) {
+void expectQueuedReadings(RecordStoreScenario& store, std::vector<std::string> expectedNames) {
     CHECK_EQ(store.queuedReadingNames(), expectedNames);
 }
 
@@ -333,7 +333,7 @@ TEST_CASE("request file store leaves diagnostic mac empty when the body is not J
 }
 
 TEST_CASE("request store recovers buffered readings when the queue index is missing") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("Bed before outage");
     store.writeBufferedSwitchBotReading("Kitchen before outage");
@@ -345,7 +345,7 @@ TEST_CASE("request store recovers buffered readings when the queue index is miss
 }
 
 TEST_CASE("request store recovers buffered readings when the queue index is corrupt") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("Bed before outage");
     store.writeBufferedSwitchBotReading("Kitchen before outage");
@@ -357,7 +357,7 @@ TEST_CASE("request store recovers buffered readings when the queue index is corr
 }
 
 TEST_CASE("request store falls back to the newer index copy when the older copy is corrupt") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("Bed before outage");
     store.writeBufferedSwitchBotReading("Kitchen before outage");
@@ -369,7 +369,7 @@ TEST_CASE("request store falls back to the newer index copy when the older copy 
 }
 
 TEST_CASE("request store falls back to the older index copy when the newer copy is corrupt") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("Bed before outage");
     store.writeBufferedSwitchBotReading("Kitchen before outage");
@@ -381,7 +381,7 @@ TEST_CASE("request store falls back to the older index copy when the newer copy 
 }
 
 TEST_CASE("request store treats a written-but-unindexed reading as an orphan when the index is valid") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("indexed reading");
     store.writeBufferedSwitchBotReading("written but not indexed reading");
@@ -393,7 +393,7 @@ TEST_CASE("request store treats a written-but-unindexed reading as an orphan whe
 }
 
 TEST_CASE("request store ignores a missing trailing request file that the index still mentions") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("surviving reading");
     store.writeBufferedSwitchBotReading("missing trailing reading");
@@ -406,7 +406,7 @@ TEST_CASE("request store ignores a missing trailing request file that the index 
 }
 
 TEST_CASE("request store ignores an empty trailing request file and keeps earlier readings") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("surviving reading");
     store.writeEmptyTrailingRequestFile();
@@ -418,7 +418,7 @@ TEST_CASE("request store ignores an empty trailing request file and keeps earlie
 }
 
 TEST_CASE("request store ignores a truncated trailing request file and keeps earlier readings") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("surviving reading");
     store.writeTruncatedTrailingRequestFile();
@@ -430,7 +430,7 @@ TEST_CASE("request store ignores a truncated trailing request file and keeps ear
 }
 
 TEST_CASE("request store ignores a corrupt trailing reading and keeps earlier readings") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("first valid reading");
     store.writeBufferedSwitchBotReading("second valid reading");
@@ -444,7 +444,7 @@ TEST_CASE("request store ignores a corrupt trailing reading and keeps earlier re
 }
 
 TEST_CASE("request store stops recovery before readings after a corrupt middle reading") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("first valid reading");
     store.writeBufferedSwitchBotReading("corrupt middle reading");
@@ -458,7 +458,7 @@ TEST_CASE("request store stops recovery before readings after a corrupt middle r
 }
 
 TEST_CASE("request store can enqueue again after recovering from a corrupt trailing reading") {
-    auto store = RequestStoreScenario::emptySpool();
+    auto store = RecordStoreScenario::emptySpool();
 
     store.writeBufferedSwitchBotReading("surviving reading");
     store.writeBufferedSwitchBotReading("corrupt trailing reading");

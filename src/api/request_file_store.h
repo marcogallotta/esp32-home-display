@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "request_store.h"
+#include "record_store.h"
 
 namespace api::request_file_store {
 
@@ -18,12 +18,12 @@ void setBasePath(const char* path);
 bool readIndex(Index& out);
 bool writeIndex(const Index& index);
 
-bool writeRequest(std::uint32_t sequence, const pqueue::Record& request);
-bool readRequest(std::uint32_t sequence, pqueue::Record& out);
-bool removeRequest(std::uint32_t sequence);
+bool writeRecord(std::uint32_t sequence, const pqueue::Record& request);
+bool readRecord(std::uint32_t sequence, pqueue::Record& out);
+bool removeRecord(std::uint32_t sequence);
 
 std::uint64_t freeBytes();
 
-RequestStore& defaultStore();
+RecordStore& defaultStore();
 
 } // namespace api::request_file_store

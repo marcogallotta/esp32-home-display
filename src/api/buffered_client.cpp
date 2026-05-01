@@ -329,7 +329,7 @@ BufferedClient::BufferedClient(
     const Config& config,
     BufferState& buffer,
     const ApiPoster& poster,
-    RequestStore& store
+    RecordStore& store
 )
     : config_(config),
       buffer_(buffer),
