@@ -32,7 +32,6 @@ std::filesystem::path bufferedRecordPath(std::uint32_t sequence) {
 pqueue::Record switchBotReadingNamed(const std::string& readingName) {
     pqueue::Record request;
     request.path = "/switchbot/reading";
-    request.mac = "";
     request.body = "{\"mac\":\"EC:2E:84:06:4E:9A\",\"name\":\"" + readingName + "\",\"type\":\"switchbot\"}";
     request.timeoutRetryCount = 2;
     request.tlsRetryCount = 1;
@@ -291,46 +290,9 @@ TEST_CASE("record file store preserves the fields needed to resend a buffered re
     CHECK_EQ(loaded.tlsRetryCount, 1);
 }
 
-TEST_CASE("record file store hydrates diagnostic mac from the persisted record body") {
-    auto file = SingleRecordFileScenario::emptySpool();
 
-    file.writeSwitchBotReadingToDisk("Bed");
 
-    const auto loaded = file.readReadingBackFromDisk();
-    CHECK_EQ(loaded.mac, "EC:2E:84:06:4E:9A");
-}
 
-TEST_CASE("record file store uses the body mac instead of stale in-memory metadata") {
-    auto file = SingleRecordFileScenario::emptySpool();
-    auto request = readingWithBody("{\"mac\":\"11:22:33:44:55:66\",\"name\":\"Bed\",\"type\":\"switchbot\"}");
-    request.mac = "AA:BB:CC:DD:EE:FF";
-
-    file.writeReadingToDisk(request);
-
-    const auto loaded = file.readReadingBackFromDisk();
-    CHECK_EQ(loaded.mac, "11:22:33:44:55:66");
-    CHECK_EQ(loaded.body, request.body);
-}
-
-TEST_CASE("record file store leaves diagnostic mac empty when the body has no mac") {
-    auto file = SingleRecordFileScenario::emptySpool();
-
-    file.writeReadingToDisk(readingWithBody("{\"name\":\"test\"}"));
-
-    const auto loaded = file.readReadingBackFromDisk();
-    CHECK(loaded.mac.empty());
-    CHECK_EQ(loaded.body, "{\"name\":\"test\"}");
-}
-
-TEST_CASE("record file store leaves diagnostic mac empty when the body is not JSON") {
-    auto file = SingleRecordFileScenario::emptySpool();
-
-    file.writeReadingToDisk(readingWithBody("not-json"));
-
-    const auto loaded = file.readReadingBackFromDisk();
-    CHECK(loaded.mac.empty());
-    CHECK_EQ(loaded.body, "not-json");
-}
 
 TEST_CASE("record store recovers buffered readings when the queue index is missing") {
     auto store = RecordStoreScenario::emptySpool();

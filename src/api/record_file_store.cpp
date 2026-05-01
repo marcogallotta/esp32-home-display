@@ -12,7 +12,6 @@
 #include <sys/stat.h>
 #include <vector>
 
-#include <ArduinoJson.h>
 
 #include "../log.h"
 
@@ -144,16 +143,6 @@ bool recordFileExists(std::uint32_t sequence, const std::set<std::uint32_t>& seq
     return sequences.find(sequence) != sequences.end();
 }
 
-std::string extractMacFromBody(const std::string& body) {
-    DynamicJsonDocument doc(body.size() + 128);
-    const DeserializationError error = deserializeJson(doc, body);
-    if (error) {
-        return {};
-    }
-
-    const char* mac = doc["mac"];
-    return mac == nullptr ? std::string{} : std::string(mac);
-}
 
 #ifdef ARDUINO
 
@@ -645,7 +634,6 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
 
     out.path = recordPath;
     out.body = body;
-    out.mac = extractMacFromBody(out.body);
     out.timeoutRetryCount = header.timeoutRetryCount;
     out.tlsRetryCount = header.tlsRetryCount;
     return true;

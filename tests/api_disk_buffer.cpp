@@ -93,7 +93,6 @@ public:
 pqueue::Record bufferedReading(const std::string& name) {
     pqueue::Record out;
     out.path = "/" + name;
-    out.mac = "mac-for-" + name;
     out.body = "{\"name\":\"" + name + "\"}";
     return out;
 }

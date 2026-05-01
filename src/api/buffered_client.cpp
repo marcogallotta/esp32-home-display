@@ -148,6 +148,23 @@ WriteResult makeWriteResult(
     return result;
 }
 
+
+std::string diagnosticMac(const ApiRequest& request) {
+    const std::string marker = "\"mac\":\"";
+    const auto start = request.body.find(marker);
+    if (start == std::string::npos) {
+        return {};
+    }
+
+    const auto valueStart = start + marker.size();
+    const auto valueEnd = request.body.find('"', valueStart);
+    if (valueEnd == std::string::npos) {
+        return {};
+    }
+
+    return request.body.substr(valueStart, valueEnd - valueStart);
+}
+
 std::string droppedReason(
     const ApiRequest& request,
     const network::HttpResponse& response
@@ -183,10 +200,11 @@ void logDroppedFreshRequest(
     const ApiRequest& request,
     const network::HttpResponse& response
 ) {
+    const std::string mac = diagnosticMac(request);
     logLine(
         LogLevel::Warn,
         "Dropping API request permanently: " + request.path +
-        " for " + request.mac +
+        " for " + mac +
         ", " + transportResultName(response.transport) +
         ", HTTP " + std::to_string(response.statusCode) +
         ", " + response.error
@@ -195,7 +213,7 @@ void logDroppedFreshRequest(
     dropped_log::appendDroppedRequest(
         droppedReason(request, response),
         request.path,
-        request.mac,
+        mac,
         request.body,
         response.statusCode,
         static_cast<int>(response.transport),
@@ -209,9 +227,10 @@ void logDroppedBufferedRequest(
     const ApiRequest& request,
     const network::HttpResponse& response
 ) {
+    const std::string mac = diagnosticMac(request);
     std::string message =
         "Dropping buffered request to " + request.path +
-        " for " + request.mac +
+        " for " + mac +
         ": " + transportResultName(response.transport) +
         ", HTTP " + std::to_string(response.statusCode);
 
@@ -232,7 +251,7 @@ void logDroppedBufferedRequest(
     dropped_log::appendDroppedRequest(
         droppedReason(request, response),
         request.path,
-        request.mac,
+        mac,
         request.body,
         response.statusCode,
         static_cast<int>(response.transport),
@@ -243,16 +262,17 @@ void logDroppedBufferedRequest(
 }
 
 void logDroppedBufferFullRequest(const ApiRequest& request) {
+    const std::string mac = diagnosticMac(request);
     logLine(
         LogLevel::Warn,
         "Dropping request because buffer is full: " + request.path +
-        " for " + request.mac
+        " for " + mac
     );
 
     dropped_log::appendDroppedRequest(
         "buffer_full",
         request.path,
-        request.mac,
+        mac,
         request.body,
         0,
         -1,
@@ -295,10 +315,11 @@ void logDrainPaused(
     const BufferDrainResult& result,
     const BufferState& buffer
 ) {
+    const std::string mac = diagnosticMac(request);
     logLine(
         LogLevel::Warn,
         "Buffer drain paused at " + request.path +
-        " for " + request.mac +
+        " for " + mac +
         ": " + transportResultName(response.transport) +
         ", HTTP " + std::to_string(response.statusCode) +
         ", " + response.error +
@@ -353,7 +374,6 @@ WriteResult BufferedClient::postSwitchbotReading(
 
     return send(ApiRequest{
         "/switchbot/reading",
-        identity.mac,
         toJson(*payload),
     });
 }
@@ -374,7 +394,6 @@ WriteResult BufferedClient::postXiaomiReading(
 
     return send(ApiRequest{
         "/xiaomi/reading",
-        identity.mac,
         toJson(*payload),
     });
 }

@@ -117,7 +117,6 @@ public:
 pqueue::Record request(const std::string& name) {
     pqueue::Record r;
     r.path = "/" + name;
-    r.mac = "AA:BB:CC:DD:EE:" + name;
     r.body = "{\"name\":\"" + name + "\"}";
     return r;
 }
