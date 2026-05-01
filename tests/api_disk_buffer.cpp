@@ -221,7 +221,7 @@ public:
         return store_.removeRecordCalls;
     }
 
-    bool durableStoreHasNoRequestFiles() const {
+    bool durableStoreHasNoRecordFiles() const {
         return store_.requests.empty();
     }
 

@@ -1,4 +1,4 @@
-#include "request_file_store.h"
+#include "record_file_store.h"
 
 #include "buffer.h"
 
@@ -23,11 +23,11 @@
 #include <fstream>
 #endif
 
-namespace api::request_file_store {
+namespace api::record_file_store {
 namespace {
 
-constexpr std::uint32_t kIndexMagic = 0x41504949;   // APII
-constexpr std::uint32_t kRequestMagic = 0x41504952; // APIR
+constexpr std::uint32_t kIndexMagic = 0x50514958;   // PQIX
+constexpr std::uint32_t kRecordMagic = 0x50515243; // PQRC
 constexpr std::uint16_t kFormatVersion = 1;
 
 constexpr std::size_t kMaxPathBytes = 96;
@@ -35,11 +35,11 @@ constexpr std::size_t kMaxFilePathBytes = 128;
 constexpr std::size_t kMaxBodyBytes = 4096;
 
 #ifdef ARDUINO
-constexpr const char* kIndexAPath = "/api_idx_a.bin";
-constexpr const char* kIndexBPath = "/api_idx_b.bin";
+constexpr const char* kIndexAPath = "/pqueue_idx_a.bin";
+constexpr const char* kIndexBPath = "/pqueue_idx_b.bin";
 #else
-constexpr const char* kIndexAFileName = "api_idx_a.bin";
-constexpr const char* kIndexBFileName = "api_idx_b.bin";
+constexpr const char* kIndexAFileName = "pqueue_idx_a.bin";
+constexpr const char* kIndexBFileName = "pqueue_idx_b.bin";
 #endif
 
 struct IndexRecord {
@@ -53,10 +53,10 @@ struct IndexRecord {
     std::uint32_t crc = 0;
 };
 
-struct RequestHeader {
-    std::uint32_t magic = kRequestMagic;
+struct RecordHeader {
+    std::uint32_t magic = kRecordMagic;
     std::uint16_t formatVersion = kFormatVersion;
-    std::uint16_t headerBytes = sizeof(RequestHeader);
+    std::uint16_t headerBytes = sizeof(RecordHeader);
     std::uint16_t pathBytes = 0;
     std::uint16_t reserved = 0;
     std::uint32_t bodyBytes = 0;
@@ -83,12 +83,12 @@ std::uint32_t indexCrc(const IndexRecord& record) {
     return crc32Update(0, &record, offsetof(IndexRecord, crc));
 }
 
-std::uint32_t requestCrc(
-    const RequestHeader& header,
+std::uint32_t recordCrc(
+    const RecordHeader& header,
     const char* path,
     const char* body
 ) {
-    std::uint32_t crc = crc32Update(0, &header, offsetof(RequestHeader, crc));
+    std::uint32_t crc = crc32Update(0, &header, offsetof(RecordHeader, crc));
     crc = crc32Update(crc, path, header.pathBytes);
     crc = crc32Update(crc, body, header.bodyBytes);
     return crc;
@@ -105,14 +105,14 @@ std::string storePath(const char* filename) {
 }
 #endif
 
-bool makeRequestPath(std::uint32_t sequence, char* out, std::size_t outSize) {
+bool makeRecordPath(std::uint32_t sequence, char* out, std::size_t outSize) {
 #ifdef ARDUINO
-    const int n = std::snprintf(out, outSize, "/api_req_%08lu.bin", static_cast<unsigned long>(sequence));
+    const int n = std::snprintf(out, outSize, "/pqueue_rec_%08lu.bin", static_cast<unsigned long>(sequence));
 #else
     const int n = std::snprintf(
         out,
         outSize,
-        "%s/api_req_%08lu.bin",
+        "%s/pqueue_rec_%08lu.bin",
         basePath().c_str(),
         static_cast<unsigned long>(sequence)
     );
@@ -121,14 +121,14 @@ bool makeRequestPath(std::uint32_t sequence, char* out, std::size_t outSize) {
 }
 
 
-bool parseRequestSequenceFromName(const char* name, std::uint32_t& out) {
+bool parseRecordSequenceFromName(const char* name, std::uint32_t& out) {
     if (name == nullptr) {
         return false;
     }
 
     unsigned long value = 0;
     char suffix = '\0';
-    if (std::sscanf(name, "api_req_%08lu.bin%c", &value, &suffix) != 1) {
+    if (std::sscanf(name, "pqueue_rec_%08lu.bin%c", &value, &suffix) != 1) {
         return false;
     }
 
@@ -140,7 +140,7 @@ bool parseRequestSequenceFromName(const char* name, std::uint32_t& out) {
     return true;
 }
 
-bool requestFileExists(std::uint32_t sequence, const std::set<std::uint32_t>& sequences) {
+bool recordFileExists(std::uint32_t sequence, const std::set<std::uint32_t>& sequences) {
     return sequences.find(sequence) != sequences.end();
 }
 
@@ -243,7 +243,7 @@ bool writeIndexRecord(const char* path, const IndexRecord& record) {
 #endif
 
 
-bool listRequestSequences(std::vector<std::uint32_t>& out) {
+bool listRecordSequences(std::vector<std::uint32_t>& out) {
     out.clear();
 
 #ifdef ARDUINO
@@ -261,7 +261,7 @@ bool listRequestSequences(std::vector<std::uint32_t>& out) {
         }
 
         std::uint32_t sequence = 0;
-        if (parseRequestSequenceFromName(name, sequence)) {
+        if (parseRecordSequenceFromName(name, sequence)) {
             out.push_back(sequence);
         }
 
@@ -287,7 +287,7 @@ bool listRequestSequences(std::vector<std::uint32_t>& out) {
 
         const std::string name = entry.path().filename().string();
         std::uint32_t sequence = 0;
-        if (parseRequestSequenceFromName(name.c_str(), sequence)) {
+        if (parseRecordSequenceFromName(name.c_str(), sequence)) {
             out.push_back(sequence);
         }
     }
@@ -298,9 +298,9 @@ bool listRequestSequences(std::vector<std::uint32_t>& out) {
     return true;
 }
 
-bool recoverIndexFromRequestFiles(Index& out) {
+bool recoverIndexFromRecordFiles(Index& out) {
     std::vector<std::uint32_t> sequences;
-    if (!listRequestSequences(sequences)) {
+    if (!listRecordSequences(sequences)) {
         return false;
     }
 
@@ -315,7 +315,7 @@ bool recoverIndexFromRequestFiles(Index& out) {
     std::uint32_t count = 0;
     std::uint32_t sequence = head;
     for (;;) {
-        if (!requestFileExists(sequence, existing)) {
+        if (!recordFileExists(sequence, existing)) {
             break;
         }
 
@@ -373,9 +373,9 @@ bool sanitizeIndexedRange(const Index& input, Index& out) {
     return true;
 }
 
-void deleteRequestsOutsideLiveIndex(const Index& live) {
+void deleteRecordsOutsideLiveIndex(const Index& live) {
     std::vector<std::uint32_t> sequences;
-    if (!listRequestSequences(sequences)) {
+    if (!listRecordSequences(sequences)) {
         return;
     }
 
@@ -428,7 +428,7 @@ bool mount() {
 
     mounted = LittleFS.begin(false);
     if (!mounted) {
-        logLine(LogLevel::Warn, "Request file store mount failed");
+        logLine(LogLevel::Warn, "Record file store mount failed");
     }
 
     return mounted;
@@ -436,7 +436,7 @@ bool mount() {
     std::error_code ec;
     std::filesystem::create_directories(basePath(), ec);
     if (ec) {
-        logLine(LogLevel::Warn, "Request file store directory create failed");
+        logLine(LogLevel::Warn, "Record file store directory create failed");
         return false;
     }
     return true;
@@ -463,10 +463,10 @@ bool readIndex(Index& out) {
     IndexRecord record;
     bool fromA = true;
     if (!readBestIndexRecord(record, fromA)) {
-        if (!recoverIndexFromRequestFiles(out)) {
+        if (!recoverIndexFromRecordFiles(out)) {
             return false;
         }
-        deleteRequestsOutsideLiveIndex(out);
+        deleteRecordsOutsideLiveIndex(out);
         if (out.count > 0) {
             writeIndex(out);
         }
@@ -482,7 +482,7 @@ bool readIndex(Index& out) {
         return false;
     }
 
-    deleteRequestsOutsideLiveIndex(out);
+    deleteRecordsOutsideLiveIndex(out);
 
     if (!sameIndex(fromIndex, out)) {
         writeIndex(out);
@@ -515,7 +515,7 @@ bool writeIndex(const Index& index) {
         : storePath(kIndexAFileName);
     if (!writeIndexRecord(targetPath.c_str(), next)) {
 #endif
-        logLine(LogLevel::Warn, "Request file store index write failed");
+        logLine(LogLevel::Warn, "Record file store index write failed");
         return false;
     }
 
@@ -534,21 +534,21 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
     }
 
     char path[kMaxFilePathBytes];
-    if (!makeRequestPath(sequence, path, sizeof(path))) {
+    if (!makeRecordPath(sequence, path, sizeof(path))) {
         return false;
     }
 
-    RequestHeader header;
+    RecordHeader header;
     header.pathBytes = static_cast<std::uint16_t>(request.path.size());
     header.bodyBytes = static_cast<std::uint32_t>(request.body.size());
     header.timeoutRetryCount = request.timeoutRetryCount;
     header.tlsRetryCount = request.tlsRetryCount;
-    header.crc = requestCrc(header, request.path.data(), request.body.data());
+    header.crc = recordCrc(header, request.path.data(), request.body.data());
 
 #ifdef ARDUINO
     File file = LittleFS.open(path, "w");
     if (!file) {
-        logLine(LogLevel::Warn, "Request file store request write failed");
+        logLine(LogLevel::Warn, "Record file store record write failed");
         return false;
     }
 
@@ -562,7 +562,7 @@ bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) {
 #else
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
-        logLine(LogLevel::Warn, "Request file store request write failed");
+        logLine(LogLevel::Warn, "Record file store record write failed");
         return false;
     }
 
@@ -578,11 +578,11 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
     }
 
     char path[kMaxFilePathBytes];
-    if (!makeRequestPath(sequence, path, sizeof(path))) {
+    if (!makeRecordPath(sequence, path, sizeof(path))) {
         return false;
     }
 
-    RequestHeader header;
+    RecordHeader header;
 
 #ifdef ARDUINO
     File file = LittleFS.open(path, "r");
@@ -605,9 +605,9 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
     }
 #endif
 
-    if (header.magic != kRequestMagic ||
+    if (header.magic != kRecordMagic ||
         header.formatVersion != kFormatVersion ||
-        header.headerBytes != sizeof(RequestHeader) ||
+        header.headerBytes != sizeof(RecordHeader) ||
         header.pathBytes == 0 ||
         header.pathBytes > kMaxPathBytes ||
         header.bodyBytes > kMaxBodyBytes) {
@@ -617,13 +617,13 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
         return false;
     }
 
-    char requestPath[kMaxPathBytes + 1]{};
+    char recordPath[kMaxPathBytes + 1]{};
     std::string body;
     body.resize(header.bodyBytes);
 
 #ifdef ARDUINO
     const bool ok =
-        readAll(file, requestPath, header.pathBytes) &&
+        readAll(file, recordPath, header.pathBytes) &&
         readAll(file, body.data(), body.size());
     file.close();
 
@@ -631,19 +631,19 @@ bool readRecord(std::uint32_t sequence, pqueue::Record& out) {
         return false;
     }
 #else
-    if (!readAll(file, requestPath, header.pathBytes) ||
+    if (!readAll(file, recordPath, header.pathBytes) ||
         !readAll(file, body.data(), body.size())) {
         return false;
     }
 #endif
 
-    if (header.crc != requestCrc(header, requestPath, body.data())) {
+    if (header.crc != recordCrc(header, recordPath, body.data())) {
         return false;
     }
 
-    requestPath[header.pathBytes] = '\0';
+    recordPath[header.pathBytes] = '\0';
 
-    out.path = requestPath;
+    out.path = recordPath;
     out.body = body;
     out.mac = extractMacFromBody(out.body);
     out.timeoutRetryCount = header.timeoutRetryCount;
@@ -657,7 +657,7 @@ bool removeRecord(std::uint32_t sequence) {
     }
 
     char path[kMaxFilePathBytes];
-    if (!makeRequestPath(sequence, path, sizeof(path))) {
+    if (!makeRecordPath(sequence, path, sizeof(path))) {
         return false;
     }
 
@@ -693,7 +693,7 @@ class FileRecordStore final : public api::RecordStore {
 public:
     bool readIndex(api::RecordStoreIndex& out) override {
         Index index;
-        if (!api::request_file_store::readIndex(index)) {
+        if (!api::record_file_store::readIndex(index)) {
             return false;
         }
         out.head = index.head;
@@ -707,23 +707,23 @@ public:
         fileIndex.head = index.head;
         fileIndex.tail = index.tail;
         fileIndex.count = index.count;
-        return api::request_file_store::writeIndex(fileIndex);
+        return api::record_file_store::writeIndex(fileIndex);
     }
 
     bool writeRecord(std::uint32_t sequence, const pqueue::Record& request) override {
-        return api::request_file_store::writeRecord(sequence, request);
+        return api::record_file_store::writeRecord(sequence, request);
     }
 
     bool readRecord(std::uint32_t sequence, pqueue::Record& out) override {
-        return api::request_file_store::readRecord(sequence, out);
+        return api::record_file_store::readRecord(sequence, out);
     }
 
     bool removeRecord(std::uint32_t sequence) override {
-        return api::request_file_store::removeRecord(sequence);
+        return api::record_file_store::removeRecord(sequence);
     }
 
     std::uint64_t freeBytes() override {
-        return api::request_file_store::freeBytes();
+        return api::record_file_store::freeBytes();
     }
 };
 
@@ -734,4 +734,4 @@ RecordStore& defaultStore() {
     return store;
 }
 
-} // namespace api::request_file_store
+} // namespace api::record_file_store

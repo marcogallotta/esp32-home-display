@@ -33,7 +33,7 @@ COMMON_SRC := \
 	src/api/disk_buffer.cpp \
 	src/api/dropped_log.cpp \
 	src/api/payloads.cpp \
-	src/api/request_file_store.cpp \
+	src/api/record_file_store.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
 	src/ble/desktop.cpp \
@@ -67,7 +67,7 @@ TEST_SRC := \
 	tests/api_buffer.cpp \
 	tests/api_disk_buffer.cpp \
 	tests/api_payloads.cpp \
-	tests/api_request_file_store.cpp \
+	tests/record_file_store.cpp \
 	tests/api_sensor_write_policy.cpp \
 	tests/config.cpp \
 	tests/main.cpp \

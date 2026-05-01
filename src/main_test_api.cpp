@@ -10,7 +10,7 @@
 #include "api/buffered_client.h"
 #include "api/client.h"
 #include "api/disk_buffer.h"
-#include "api/request_file_store.h"
+#include "api/record_file_store.h"
 #include "api/state.h"
 #include "config.h"
 #include "log.h"
@@ -256,17 +256,17 @@ int main(int argc, char** argv) {
         config.api.apiKey = options.apiKey;
     }
 
-    api::request_file_store::setBasePath("spool_harness");
+    api::record_file_store::setBasePath("spool_harness");
 
-    if (!api::request_file_store::mount()) {
-        logLine(LogLevel::Error, "Failed to mount request file store");
+    if (!api::record_file_store::mount()) {
+        logLine(LogLevel::Error, "Failed to mount record file store");
         return 1;
     }
 
     platform::initTime(config);
 
     api::State apiState;
-    auto& store = api::request_file_store::defaultStore();
+    auto& store = api::record_file_store::defaultStore();
     api::disk_buffer::load(apiState.buffer.disk, store);
     logLine(
         LogLevel::Info,

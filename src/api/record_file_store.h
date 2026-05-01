@@ -4,7 +4,7 @@
 
 #include "record_store.h"
 
-namespace api::request_file_store {
+namespace api::record_file_store {
 
 struct Index {
     std::uint32_t head = 0;
@@ -26,4 +26,4 @@ std::uint64_t freeBytes();
 
 RecordStore& defaultStore();
 
-} // namespace api::request_file_store
+} // namespace api::record_file_store

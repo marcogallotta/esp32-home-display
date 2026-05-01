@@ -12,7 +12,7 @@
 #include "api/buffered_client.h"
 #include "api/client.h"
 #include "api/disk_buffer.h"
-#include "api/request_file_store.h"
+#include "api/record_file_store.h"
 #include "api/state.h"
 #include "api_sync.h"
 #include "ble/scanner.h"
@@ -85,7 +85,7 @@ struct AppContext {
     explicit AppContext(const Config& cfg)
         : config(cfg),
           apiClient(config),
-          bufferedApiClient(config, apiState.buffer, apiClient, api::request_file_store::defaultStore()),
+          bufferedApiClient(config, apiState.buffer, apiClient, api::record_file_store::defaultStore()),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
           bleScanner([this](const ble::AdvertisementEvent& event) {
@@ -116,7 +116,7 @@ void initStateStorage(AppContext& app) {
 
     api::initState(app.currentState, app.apiState);
 
-    api::disk_buffer::load(app.apiState.buffer.disk, api::request_file_store::defaultStore());
+    api::disk_buffer::load(app.apiState.buffer.disk, api::record_file_store::defaultStore());
     logLine(
         LogLevel::Info,
         "API disk buffer loaded: head " + std::to_string(app.apiState.buffer.disk.head) +
