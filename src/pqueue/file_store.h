@@ -5,15 +5,32 @@
 
 namespace pqueue {
 
+enum class StorageBackend {
+    Default,
+    Posix,
+    LittleFS,
+};
+
+struct FileStoreConfig {
+#ifdef ARDUINO
+    std::string basePath = "/pqueue_spool";
+#else
+    std::string basePath = "pqueue_spool";
+#endif
+    StorageBackend backend = StorageBackend::Default;
+};
+
 struct FileStoreIndex {
     std::uint32_t head = 0;
     std::uint32_t tail = 0;
     std::uint32_t count = 0;
 };
 
+// TODO: add optional storage error reporting/logging once the public logging model is decided.
 class FileStore {
 public:
-    explicit FileStore(std::string basePath = "pqueue_spool");
+    explicit FileStore(FileStoreConfig config = FileStoreConfig{});
+    explicit FileStore(std::string basePath);
 
     bool mount();
     bool readIndex(FileStoreIndex& out);
@@ -26,7 +43,9 @@ public:
     std::uint64_t freeBytes() const;
 
 private:
-    std::string basePath_;
+    StorageBackend resolvedBackend() const;
+
+    FileStoreConfig config_;
 };
 
 } // namespace pqueue

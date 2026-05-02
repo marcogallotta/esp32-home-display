@@ -2,7 +2,9 @@
 
 namespace pqueue {
 
-Queue::Queue(Config config) : config_(config), store_(config.basePath) {}
+Queue::Queue(Config config)
+    : config_(config),
+      store_(FileStoreConfig{config.basePath, config.storageBackend}) {}
 
 bool Queue::ensureLoaded() {
     if (loaded_) {

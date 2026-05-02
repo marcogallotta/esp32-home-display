@@ -4,12 +4,19 @@
 #include <cstddef>
 #include <string>
 
+#include "file_store.h"
+
 namespace pqueue {
 
 using Record = std::string;
 
 struct Config {
+#ifdef ARDUINO
+    std::string basePath = "/pqueue_spool";
+#else
     std::string basePath = "pqueue_spool";
+#endif
+    StorageBackend storageBackend = StorageBackend::Default;
     std::uint32_t diskReserveBytes = 256 * 1024;
     std::size_t maxRecordBytes = 4096;
     // TODO: make full-queue behavior configurable instead of always rejecting newest.
