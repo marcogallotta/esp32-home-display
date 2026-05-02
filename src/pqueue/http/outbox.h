@@ -86,6 +86,19 @@ private:
 using ClassifyResponseCallback = SendDecision (*)(void* context, const Response& response);
 using ResponseCallback = void (*)(void* context, const RequestEnvelope& request, const Response& response);
 
+enum class DropReason {
+    DecodeFailed,
+    ClassifiedDrop,
+    MaxAttempts,
+};
+
+using DropCallback = void (*)(
+    void* context,
+    const RequestEnvelope* request,
+    DropReason reason,
+    const Response* response
+);
+
 struct Config {
     pqueue::Config queue;
     pqueue::OutboxConfig outbox;
@@ -99,6 +112,9 @@ struct Config {
 
     void* responseContext = nullptr;
     ResponseCallback onResponse = nullptr;
+
+    void* dropContext = nullptr;
+    DropCallback onDrop = nullptr;
 };
 
 class Outbox {
@@ -119,7 +135,9 @@ private:
     static SendResult sendStoredRequest(void* context, const std::string& encodedRequest, const RetryState& retry);
     SendResult sendStoredRequest(const std::string& encodedRequest, const RetryState& retry);
     void notifyResponse(const RequestEnvelope& request, const Response& response) const;
+    void notifyDrop(const RequestEnvelope* request, DropReason reason, const Response* response) const;
     SendDecision classifyResponse(const Response& response) const;
+    bool retryWouldReachMaxAttempts(const RetryState& retry) const;
     std::string buildUrl(const std::string& path) const;
 
     Config httpConfig_;

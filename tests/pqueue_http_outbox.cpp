@@ -106,6 +106,38 @@ void onResponse(void* context, const pqueue::http::RequestEnvelope& request, con
     observer->seen.push_back({request.path, response.statusCode, response.error, response.body});
 }
 
+struct SeenDrop {
+    bool hasRequest = false;
+    std::string path;
+    pqueue::http::DropReason reason = pqueue::http::DropReason::DecodeFailed;
+    bool hasResponse = false;
+    int statusCode = pqueue::http::kNoStatusCode;
+};
+
+struct DropObserver {
+    std::vector<SeenDrop> seen;
+};
+
+void onDrop(
+    void* context,
+    const pqueue::http::RequestEnvelope* request,
+    pqueue::http::DropReason reason,
+    const pqueue::http::Response* response
+) {
+    auto* observer = static_cast<DropObserver*>(context);
+    SeenDrop drop;
+    drop.reason = reason;
+    if (request != nullptr) {
+        drop.hasRequest = true;
+        drop.path = request->path;
+    }
+    if (response != nullptr) {
+        drop.hasResponse = true;
+        drop.statusCode = response->statusCode;
+    }
+    observer->seen.push_back(drop);
+}
+
 struct CustomClassifier {
     pqueue::SendDecision decision = pqueue::SendDecision::Drop;
     std::vector<int> statuses;
@@ -176,6 +208,64 @@ TEST_CASE("pqueue http outbox drops permanent status") {
 
     CHECK(submit.status == pqueue::SubmitStatus::Dropped);
     CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+
+TEST_CASE("pqueue http outbox notifies when a request is dropped by classification") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({422, pqueue::http::TransportError::None});
+    FakeClock clock;
+    DropObserver observer;
+
+    pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.retryDelayMs = 1000;
+    httpConfig.baseUrl = "https://example.test";
+    httpConfig.dropContext = &observer;
+    httpConfig.onDrop = onDrop;
+
+    pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
+    const auto submit = outbox.submitPost("/bad", "body");
+
+    CHECK(submit.status == pqueue::SubmitStatus::Dropped);
+    REQUIRE_EQ(observer.seen.size(), 1U);
+    CHECK(observer.seen[0].reason == pqueue::http::DropReason::ClassifiedDrop);
+    CHECK(observer.seen[0].hasRequest);
+    CHECK_EQ(observer.seen[0].path, "/bad");
+    CHECK(observer.seen[0].hasResponse);
+    CHECK_EQ(observer.seen[0].statusCode, 422);
+#endif
+}
+
+TEST_CASE("pqueue http outbox notifies when retries reach max attempts") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({503, pqueue::http::TransportError::None});
+    FakeClock clock;
+    DropObserver observer;
+
+    pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.maxAttempts = 1;
+    httpConfig.outbox.retryDelayMs = 1000;
+    httpConfig.baseUrl = "https://example.test";
+    httpConfig.dropContext = &observer;
+    httpConfig.onDrop = onDrop;
+
+    pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
+    const auto submit = outbox.submitPost("/retry", "body");
+
+    CHECK(submit.status == pqueue::SubmitStatus::Dropped);
+    REQUIRE_EQ(observer.seen.size(), 1U);
+    CHECK(observer.seen[0].reason == pqueue::http::DropReason::MaxAttempts);
+    CHECK(observer.seen[0].hasRequest);
+    CHECK_EQ(observer.seen[0].path, "/retry");
+    CHECK(observer.seen[0].hasResponse);
+    CHECK_EQ(observer.seen[0].statusCode, 503);
 #endif
 }
 

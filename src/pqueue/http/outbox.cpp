@@ -71,9 +71,10 @@ SendResult Outbox::sendStoredRequest(void* context, const std::string& encodedRe
     return static_cast<Outbox*>(context)->sendStoredRequest(encodedRequest, retry);
 }
 
-SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const RetryState&) {
+SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const RetryState& retry) {
     RequestEnvelope request;
     if (!decodeRequestEnvelope(encodedRequest, request) || request.method != Method::Post) {
+        notifyDrop(nullptr, DropReason::DecodeFailed, nullptr);
         return {SendDecision::Drop};
     }
 
@@ -86,7 +87,15 @@ SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const Re
         request.body.size()
     );
     notifyResponse(request, response);
-    return {classifyResponse(response)};
+
+    const SendDecision decision = classifyResponse(response);
+    if (decision == SendDecision::Drop) {
+        notifyDrop(&request, DropReason::ClassifiedDrop, &response);
+    } else if (decision == SendDecision::RetryLater && retryWouldReachMaxAttempts(retry)) {
+        notifyDrop(&request, DropReason::MaxAttempts, &response);
+    }
+
+    return {decision};
 }
 
 void Outbox::notifyResponse(const RequestEnvelope& request, const Response& response) const {
@@ -95,11 +104,24 @@ void Outbox::notifyResponse(const RequestEnvelope& request, const Response& resp
     }
 }
 
+void Outbox::notifyDrop(const RequestEnvelope* request, DropReason reason, const Response* response) const {
+    if (httpConfig_.onDrop != nullptr) {
+        httpConfig_.onDrop(httpConfig_.dropContext, request, reason, response);
+    }
+}
+
 SendDecision Outbox::classifyResponse(const Response& response) const {
     if (httpConfig_.classify != nullptr) {
         return httpConfig_.classify(httpConfig_.classifyContext, response);
     }
     return defaultClassifyResponse(response);
+}
+
+bool Outbox::retryWouldReachMaxAttempts(const RetryState& retry) const {
+    if (httpConfig_.outbox.maxAttempts == 0) {
+        return true;
+    }
+    return retry.attempts + 1 >= httpConfig_.outbox.maxAttempts;
 }
 
 std::string Outbox::buildUrl(const std::string& path) const {
