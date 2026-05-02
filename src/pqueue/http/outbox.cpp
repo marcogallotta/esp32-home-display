@@ -85,7 +85,14 @@ SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const Re
         reinterpret_cast<const std::uint8_t*>(request.body.data()),
         request.body.size()
     );
+    notifyResponse(request, response);
     return {classifyResponse(response)};
+}
+
+void Outbox::notifyResponse(const RequestEnvelope& request, const Response& response) const {
+    if (httpConfig_.onResponse != nullptr) {
+        httpConfig_.onResponse(httpConfig_.responseContext, request, response);
+    }
 }
 
 SendDecision Outbox::classifyResponse(const Response& response) const {

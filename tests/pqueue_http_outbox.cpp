@@ -89,6 +89,23 @@ pqueue::http::Outbox makeHttpOutbox(
     return pqueue::http::Outbox(httpConfig, transport, fakeClockNow, &clock);
 }
 
+
+struct SeenResponse {
+    std::string path;
+    int statusCode = pqueue::http::kNoStatusCode;
+    pqueue::http::TransportError error = pqueue::http::TransportError::Unknown;
+    std::string body;
+};
+
+struct ResponseObserver {
+    std::vector<SeenResponse> seen;
+};
+
+void onResponse(void* context, const pqueue::http::RequestEnvelope& request, const pqueue::http::Response& response) {
+    auto* observer = static_cast<ResponseObserver*>(context);
+    observer->seen.push_back({request.path, response.statusCode, response.error, response.body});
+}
+
 struct CustomClassifier {
     pqueue::SendDecision decision = pqueue::SendDecision::Drop;
     std::vector<int> statuses;
@@ -205,6 +222,34 @@ TEST_CASE("pqueue http callback transport adapts a post callback") {
     REQUIRE_EQ(fake.posts.size(), 1U);
     CHECK_EQ(fake.posts[0].url, "https://example.test/api");
     CHECK_EQ(fake.posts[0].body, "body");
+#endif
+}
+
+
+TEST_CASE("pqueue http outbox calls response callback with request and response") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({201, pqueue::http::TransportError::None, "{\"status\":\"created\"}"});
+    FakeClock clock;
+    ResponseObserver observer;
+
+    pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.retryDelayMs = 1000;
+    httpConfig.baseUrl = "https://example.test";
+    httpConfig.responseContext = &observer;
+    httpConfig.onResponse = onResponse;
+
+    pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
+    const auto result = outbox.submitPost("/reading", "body");
+
+    CHECK(result.status == pqueue::SubmitStatus::Sent);
+    REQUIRE_EQ(observer.seen.size(), 1U);
+    CHECK_EQ(observer.seen[0].path, "/reading");
+    CHECK_EQ(observer.seen[0].statusCode, 201);
+    CHECK(observer.seen[0].error == pqueue::http::TransportError::None);
+    CHECK_EQ(observer.seen[0].body, "{\"status\":\"created\"}");
 #endif
 }
 

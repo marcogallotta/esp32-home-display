@@ -12,10 +12,13 @@ void ensureCurlGlobalInit() {
     (void)initResult;
 }
 
-std::size_t discardResponseBody(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
-    (void)ptr;
-    (void)userdata;
-    return size * nmemb;
+std::size_t appendResponseBody(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
+    const std::size_t byteCount = size * nmemb;
+    if (userdata != nullptr && ptr != nullptr) {
+        auto* responseBody = static_cast<std::string*>(userdata);
+        responseBody->append(ptr, byteCount);
+    }
+    return byteCount;
 }
 
 TransportError mapCurlError(CURLcode code) {
@@ -100,7 +103,9 @@ Response PosixCurlTransport::post(
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, reinterpret_cast<const char*>(body));
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(bodySize));
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(config_.common.timeoutMs));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discardResponseBody);
+    std::string responseBody;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponseBody);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, config_.common.followRedirects ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, config_.common.allowInsecureTls ? 0L : 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, config_.common.allowInsecureTls ? 0L : 2L);
@@ -124,7 +129,7 @@ Response PosixCurlTransport::post(
     curl_slist_free_all(curlHeaders);
     curl_easy_cleanup(curl);
 
-    return {static_cast<int>(statusCode), mapCurlError(result)};
+    return {static_cast<int>(statusCode), mapCurlError(result), responseBody};
 }
 
 } // namespace pqueue::http

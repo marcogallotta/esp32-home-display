@@ -5,6 +5,7 @@
 #include <string>
 
 #include "pqueue/outbox.h"
+#include "pqueue/http/request_envelope.h"
 
 
 namespace pqueue::http {
@@ -26,8 +27,13 @@ enum class TransportError {
 };
 
 struct Response {
+    Response() = default;
+    Response(int statusCode, TransportError error, std::string body = {})
+        : statusCode(statusCode), error(error), body(body) {}
+
     int statusCode = kNoStatusCode;
     TransportError error = TransportError::Unknown;
+    std::string body;
 };
 
 struct TransportConfig {
@@ -78,6 +84,7 @@ private:
 };
 
 using ClassifyResponseCallback = SendDecision (*)(void* context, const Response& response);
+using ResponseCallback = void (*)(void* context, const RequestEnvelope& request, const Response& response);
 
 struct Config {
     pqueue::Config queue;
@@ -89,6 +96,9 @@ struct Config {
 
     void* classifyContext = nullptr;
     ClassifyResponseCallback classify = nullptr;
+
+    void* responseContext = nullptr;
+    ResponseCallback onResponse = nullptr;
 };
 
 class Outbox {
@@ -108,6 +118,7 @@ public:
 private:
     static SendResult sendStoredRequest(void* context, const std::string& encodedRequest, const RetryState& retry);
     SendResult sendStoredRequest(const std::string& encodedRequest, const RetryState& retry);
+    void notifyResponse(const RequestEnvelope& request, const Response& response) const;
     SendDecision classifyResponse(const Response& response) const;
     std::string buildUrl(const std::string& path) const;
 
