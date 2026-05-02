@@ -1,15 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
 #include "../config.h"
 #include "../sensor_readings.h"
 #include "backend_result.h"
-#include "buffer.h"
-#include "client.h"
-#include "poster.h"
-#include "record_store.h"
+#include "types.h"
 
 namespace api {
 
@@ -34,16 +32,20 @@ struct WriteResult {
     WriteBufferReason bufferReason = WriteBufferReason::None;
 };
 
-struct BufferedClientDesktopPqueue;
+struct BufferDrainResult {
+    int attempted = 0;
+    int sent = 0;
+    int dropped = 0;
+    bool blockedByRetryableFailure = false;
+    bool notDueYet = false;
+};
+
+struct BufferedClientPqueue;
 
 class BufferedClient {
 public:
-    BufferedClient(
-        const ::Config& config,
-        BufferState& buffer,
-        const ApiPoster& poster,
-        RecordStore& store
-    );
+    explicit BufferedClient(const ::Config& config);
+    ~BufferedClient();
 
     WriteResult postSwitchbotReading(
         const SensorIdentity& identity,
@@ -57,18 +59,10 @@ public:
 
     WriteResult send(ApiRequest request);
     BufferDrainResult drainPending(std::uint64_t nowMs);
-    ~BufferedClient();
 
 private:
-    void delayNextDrain(std::uint64_t nowMs);
     const ::Config& config_;
-    BufferState& buffer_;
-    const ApiPoster& poster_;
-    RecordStore& store_;
-    std::uint64_t nextDrainAllowedAtMs_ = 0;
-#ifndef ARDUINO
-    std::unique_ptr<BufferedClientDesktopPqueue> desktopPqueue_;
-#endif
+    std::unique_ptr<BufferedClientPqueue> pqueue_;
 };
 
 } // namespace api

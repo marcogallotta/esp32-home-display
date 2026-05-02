@@ -6,11 +6,7 @@
 #include <iostream>
 #include <string>
 
-#include "api/buffer.h"
 #include "api/buffered_client.h"
-#include "api/client.h"
-#include "api/disk_buffer.h"
-#include "api/record_file_store.h"
 #include "api/state.h"
 #include "config.h"
 #include "log.h"
@@ -203,18 +199,17 @@ void logWrite(const std::string& label, const api::WriteResult& result) {
     logLine(LogLevel::Info, message);
 }
 
-void logDrain(const api::BufferDrainResult& result, const api::BufferState& buffer) {
+void logDrain(const api::BufferDrainResult& result) {
     logLine(
         LogLevel::Info,
-        "Harness buffer state: attempted " + std::to_string(result.attempted) +
+        "Harness pqueue state: attempted " + std::to_string(result.attempted) +
         ", sent " + std::to_string(result.sent) +
         ", dropped " + std::to_string(result.dropped) +
         ", blocked " + std::to_string(result.blockedByRetryableFailure ? 1 : 0) +
-        ", drainNotDue " + std::to_string(result.notDueYet ? 1 : 0) +
-        ", RAM " + std::to_string(buffer.ramQueue.size()) +
-        ", disk " + std::to_string(buffer.disk.count)
+        ", drainNotDue " + std::to_string(result.notDueYet ? 1 : 0)
     );
 }
+
 
 bool shouldSendXiaomi(const Options& options, std::uint64_t seq) {
     if (options.switchbotOnly) {
@@ -256,27 +251,9 @@ int main(int argc, char** argv) {
         config.api.apiKey = options.apiKey;
     }
 
-    api::record_file_store::setBasePath("spool_harness");
-
-    if (!api::record_file_store::mount()) {
-        logLine(LogLevel::Error, "Failed to mount record file store");
-        return 1;
-    }
-
     platform::initTime(config);
 
-    api::State apiState;
-    auto& store = api::record_file_store::defaultStore();
-    api::disk_buffer::load(apiState.buffer.disk, store);
-    logLine(
-        LogLevel::Info,
-        "API disk buffer loaded: head " + std::to_string(apiState.buffer.disk.head) +
-        ", tail " + std::to_string(apiState.buffer.disk.tail) +
-        ", count " + std::to_string(apiState.buffer.disk.count)
-    );
-
-    api::Client apiClient(config);
-    api::BufferedClient bufferedClient(config, apiState.buffer, apiClient, store);
+    api::BufferedClient bufferedClient(config);
 
     const SensorIdentity sb = switchbotIdentity(config);
     const SensorIdentity xm = xiaomiIdentity(config);
@@ -289,7 +266,7 @@ int main(int argc, char** argv) {
         ", intervalMs=" + std::to_string(options.intervalMs) +
         ", count=" + std::to_string(options.count) +
         ", drainOnly=" + std::to_string(options.drainOnly ? 1 : 0) +
-        ", initialDisk=" + std::to_string(apiState.buffer.disk.count)
+        ", pqueue=1"
     );
 
     std::uint64_t seq = 0;
@@ -301,7 +278,7 @@ int main(int argc, char** argv) {
         }
 
         const api::BufferDrainResult drain = bufferedClient.drainPending(nowMs);
-        logDrain(drain, apiState.buffer);
+        logDrain(drain);
 
         if (!options.drainOnly) {
             if (!hasValidTime) {

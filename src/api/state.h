@@ -6,7 +6,6 @@
 #include "../config.h"
 #include "../sensor_readings.h"
 #include "../state.h"
-#include "buffer.h"
 
 namespace api {
 
@@ -28,7 +27,6 @@ struct XiaomiApiState {
 struct State {
     SwitchbotApiState switchbot;
     XiaomiApiState xiaomi;
-    BufferState buffer;
 };
 
 void initState(const ::State& appState, State& apiState);

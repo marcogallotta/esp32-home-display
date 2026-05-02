@@ -27,13 +27,9 @@ COV_TEST_TARGET := $(COV_BUILD_DIR)/tests
 COMMON_SRC := \
 	third_party/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
-	src/api/buffer.cpp \
 	src/api/buffered_client.cpp \
-	src/api/client.cpp \
-	src/api/disk_buffer.cpp \
 	src/api/dropped_log.cpp \
 	src/api/payloads.cpp \
-	src/api/record_file_store.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
 	src/ble/desktop.cpp \
@@ -75,10 +71,7 @@ MAIN_TEST_API_SRC := \
 	$(COMMON_SRC)
 
 TEST_SRC := \
-	tests/api_buffer.cpp \
-	tests/api_disk_buffer.cpp \
 	tests/api_payloads.cpp \
-	tests/record_file_store.cpp \
 	tests/api_sensor_write_policy.cpp \
 	tests/config.cpp \
 	tests/main.cpp \

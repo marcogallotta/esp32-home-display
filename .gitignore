@@ -4,6 +4,7 @@
 .vscode
 spool
 spool_harness
+pqueue_api_spool/
 pqueue_test_spool/
 pqueue_outbox_test_spool/
 pqueue_http_outbox_test_spool/

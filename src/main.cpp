@@ -10,9 +10,6 @@
 #include <utility>
 
 #include "api/buffered_client.h"
-#include "api/client.h"
-#include "api/disk_buffer.h"
-#include "api/record_file_store.h"
 #include "api/state.h"
 #include "api_sync.h"
 #include "ble/scanner.h"
@@ -69,7 +66,6 @@ struct AppContext {
     State previousState;
 
     api::State apiState;
-    api::Client apiClient;
     api::BufferedClient bufferedApiClient;
 
     UiState currentUiState;
@@ -84,8 +80,7 @@ struct AppContext {
 
     explicit AppContext(const Config& cfg)
         : config(cfg),
-          apiClient(config),
-          bufferedApiClient(config, apiState.buffer, apiClient, api::record_file_store::defaultStore()),
+          bufferedApiClient(config),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
           bleScanner([this](const ble::AdvertisementEvent& event) {
@@ -116,17 +111,7 @@ void initStateStorage(AppContext& app) {
 
     api::initState(app.currentState, app.apiState);
 
-#ifdef ARDUINO
-    api::disk_buffer::load(app.apiState.buffer.disk, api::record_file_store::defaultStore());
-    logLine(
-        LogLevel::Info,
-        "API disk buffer loaded: head " + std::to_string(app.apiState.buffer.disk.head) +
-        ", tail " + std::to_string(app.apiState.buffer.disk.tail) +
-        ", count " + std::to_string(app.apiState.buffer.disk.count)
-    );
-#else
-    logLine(LogLevel::Info, "API desktop buffer uses pqueue HTTP outbox");
-#endif
+    logLine(LogLevel::Info, "API uses pqueue HTTP outbox");
 }
 
 void initCallbacks(AppContext& app) {
