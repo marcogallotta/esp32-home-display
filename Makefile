@@ -44,6 +44,8 @@ COMMON_SRC := \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
 	src/pqueue/envelope.cpp \
+	src/pqueue/http/outbox.cpp \
+	src/pqueue/http/request_envelope.cpp \
 	src/pqueue/file_store.cpp \
 	src/pqueue/outbox.cpp \
 	src/pqueue/queue.cpp \
@@ -77,6 +79,8 @@ TEST_SRC := \
 	tests/main.cpp \
 	tests/pqueue.cpp \
 	tests/pqueue_envelope.cpp \
+	tests/pqueue_http_outbox.cpp \
+	tests/pqueue_http_request_envelope.cpp \
 	tests/pqueue_outbox.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
