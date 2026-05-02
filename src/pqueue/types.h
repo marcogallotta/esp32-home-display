@@ -9,6 +9,7 @@ namespace pqueue {
 using Record = std::string;
 
 struct Config {
+    std::string basePath = "pqueue_spool";
     std::uint32_t diskReserveBytes = 256 * 1024;
     std::size_t maxRecordBytes = 4096;
     // TODO: make full-queue behavior configurable instead of always rejecting newest.

@@ -22,8 +22,9 @@ void cleanSpool() {
 TEST_CASE("pqueue starts empty") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::FileStore store(kSpoolDir.string());
-    pqueue::Queue queue(store);
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    pqueue::Queue queue(config);
 
     std::string out;
     CHECK_FALSE(queue.peek(out));
@@ -34,8 +35,9 @@ TEST_CASE("pqueue starts empty") {
 TEST_CASE("pqueue preserves FIFO order") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::FileStore store(kSpoolDir.string());
-    pqueue::Queue queue(store);
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("first"));
     REQUIRE(queue.enqueue("second"));
@@ -55,14 +57,16 @@ TEST_CASE("pqueue survives reopening from disk") {
 #ifndef ARDUINO
     cleanSpool();
     {
-        pqueue::FileStore store(kSpoolDir.string());
-        pqueue::Queue queue(store);
+        pqueue::Config config;
+        config.basePath = kSpoolDir.string();
+        pqueue::Queue queue(config);
         REQUIRE(queue.enqueue("one"));
         REQUIRE(queue.enqueue("two"));
     }
 
-    pqueue::FileStore reopenedStore(kSpoolDir.string());
-    pqueue::Queue reopened(reopenedStore);
+    pqueue::Config reopenedConfig;
+    reopenedConfig.basePath = kSpoolDir.string();
+    pqueue::Queue reopened(reopenedConfig);
 
     std::string out;
     REQUIRE(reopened.peek(out));
@@ -74,8 +78,9 @@ TEST_CASE("pqueue survives reopening from disk") {
 TEST_CASE("pqueue rewriteFront updates the front record without popping it") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::FileStore store(kSpoolDir.string());
-    pqueue::Queue queue(store);
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("retry=0"));
     REQUIRE(queue.rewriteFront("retry=1"));
@@ -90,10 +95,10 @@ TEST_CASE("pqueue rejects records over the configured max size") {
 #ifndef ARDUINO
     cleanSpool();
     pqueue::Config config;
+    config.basePath = kSpoolDir.string();
     config.maxRecordBytes = 4;
     config.diskReserveBytes = 0;
-    pqueue::FileStore store(kSpoolDir.string());
-    pqueue::Queue queue(store, config);
+    pqueue::Queue queue(config);
 
     CHECK_FALSE(queue.enqueue("12345"));
     CHECK_EQ(queue.stats().count, 0U);

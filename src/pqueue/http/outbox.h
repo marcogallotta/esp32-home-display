@@ -5,8 +5,7 @@
 #include <string>
 
 #include "pqueue/outbox.h"
-#include "pqueue/queue.h"
-#include "pqueue/types.h"
+
 
 namespace pqueue::http {
 
@@ -41,6 +40,9 @@ using PostCallback = Response (*)(
 using ClassifyResponseCallback = SendDecision (*)(void* context, const Response& response);
 
 struct Config {
+    pqueue::Config queue;
+    pqueue::OutboxConfig outbox;
+
     const char* baseUrl = "";
     const Header* headers = nullptr;
     std::size_t headerCount = 0;
@@ -54,9 +56,8 @@ struct Config {
 
 class Outbox {
 public:
+    // TODO: add an advanced constructor for dependency-injected core Outbox/storage in tests or custom backends.
     Outbox(
-        Queue& queue,
-        pqueue::OutboxConfig outboxConfig,
         Config httpConfig,
         ClockCallback clock,
         void* clockContext

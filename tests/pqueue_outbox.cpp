@@ -54,16 +54,17 @@ pqueue::OutboxConfig testOutboxConfig() {
 }
 
 pqueue::Outbox makeOutbox(
-    pqueue::Queue& queue,
     FakeSender& sender,
     FakeClock& clock,
-    pqueue::OutboxConfig config
+    pqueue::OutboxConfig outboxConfig
 ) {
-    return pqueue::Outbox(queue, config, fakeSend, &sender, fakeClockNow, &clock);
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kOutboxSpoolDir.string();
+    return pqueue::Outbox(queueConfig, outboxConfig, fakeSend, &sender, fakeClockNow, &clock);
 }
 
-pqueue::Outbox makeOutbox(pqueue::Queue& queue, FakeSender& sender, FakeClock& clock) {
-    return makeOutbox(queue, sender, clock, testOutboxConfig());
+pqueue::Outbox makeOutbox(FakeSender& sender, FakeClock& clock) {
+    return makeOutbox(sender, clock, testOutboxConfig());
 }
 #endif
 
@@ -72,12 +73,10 @@ pqueue::Outbox makeOutbox(pqueue::Queue& queue, FakeSender& sender, FakeClock& c
 TEST_CASE("pqueue outbox sends immediately when queue is empty") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     FakeClock clock;
 
-    auto outbox = makeOutbox(queue, sender, clock);
+    auto outbox = makeOutbox(sender, clock);
     const auto result = outbox.submit("fresh");
 
     CHECK(result.status == pqueue::SubmitStatus::Sent);
@@ -90,13 +89,11 @@ TEST_CASE("pqueue outbox sends immediately when queue is empty") {
 TEST_CASE("pqueue outbox queues retryable fresh send failure") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
 
-    auto outbox = makeOutbox(queue, sender, clock);
+    auto outbox = makeOutbox(sender, clock);
     const auto result = outbox.submit("fresh");
 
     CHECK(result.status == pqueue::SubmitStatus::Queued);
@@ -107,13 +104,11 @@ TEST_CASE("pqueue outbox queues retryable fresh send failure") {
 TEST_CASE("pqueue outbox preserves FIFO when backlog exists") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
 
-    auto outbox = makeOutbox(queue, sender, clock);
+    auto outbox = makeOutbox(sender, clock);
     REQUIRE(outbox.submit("first").status == pqueue::SubmitStatus::Queued);
     CHECK(outbox.submit("second").status == pqueue::SubmitStatus::Queued);
     CHECK_EQ(sender.payloads.size(), 1U);
@@ -141,13 +136,11 @@ TEST_CASE("pqueue outbox preserves FIFO when backlog exists") {
 TEST_CASE("pqueue outbox respects retry delay") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
 
-    auto outbox = makeOutbox(queue, sender, clock);
+    auto outbox = makeOutbox(sender, clock);
     REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
 
     clock.nowMs += 500;
@@ -162,8 +155,6 @@ TEST_CASE("pqueue outbox respects retry delay") {
 TEST_CASE("pqueue outbox drops after max attempts") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
@@ -171,7 +162,7 @@ TEST_CASE("pqueue outbox drops after max attempts") {
     config.maxAttempts = 2;
     config.retryDelayMs = 1000;
 
-    auto outbox = makeOutbox(queue, sender, clock, config);
+    auto outbox = makeOutbox(sender, clock, config);
     REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
 
     clock.nowMs += 1000;
@@ -186,13 +177,14 @@ TEST_CASE("pqueue outbox drops after max attempts") {
 TEST_CASE("pqueue outbox drops corrupt front records") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kOutboxSpoolDir.string();
+    pqueue::Queue queue(queueConfig);
     REQUIRE(queue.enqueue("not an outbox envelope"));
     FakeSender sender;
     FakeClock clock;
 
-    auto outbox = makeOutbox(queue, sender, clock);
+    auto outbox = makeOutbox(sender, clock);
     auto drain = outbox.drain();
 
     CHECK_EQ(drain.corruptDropped, 1U);
@@ -204,14 +196,12 @@ TEST_CASE("pqueue outbox drops corrupt front records") {
 TEST_CASE("pqueue outbox keeps retry cooldown in RAM only") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
 
     {
-        auto outbox = makeOutbox(queue, sender, clock);
+        auto outbox = makeOutbox(sender, clock);
         REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
 
         clock.nowMs += 500;
@@ -220,7 +210,7 @@ TEST_CASE("pqueue outbox keeps retry cooldown in RAM only") {
     }
 
     sender.decisions.push_back(pqueue::SendDecision::Sent);
-    auto restarted = makeOutbox(queue, sender, clock);
+    auto restarted = makeOutbox(sender, clock);
     auto drain = restarted.drain();
 
     CHECK_FALSE(drain.notDue);
@@ -232,15 +222,13 @@ TEST_CASE("pqueue outbox keeps retry cooldown in RAM only") {
 TEST_CASE("pqueue outbox passes persisted attempts to sender") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
     pqueue::OutboxConfig config = testOutboxConfig();
     config.retryDelayMs = 0;
 
-    auto outbox = makeOutbox(queue, sender, clock, config);
+    auto outbox = makeOutbox(sender, clock, config);
     REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
 
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
@@ -261,8 +249,6 @@ TEST_CASE("pqueue outbox passes persisted attempts to sender") {
 TEST_CASE("pqueue outbox throttles drain attempts") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
@@ -270,7 +256,7 @@ TEST_CASE("pqueue outbox throttles drain attempts") {
     config.retryDelayMs = 0;
     config.maxDrainAttemptsPerSecond = 1;
 
-    auto outbox = makeOutbox(queue, sender, clock, config);
+    auto outbox = makeOutbox(sender, clock, config);
     REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
 
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
@@ -285,8 +271,6 @@ TEST_CASE("pqueue outbox throttles drain attempts") {
 TEST_CASE("pqueue outbox allows first drain immediately") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::FileStore store(kOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeSender sender;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
@@ -295,7 +279,7 @@ TEST_CASE("pqueue outbox allows first drain immediately") {
     config.retryDelayMs = 0;
     config.maxDrainAttemptsPerSecond = 1;
 
-    auto outbox = makeOutbox(queue, sender, clock, config);
+    auto outbox = makeOutbox(sender, clock, config);
     REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
 
     sender.decisions.push_back(pqueue::SendDecision::Sent);

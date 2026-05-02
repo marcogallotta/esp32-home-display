@@ -65,24 +65,22 @@ pqueue::http::Response fakePost(
 }
 
 pqueue::http::Outbox makeHttpOutbox(
-    pqueue::Queue& queue,
     FakeHttpTransport& transport,
     FakeClock& clock,
     const pqueue::http::Header* headers = nullptr,
     std::size_t headerCount = 0
 ) {
-    pqueue::OutboxConfig outboxConfig;
-    outboxConfig.retryDelayMs = 1000;
-    outboxConfig.maxDrainAttemptsPerSecond = 1;
-
     pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.retryDelayMs = 1000;
+    httpConfig.outbox.maxDrainAttemptsPerSecond = 1;
     httpConfig.baseUrl = "https://example.test/api";
     httpConfig.headers = headers;
     httpConfig.headerCount = headerCount;
     httpConfig.post = fakePost;
     httpConfig.postContext = &transport;
 
-    return pqueue::http::Outbox(queue, outboxConfig, httpConfig, fakeClockNow, &clock);
+    return pqueue::http::Outbox(httpConfig, fakeClockNow, &clock);
 }
 
 struct CustomClassifier {
@@ -102,13 +100,11 @@ pqueue::SendDecision customClassify(void* context, const pqueue::http::Response&
 TEST_CASE("pqueue http outbox posts immediately when queue is empty") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
-    pqueue::FileStore store(kHttpOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeHttpTransport transport;
     FakeClock clock;
     pqueue::http::Header headers[] = {{"X-API-Key", "secret"}, {"Content-Type", "application/json"}};
 
-    auto outbox = makeHttpOutbox(queue, transport, clock, headers, 2);
+    auto outbox = makeHttpOutbox(transport, clock, headers, 2);
     const auto result = outbox.submitPost("/switchbot/reading", "{\"ok\":true}");
 
     CHECK(result.status == pqueue::SubmitStatus::Sent);
@@ -125,13 +121,11 @@ TEST_CASE("pqueue http outbox posts immediately when queue is empty") {
 TEST_CASE("pqueue http outbox queues retryable response and drains later") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
-    pqueue::FileStore store(kHttpOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeHttpTransport transport;
     transport.responses.push_back({503, pqueue::http::TransportError::None});
     FakeClock clock;
 
-    auto outbox = makeHttpOutbox(queue, transport, clock);
+    auto outbox = makeHttpOutbox(transport, clock);
     auto submit = outbox.submitPost("/xiaomi/reading", "body");
     CHECK(submit.status == pqueue::SubmitStatus::Queued);
     CHECK_EQ(outbox.stats().count, 1U);
@@ -150,13 +144,11 @@ TEST_CASE("pqueue http outbox queues retryable response and drains later") {
 TEST_CASE("pqueue http outbox drops permanent status") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
-    pqueue::FileStore store(kHttpOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeHttpTransport transport;
     transport.responses.push_back({422, pqueue::http::TransportError::None});
     FakeClock clock;
 
-    auto outbox = makeHttpOutbox(queue, transport, clock);
+    auto outbox = makeHttpOutbox(transport, clock);
     auto submit = outbox.submitPost("/bad", "body");
 
     CHECK(submit.status == pqueue::SubmitStatus::Dropped);
@@ -167,25 +159,22 @@ TEST_CASE("pqueue http outbox drops permanent status") {
 TEST_CASE("pqueue http outbox allows classifier override") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
-    pqueue::FileStore store(kHttpOutboxSpoolDir.string());
-    pqueue::Queue queue(store);
     FakeHttpTransport transport;
     transport.responses.push_back({422, pqueue::http::TransportError::None});
     FakeClock clock;
     CustomClassifier classifier;
     classifier.decision = pqueue::SendDecision::RetryLater;
 
-    pqueue::OutboxConfig outboxConfig;
-    outboxConfig.retryDelayMs = 1000;
-
     pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.retryDelayMs = 1000;
     httpConfig.baseUrl = "https://example.test";
     httpConfig.post = fakePost;
     httpConfig.postContext = &transport;
     httpConfig.classify = customClassify;
     httpConfig.classifyContext = &classifier;
 
-    pqueue::http::Outbox outbox(queue, outboxConfig, httpConfig, fakeClockNow, &clock);
+    pqueue::http::Outbox outbox(httpConfig, fakeClockNow, &clock);
     auto submit = outbox.submitPost("/bad", "body");
 
     CHECK(submit.status == pqueue::SubmitStatus::Queued);

@@ -7,13 +7,13 @@
 namespace pqueue {
 
 Outbox::Outbox(
-    Queue& queue,
+    Config queueConfig,
     OutboxConfig config,
     SendCallback send,
     void* sendContext,
     ClockCallback clock,
     void* clockContext
-) : queue_(queue),
+) : queue_(queueConfig),
     config_(config),
     send_(send),
     sendContext_(sendContext),

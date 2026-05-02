@@ -16,13 +16,11 @@ bool isRetryableStatus(int statusCode) {
 } // namespace
 
 Outbox::Outbox(
-    Queue& queue,
-    pqueue::OutboxConfig outboxConfig,
     Config httpConfig,
     ClockCallback clock,
     void* clockContext
 ) : httpConfig_(httpConfig),
-    outbox_(queue, outboxConfig, sendStoredRequest, this, clock, clockContext) {}
+    outbox_(httpConfig.queue, httpConfig.outbox, sendStoredRequest, this, clock, clockContext) {}
 
 pqueue::SubmitResult Outbox::submitPost(const std::string& path, const std::string& body) {
     RequestEnvelope request;

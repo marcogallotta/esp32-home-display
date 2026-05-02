@@ -65,10 +65,11 @@ struct DrainResult {
 
 // Generic store-and-forward lifecycle over Queue.
 // This class is transport-agnostic: no HTTP, JSON, API keys, or app-specific logging.
+// TODO: add an advanced constructor for dependency-injected Queue/storage in tests or custom backends.
 class Outbox {
 public:
     Outbox(
-        Queue& queue,
+        Config queueConfig,
         OutboxConfig config,
         SendCallback send,
         void* sendContext,
@@ -88,7 +89,7 @@ private:
     bool drainRateAllows(std::uint64_t nowMs) const;
     std::uint64_t drainIntervalMs() const;
 
-    Queue& queue_;
+    Queue queue_;
     OutboxConfig config_;
     SendCallback send_ = nullptr;
     void* sendContext_ = nullptr;

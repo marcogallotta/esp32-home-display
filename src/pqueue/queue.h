@@ -18,7 +18,7 @@ namespace pqueue {
 // with a cheaper metadata/sidecar strategy.
 class Queue {
 public:
-    Queue(FileStore& store, Config config = Config{});
+    explicit Queue(Config config = Config{});
 
     bool enqueue(const std::string& record);
     bool peek(std::string& out);
@@ -29,8 +29,8 @@ public:
 private:
     bool ensureLoaded();
 
-    FileStore& store_;
     Config config_;
+    FileStore store_;
     FileStoreIndex index_;
     bool loaded_ = false;
 };
