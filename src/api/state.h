@@ -13,7 +13,7 @@ struct SwitchbotApiState {
     std::vector<SwitchbotReading> lastSent;
 };
 
-struct XiaomiBufferedState {
+struct PendingXiaomiState {
     bool active = false;
     XiaomiReading reading;
     std::int64_t openedAtEpochS = 0;
@@ -21,7 +21,7 @@ struct XiaomiBufferedState {
 
 struct XiaomiApiState {
     std::vector<XiaomiReading> lastSent;
-    std::vector<XiaomiBufferedState> pending;
+    std::vector<PendingXiaomiState> pending;
 };
 
 struct State {

@@ -73,7 +73,7 @@ void initState(const ::State& appState, State& apiState) {
     );
     apiState.xiaomi.pending.assign(
         appState.xiaomiSensors.size(),
-        XiaomiBufferedState{}
+        PendingXiaomiState{}
     );
 }
 

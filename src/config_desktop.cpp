@@ -25,8 +25,7 @@ bool readTextFile(const std::string& path, std::string& out) {
 }
 
 bool loadPemFiles(Config& config) {
-    return readTextFile(config.api.pemFile, config.api.pem) &&
-           readTextFile(config.forecast.openmeteoPemFile, config.forecast.openmeteoPem);
+    return readTextFile(config.forecast.openmeteoPemFile, config.forecast.openmeteoPem);
 }
 
 } // namespace

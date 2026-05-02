@@ -64,6 +64,7 @@ DynamicJsonDocument exampleWithoutOptionalFields() {
     auto doc = exampleConfig();
 
     removePath(doc, "forecast", "update_interval_minutes");
+    removePath(doc, "api", "outbox");
     removePath(doc, "api", "buffer");
     removePath(doc, "salah", "dst_rule");
     removePath(doc, "salah", "asr_makruh_minutes");
@@ -109,10 +110,10 @@ void checkDefaults(const Config& config) {
     const Config defaults{};
 
     CHECK_EQ(config.forecast.updateIntervalMinutes, defaults.forecast.updateIntervalMinutes);
-    CHECK_EQ(config.api.buffer.inMemory, defaults.api.buffer.inMemory);
-    CHECK_EQ(config.api.buffer.diskReserveBytes, defaults.api.buffer.diskReserveBytes);
-    CHECK_EQ(config.api.buffer.drainRateCap, defaults.api.buffer.drainRateCap);
-    CHECK_EQ(config.api.buffer.drainRateTickS, defaults.api.buffer.drainRateTickS);
+    CHECK_EQ(config.api.outbox.inMemory, defaults.api.outbox.inMemory);
+    CHECK_EQ(config.api.outbox.diskReserveBytes, defaults.api.outbox.diskReserveBytes);
+    CHECK_EQ(config.api.outbox.drainRateCap, defaults.api.outbox.drainRateCap);
+    CHECK_EQ(config.api.outbox.drainRateTickS, defaults.api.outbox.drainRateTickS);
     CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
     CHECK_EQ(config.salah.asrMakruhMinutes, defaults.salah.asrMakruhMinutes);
     CHECK_EQ(config.salah.hanafiAsr, defaults.salah.hanafiAsr);
@@ -206,7 +207,7 @@ TEST_CASE("config validates API values") {
         }
     }
 
-    SUBCASE("API buffer values must be ints") {
+    SUBCASE("API outbox values must be ints") {
         for (const char* key : {
                  "in_memory",
                  "disk_reserve_bytes",
@@ -215,29 +216,30 @@ TEST_CASE("config validates API values") {
              }) {
             CAPTURE(key);
             auto doc = exampleConfig();
-            doc["api"]["buffer"][key] = "1";
+            doc["api"]["outbox"][key] = "1";
             expectInvalid(doc);
         }
     }
 
-    SUBCASE("API buffer values must be positive") {
+    SUBCASE("API outbox values must be positive") {
         for (const char* key : {"in_memory", "drain_rate_cap", "drain_rate_tick_s"}) {
             CAPTURE(key);
             auto doc = exampleConfig();
-            doc["api"]["buffer"][key] = 0;
+            doc["api"]["outbox"][key] = 0;
             expectInvalid(doc);
         }
     }
 
-    SUBCASE("API disk buffer values use defaults when omitted") {
+    SUBCASE("API disk outbox values use defaults when omitted") {
         auto doc = exampleConfig();
+        doc["api"]["outbox"].remove("disk_reserve_bytes");
         doc["api"]["buffer"].remove("disk_reserve_bytes");
 
         Config config;
         REQUIRE(parses(doc, config));
 
         const Config defaults{};
-        CHECK_EQ(config.api.buffer.diskReserveBytes, defaults.api.buffer.diskReserveBytes);
+        CHECK_EQ(config.api.outbox.diskReserveBytes, defaults.api.outbox.diskReserveBytes);
     }
 }
 

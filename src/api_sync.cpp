@@ -7,7 +7,7 @@
 #include "log.h"
 
 namespace {
-constexpr std::int64_t kXiaomiBufferWindowSeconds = 60;
+constexpr std::int64_t kXiaomiPendingWindowSeconds = 60;
 
 bool isAccepted(api::BackendWriteResult result) {
     return result == api::BackendWriteResult::Created ||
@@ -34,12 +34,12 @@ const char* writeStatusName(api::WriteStatus status) {
     switch (status) {
         case api::WriteStatus::Sent:
             return "sent";
-        case api::WriteStatus::Buffered:
-            return "buffered";
+        case api::WriteStatus::Queued:
+            return "queued";
         case api::WriteStatus::DroppedPermanent:
             return "dropped permanently";
-        case api::WriteStatus::DroppedBufferFull:
-            return "dropped because buffer is full";
+        case api::WriteStatus::DroppedQueueFull:
+            return "dropped because queue is full";
     }
 
     return "unknown";
@@ -63,7 +63,7 @@ const char* backendWriteResultName(api::BackendWriteResult result) {
 }
 
 bool shouldLogApiWriteResult(const api::WriteResult& response) {
-    if (response.status == api::WriteStatus::Buffered) {
+    if (response.status == api::WriteStatus::Queued) {
         return false;
     }
 
@@ -81,7 +81,7 @@ void logApiWriteResult(
 
     const LogLevel level =
         response.status == api::WriteStatus::DroppedPermanent ||
-        response.status == api::WriteStatus::DroppedBufferFull ||
+        response.status == api::WriteStatus::DroppedQueueFull ||
         response.backendResult == api::BackendWriteResult::Conflict ||
         response.backendResult == api::BackendWriteResult::Failed
             ? LogLevel::Warn
@@ -121,15 +121,15 @@ bool hasCompleteXiaomiReading(const XiaomiReading& reading) {
            reading.conductivityUsCm.has_value();
 }
 
-bool sameBufferedData(const XiaomiReading& a, const XiaomiReading& b) {
+bool samePendingData(const XiaomiReading& a, const XiaomiReading& b) {
     return a.temperatureC == b.temperatureC &&
            a.moisturePct == b.moisturePct &&
            a.lux == b.lux &&
            a.conductivityUsCm == b.conductivityUsCm;
 }
 
-void resetPending(api::XiaomiBufferedState& pending) {
-    pending = api::XiaomiBufferedState{};
+void resetPending(api::PendingXiaomiState& pending) {
+    pending = api::PendingXiaomiState{};
 }
 
 } // namespace
@@ -138,7 +138,7 @@ void syncApiState(
     const Config& config,
     const State& appState,
     api::State& apiState,
-    api::BufferedClient& client
+    api::OutboxClient& client
 ) {
     for (std::size_t i = 0; i < appState.switchbotSensors.size(); ++i) {
         const auto& sensor = appState.switchbotSensors[i];
@@ -159,7 +159,7 @@ void syncApiState(
 
         logApiWriteResult("SwitchBot", sensor.identity, response);
 
-        if (response.status == api::WriteStatus::Buffered) {
+        if (response.status == api::WriteStatus::Queued) {
             lastSent = current;
             continue;
         }
@@ -196,7 +196,7 @@ void syncApiState(
                 pending.openedAtEpochS = *current.lastSeenEpochS;
             }
 
-            if (!sameBufferedData(current, pending.reading)) {
+            if (!samePendingData(current, pending.reading)) {
                 pending.reading = current;
             }
         }
@@ -207,7 +207,7 @@ void syncApiState(
 
         const bool flushDueToComplete = hasCompleteXiaomiReading(pending.reading);
         const bool flushDueToTimeout =
-            now >= pending.openedAtEpochS + kXiaomiBufferWindowSeconds;
+            now >= pending.openedAtEpochS + kXiaomiPendingWindowSeconds;
 
         if (!flushDueToComplete && !flushDueToTimeout) {
             continue;
@@ -224,7 +224,7 @@ void syncApiState(
 
         logApiWriteResult("Xiaomi", sensor.identity, response);
 
-        if (response.status == api::WriteStatus::Buffered) {
+        if (response.status == api::WriteStatus::Queued) {
             lastSent = pending.reading;
             resetPending(pending);
             continue;

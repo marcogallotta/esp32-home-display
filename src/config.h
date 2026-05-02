@@ -12,7 +12,7 @@ struct ForecastConfig {
     int updateIntervalMinutes = 30;
 };
 
-using ApiBufferConfig = api::Config;
+using ApiOutboxConfig = api::OutboxConfig;
 
 struct SensorWritePolicyConfig {
     int heartbeatMinutes = 60;
@@ -29,8 +29,7 @@ struct ApiConfig {
     std::string baseUrl;
     std::string apiKey;
     std::string pemFile;
-    std::string pem;
-    ApiBufferConfig buffer;
+    ApiOutboxConfig outbox;
     SensorWritePolicyConfig sensorWritePolicy;
 };
 

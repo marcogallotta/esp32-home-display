@@ -90,13 +90,15 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("api.pem_file is not a string");
     }
 
-    ApiBufferConfig apiBufferConfig = config.api.buffer;
-    const JsonObject apiBuffer = api["buffer"];
-    if (!apiBuffer.isNull() &&
-        (!readOptionalInt(apiBuffer, "in_memory", apiBufferConfig.inMemory, "api.buffer.in_memory") ||
-         !readOptionalUint32(apiBuffer, "disk_reserve_bytes", apiBufferConfig.diskReserveBytes, "api.buffer.disk_reserve_bytes") ||
-         !readOptionalInt(apiBuffer, "drain_rate_cap", apiBufferConfig.drainRateCap, "api.buffer.drain_rate_cap") ||
-         !readOptionalInt(apiBuffer, "drain_rate_tick_s", apiBufferConfig.drainRateTickS, "api.buffer.drain_rate_tick_s"))) {
+    ApiOutboxConfig apiOutboxConfig = config.api.outbox;
+    const JsonObject apiOutbox = api["outbox"].isNull()
+        ? api["buffer"].as<JsonObject>()
+        : api["outbox"].as<JsonObject>();
+    if (!apiOutbox.isNull() &&
+        (!readOptionalInt(apiOutbox, "in_memory", apiOutboxConfig.inMemory, "api.outbox.in_memory") ||
+         !readOptionalUint32(apiOutbox, "disk_reserve_bytes", apiOutboxConfig.diskReserveBytes, "api.outbox.disk_reserve_bytes") ||
+         !readOptionalInt(apiOutbox, "drain_rate_cap", apiOutboxConfig.drainRateCap, "api.outbox.drain_rate_cap") ||
+         !readOptionalInt(apiOutbox, "drain_rate_tick_s", apiOutboxConfig.drainRateTickS, "api.outbox.drain_rate_tick_s"))) {
         return false;
     }
 
@@ -117,14 +119,14 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     const char* apiKey = api["api_key"].as<const char*>();
     const char* apiPemFile = api["pem_file"].as<const char*>();
 
-    if (apiBufferConfig.inMemory <= 0) {
-        return fail("api.buffer.in_memory must be > 0");
+    if (apiOutboxConfig.inMemory <= 0) {
+        return fail("api.outbox.in_memory must be > 0");
     }
-    if (apiBufferConfig.drainRateCap <= 0) {
-        return fail("api.buffer.drain_rate_cap must be > 0");
+    if (apiOutboxConfig.drainRateCap <= 0) {
+        return fail("api.outbox.drain_rate_cap must be > 0");
     }
-    if (apiBufferConfig.drainRateTickS <= 0) {
-        return fail("api.buffer.drain_rate_tick_s must be > 0");
+    if (apiOutboxConfig.drainRateTickS <= 0) {
+        return fail("api.outbox.drain_rate_tick_s must be > 0");
     }
     if (sensorWritePolicyConfig.heartbeatMinutes <= 0) {
         return fail("api.sensor_write_policy.heartbeat_minutes must be > 0");
@@ -300,8 +302,7 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.api.baseUrl = apiBaseUrl;
     config.api.apiKey = apiKey;
     config.api.pemFile = apiPemFile;
-    config.api.pem.clear();
-    config.api.buffer = apiBufferConfig;
+    config.api.outbox = apiOutboxConfig;
     config.api.sensorWritePolicy = sensorWritePolicyConfig;
 
     config.location.latitude = latitude;

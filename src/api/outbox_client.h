@@ -13,12 +13,12 @@ namespace api {
 
 enum class WriteStatus {
     Sent,
-    Buffered,
+    Queued,
     DroppedPermanent,
-    DroppedBufferFull,
+    DroppedQueueFull,
 };
 
-enum class WriteBufferReason {
+enum class WriteQueueReason {
     None,
     BacklogPresent,
     RetryableFailure,
@@ -29,10 +29,10 @@ struct WriteResult {
     BackendWriteResult backendResult = BackendWriteResult::Failed;
     int httpStatusCode = 0;
     std::string body;
-    WriteBufferReason bufferReason = WriteBufferReason::None;
+    WriteQueueReason queueReason = WriteQueueReason::None;
 };
 
-struct BufferDrainResult {
+struct OutboxDrainResult {
     int attempted = 0;
     int sent = 0;
     int dropped = 0;
@@ -40,12 +40,12 @@ struct BufferDrainResult {
     bool notDueYet = false;
 };
 
-struct BufferedClientPqueue;
+struct OutboxClientImpl;
 
-class BufferedClient {
+class OutboxClient {
 public:
-    explicit BufferedClient(const ::Config& config);
-    ~BufferedClient();
+    explicit OutboxClient(const ::Config& config);
+    ~OutboxClient();
 
     WriteResult postSwitchbotReading(
         const SensorIdentity& identity,
@@ -58,11 +58,11 @@ public:
     );
 
     WriteResult send(ApiRequest request);
-    BufferDrainResult drainPending(std::uint64_t nowMs);
+    OutboxDrainResult drainPending(std::uint64_t nowMs);
 
 private:
     const ::Config& config_;
-    std::unique_ptr<BufferedClientPqueue> pqueue_;
+    std::unique_ptr<OutboxClientImpl> pqueue_;
 };
 
 } // namespace api

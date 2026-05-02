@@ -9,7 +9,7 @@
 #include <string>
 #include <utility>
 
-#include "api/buffered_client.h"
+#include "api/outbox_client.h"
 #include "api/state.h"
 #include "api_sync.h"
 #include "ble/scanner.h"
@@ -66,7 +66,7 @@ struct AppContext {
     State previousState;
 
     api::State apiState;
-    api::BufferedClient bufferedApiClient;
+    api::OutboxClient apiOutboxClient;
 
     UiState currentUiState;
     bool hasPreviousState = false;
@@ -80,7 +80,7 @@ struct AppContext {
 
     explicit AppContext(const Config& cfg)
         : config(cfg),
-          bufferedApiClient(config),
+          apiOutboxClient(config),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
           bleScanner([this](const ble::AdvertisementEvent& event) {
@@ -392,10 +392,10 @@ void syncOutputs(AppContext& app, std::time_t now) {
         app.hasValidTime = true;
     }
 
-    app.bufferedApiClient.drainPending(nowMs);
+    app.apiOutboxClient.drainPending(nowMs);
 
     if (app.hasValidTime) {
-        syncApiState(app.config, app.currentState, app.apiState, app.bufferedApiClient);
+        syncApiState(app.config, app.currentState, app.apiState, app.apiOutboxClient);
     } else {
         logInvalidTimeApiSyncSkipped(nowMs);
     }

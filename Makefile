@@ -27,7 +27,7 @@ COV_TEST_TARGET := $(COV_BUILD_DIR)/tests
 COMMON_SRC := \
 	third_party/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
-	src/api/buffered_client.cpp \
+	src/api/outbox_client.cpp \
 	src/api/dropped_log.cpp \
 	src/api/payloads.cpp \
 	src/api/state.cpp \

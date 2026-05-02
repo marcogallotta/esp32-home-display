@@ -1,4 +1,4 @@
-#include "buffered_client.h"
+#include "outbox_client.h"
 
 #include <array>
 #include <cstdint>
@@ -73,14 +73,14 @@ WriteResult makeWriteResult(
     BackendWriteResult backendResult = BackendWriteResult::Failed,
     int httpStatusCode = 0,
     std::string body = "",
-    WriteBufferReason bufferReason = WriteBufferReason::None
+    WriteQueueReason queueReason = WriteQueueReason::None
 ) {
     WriteResult result;
     result.status = status;
     result.backendResult = backendResult;
     result.httpStatusCode = httpStatusCode;
     result.body = std::move(body);
-    result.bufferReason = bufferReason;
+    result.queueReason = queueReason;
     return result;
 }
 
@@ -137,16 +137,16 @@ std::string dropReasonName(pqueue::http::DropReason reason) {
     return "dropped";
 }
 
-void logDroppedBufferFullRequest(const ApiRequest& request) {
+void logDroppedQueueFullRequest(const ApiRequest& request) {
     const std::string mac = diagnosticMac(request);
     logLine(
         LogLevel::Warn,
-        "Dropping request because pqueue is full: " + request.path +
+        "Dropping request because pqueue queue is full: " + request.path +
         (mac.empty() ? std::string{} : " for " + mac)
     );
 
     dropped_log::appendDroppedRequest(
-        "buffer_full",
+        "queue_full",
         request.path,
         mac,
         request.payload,
@@ -171,11 +171,11 @@ pqueue::http::Config makeHttpConfig(
 #else
     httpConfig.queue.basePath = "pqueue_api_spool";
 #endif
-    httpConfig.queue.diskReserveBytes = config.api.buffer.diskReserveBytes;
-    httpConfig.outbox.retryDelayMs = static_cast<std::uint32_t>(config.api.buffer.drainRateTickS) * 1000U;
-    httpConfig.outbox.maxDrainAttemptsPerSecond = config.api.buffer.drainRateCap <= 0
+    httpConfig.queue.diskReserveBytes = config.api.outbox.diskReserveBytes;
+    httpConfig.outbox.retryDelayMs = static_cast<std::uint32_t>(config.api.outbox.drainRateTickS) * 1000U;
+    httpConfig.outbox.maxDrainAttemptsPerSecond = config.api.outbox.drainRateCap <= 0
         ? 1
-        : static_cast<std::uint16_t>(config.api.buffer.drainRateCap);
+        : static_cast<std::uint16_t>(config.api.outbox.drainRateCap);
     httpConfig.baseUrl = config.api.baseUrl.c_str();
     httpConfig.headers = headers.data();
     httpConfig.headerCount = headers.size();
@@ -195,8 +195,8 @@ bool networkReadyCallback(void* context, std::uint32_t timeoutMs) {
 
 } // namespace
 
-struct BufferedClientPqueue {
-    explicit BufferedClientPqueue(const ::Config& config)
+struct OutboxClientImpl {
+    explicit OutboxClientImpl(const ::Config& config)
         : config(config),
           headers{{
               {"Content-Type", "application/json"},
@@ -204,9 +204,9 @@ struct BufferedClientPqueue {
           }},
           transport(makeTransportConfig(config)),
           outbox(
-              makeHttpConfig(config, headers, this, &BufferedClientPqueue::onResponse, &BufferedClientPqueue::onDrop),
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop),
               transport,
-              &BufferedClientPqueue::clockNow,
+              &OutboxClientImpl::clockNow,
               this
           ) {}
 
@@ -246,7 +246,7 @@ struct BufferedClientPqueue {
         const pqueue::http::Response& response
     ) {
         (void)request;
-        auto* self = static_cast<BufferedClientPqueue*>(context);
+        auto* self = static_cast<OutboxClientImpl*>(context);
         self->lastResponse = response;
     }
 
@@ -256,7 +256,7 @@ struct BufferedClientPqueue {
         pqueue::http::DropReason reason,
         const pqueue::http::Response* response
     ) {
-        auto* self = static_cast<BufferedClientPqueue*>(context);
+        auto* self = static_cast<OutboxClientImpl*>(context);
         self->logDrop(request, reason, response);
     }
 
@@ -301,13 +301,13 @@ struct BufferedClientPqueue {
     std::optional<pqueue::http::Response> lastResponse;
 };
 
-BufferedClient::BufferedClient(const ::Config& config)
+OutboxClient::OutboxClient(const ::Config& config)
     : config_(config),
-      pqueue_(std::make_unique<BufferedClientPqueue>(config_)) {}
+      pqueue_(std::make_unique<OutboxClientImpl>(config_)) {}
 
-BufferedClient::~BufferedClient() = default;
+OutboxClient::~OutboxClient() = default;
 
-WriteResult BufferedClient::postSwitchbotReading(
+WriteResult OutboxClient::postSwitchbotReading(
     const SensorIdentity& identity,
     const SwitchbotReading& reading
 ) {
@@ -327,7 +327,7 @@ WriteResult BufferedClient::postSwitchbotReading(
     });
 }
 
-WriteResult BufferedClient::postXiaomiReading(
+WriteResult OutboxClient::postXiaomiReading(
     const SensorIdentity& identity,
     const XiaomiReading& reading
 ) {
@@ -347,7 +347,7 @@ WriteResult BufferedClient::postXiaomiReading(
     });
 }
 
-WriteResult BufferedClient::send(ApiRequest request) {
+WriteResult OutboxClient::send(ApiRequest request) {
     pqueue_->lastResponse.reset();
     const pqueue::SubmitResult submitResult =
         pqueue_->outbox.submitPost(request.path, request.payload);
@@ -368,15 +368,15 @@ WriteResult BufferedClient::send(ApiRequest request) {
         case pqueue::SubmitStatus::Queued:
             logLine(
                 LogLevel::Warn,
-                "Buffered API request in pqueue: " +
+                "Queued API request in pqueue: " +
                 std::to_string(pqueue_->outbox.stats().count) + " queued"
             );
             return makeWriteResult(
-                WriteStatus::Buffered,
+                WriteStatus::Queued,
                 BackendWriteResult::Failed,
                 response.statusCode,
                 response.body,
-                pqueue_->outbox.stats().count > 1 ? WriteBufferReason::BacklogPresent : WriteBufferReason::RetryableFailure
+                pqueue_->outbox.stats().count > 1 ? WriteQueueReason::BacklogPresent : WriteQueueReason::RetryableFailure
             );
 
         case pqueue::SubmitStatus::Dropped:
@@ -388,8 +388,8 @@ WriteResult BufferedClient::send(ApiRequest request) {
             );
 
         case pqueue::SubmitStatus::QueueFull:
-            logDroppedBufferFullRequest(request);
-            return makeWriteResult(WriteStatus::DroppedBufferFull);
+            logDroppedQueueFullRequest(request);
+            return makeWriteResult(WriteStatus::DroppedQueueFull);
 
         case pqueue::SubmitStatus::SendError:
             return makeWriteResult(WriteStatus::DroppedPermanent);
@@ -398,9 +398,9 @@ WriteResult BufferedClient::send(ApiRequest request) {
     return makeWriteResult(WriteStatus::DroppedPermanent);
 }
 
-BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
+OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     (void)nowMs;
-    BufferDrainResult result;
+    OutboxDrainResult result;
     const pqueue::DrainResult drainResult = pqueue_->outbox.drain();
     result.attempted = drainResult.attempts;
     result.sent = drainResult.sent;

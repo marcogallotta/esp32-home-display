@@ -6,7 +6,7 @@
 #include <iostream>
 #include <string>
 
-#include "api/buffered_client.h"
+#include "api/outbox_client.h"
 #include "api/state.h"
 #include "config.h"
 #include "log.h"
@@ -32,7 +32,7 @@ void printUsage(const char* argv0) {
         << "Options:\n"
         << "  --count N          Send N simulated requests, then exit. Default: forever\n"
         << "  --interval-ms N    Delay between cycles. Default: 1000\n"
-        << "  --drain-only       Do not create new requests; only drain existing buffer\n"
+        << "  --drain-only       Do not create new requests; only drain existing queue\n"
         << "  --switchbot-only   Send only SwitchBot payloads\n"
         << "  --xiaomi-only      Send only Xiaomi payloads\n"
         << "  --base-url URL     Override config.api.baseUrl\n"
@@ -165,18 +165,18 @@ auto postXiaomiCompat(
 const char* writeStatusName(api::WriteStatus status) {
     switch (status) {
         case api::WriteStatus::Sent: return "sent";
-        case api::WriteStatus::Buffered: return "buffered";
+        case api::WriteStatus::Queued: return "queued";
         case api::WriteStatus::DroppedPermanent: return "dropped_permanent";
-        case api::WriteStatus::DroppedBufferFull: return "dropped_buffer_full";
+        case api::WriteStatus::DroppedQueueFull: return "dropped_queue_full";
     }
     return "unknown";
 }
 
-const char* writeBufferReasonName(api::WriteBufferReason reason) {
+const char* writeQueueReasonName(api::WriteQueueReason reason) {
     switch (reason) {
-        case api::WriteBufferReason::None: return "none";
-        case api::WriteBufferReason::BacklogPresent: return "backlog_present_post_skipped";
-        case api::WriteBufferReason::RetryableFailure: return "retryable_failure";
+        case api::WriteQueueReason::None: return "none";
+        case api::WriteQueueReason::BacklogPresent: return "backlog_present_post_skipped";
+        case api::WriteQueueReason::RetryableFailure: return "retryable_failure";
     }
     return "unknown";
 }
@@ -185,9 +185,9 @@ void logWrite(const std::string& label, const api::WriteResult& result) {
     std::string message =
         label + " write result: " + writeStatusName(result.status);
 
-    if (result.status == api::WriteStatus::Buffered) {
-        message += ", reason " + std::string(writeBufferReasonName(result.bufferReason));
-        if (result.bufferReason == api::WriteBufferReason::BacklogPresent) {
+    if (result.status == api::WriteStatus::Queued) {
+        message += ", reason " + std::string(writeQueueReasonName(result.queueReason));
+        if (result.queueReason == api::WriteQueueReason::BacklogPresent) {
             message += ", HTTP not attempted";
         } else {
             message += ", HTTP " + std::to_string(result.httpStatusCode);
@@ -199,7 +199,7 @@ void logWrite(const std::string& label, const api::WriteResult& result) {
     logLine(LogLevel::Info, message);
 }
 
-void logDrain(const api::BufferDrainResult& result) {
+void logDrain(const api::OutboxDrainResult& result) {
     logLine(
         LogLevel::Info,
         "Harness pqueue state: attempted " + std::to_string(result.attempted) +
@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
 
     platform::initTime(config);
 
-    api::BufferedClient bufferedClient(config);
+    api::OutboxClient outboxClient(config);
 
     const SensorIdentity sb = switchbotIdentity(config);
     const SensorIdentity xm = xiaomiIdentity(config);
@@ -277,7 +277,7 @@ int main(int argc, char** argv) {
             hasValidTime = true;
         }
 
-        const api::BufferDrainResult drain = bufferedClient.drainPending(nowMs);
+        const api::OutboxDrainResult drain = outboxClient.drainPending(nowMs);
         logDrain(drain);
 
         if (!options.drainOnly) {
@@ -288,7 +288,7 @@ int main(int argc, char** argv) {
 
                 if (shouldSendXiaomi(options, seq)) {
                     const auto result = postXiaomiCompat(
-                        bufferedClient,
+                        outboxClient,
                         xm,
                         makeXiaomiReading(static_cast<std::int64_t>(epoch), seq),
                         nowMs,
@@ -297,7 +297,7 @@ int main(int argc, char** argv) {
                     logWrite("Xiaomi", result);
                 } else {
                     const auto result = postSwitchbotCompat(
-                        bufferedClient,
+                        outboxClient,
                         sb,
                         makeSwitchbotReading(static_cast<std::int64_t>(epoch), seq),
                         nowMs,
