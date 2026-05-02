@@ -116,6 +116,7 @@ void initStateStorage(AppContext& app) {
 
     api::initState(app.currentState, app.apiState);
 
+#ifdef ARDUINO
     api::disk_buffer::load(app.apiState.buffer.disk, api::record_file_store::defaultStore());
     logLine(
         LogLevel::Info,
@@ -123,6 +124,9 @@ void initStateStorage(AppContext& app) {
         ", tail " + std::to_string(app.apiState.buffer.disk.tail) +
         ", count " + std::to_string(app.apiState.buffer.disk.count)
     );
+#else
+    logLine(LogLevel::Info, "API desktop buffer uses pqueue HTTP outbox");
+#endif
 }
 
 void initCallbacks(AppContext& app) {

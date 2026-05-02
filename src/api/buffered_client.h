@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "../config.h"
@@ -33,6 +34,8 @@ struct WriteResult {
     WriteBufferReason bufferReason = WriteBufferReason::None;
 };
 
+struct BufferedClientDesktopPqueue;
+
 class BufferedClient {
 public:
     BufferedClient(
@@ -54,6 +57,7 @@ public:
 
     WriteResult send(ApiRequest request);
     BufferDrainResult drainPending(std::uint64_t nowMs);
+    ~BufferedClient();
 
 private:
     void delayNextDrain(std::uint64_t nowMs);
@@ -62,6 +66,9 @@ private:
     const ApiPoster& poster_;
     RecordStore& store_;
     std::uint64_t nextDrainAllowedAtMs_ = 0;
+#ifndef ARDUINO
+    std::unique_ptr<BufferedClientDesktopPqueue> desktopPqueue_;
+#endif
 };
 
 } // namespace api

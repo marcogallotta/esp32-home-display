@@ -5,6 +5,12 @@
 #include <string>
 #include <utility>
 
+#ifndef ARDUINO
+#include <array>
+#include "pqueue/http/outbox.h"
+#include "pqueue/http/posix_curl_transport.h"
+#endif
+
 #include "../log.h"
 #include "../platform.h"
 #include "dropped_log.h"
@@ -344,7 +350,152 @@ void logDrainSummary(const BufferDrainResult& result, const BufferState& buffer)
     );
 }
 
+
+#ifndef ARDUINO
+network::TransportResult mapTransportError(pqueue::http::TransportError error) {
+    switch (error) {
+        case pqueue::http::TransportError::None:
+            return network::TransportResult::Ok;
+        case pqueue::http::TransportError::Timeout:
+            return network::TransportResult::Timeout;
+        case pqueue::http::TransportError::Tls:
+            return network::TransportResult::TlsError;
+        case pqueue::http::TransportError::Network:
+        case pqueue::http::TransportError::Dns:
+            return network::TransportResult::NetworkError;
+        case pqueue::http::TransportError::Unknown:
+            return network::TransportResult::InternalError;
+    }
+    return network::TransportResult::InternalError;
+}
+
+network::HttpResponse toNetworkResponse(const pqueue::http::Response& response) {
+    network::HttpResponse out;
+    out.transport = mapTransportError(response.error);
+    out.statusCode = response.statusCode;
+    out.body = response.body;
+    return out;
+}
+
+std::string dropReasonName(pqueue::http::DropReason reason) {
+    switch (reason) {
+        case pqueue::http::DropReason::DecodeFailed:
+            return "decode_failed";
+        case pqueue::http::DropReason::ClassifiedDrop:
+            return "classified_drop";
+        case pqueue::http::DropReason::MaxAttempts:
+            return "max_attempts";
+    }
+    return "dropped";
+}
+#endif
+
 } // namespace
+
+#ifndef ARDUINO
+struct BufferedClientDesktopPqueue {
+    explicit BufferedClientDesktopPqueue(const ::Config& config)
+        : config(config),
+          headers{{
+              {"Content-Type", "application/json"},
+              {"x-api-key", config.api.apiKey.c_str()},
+          }},
+          transport(makeTransportConfig(config)),
+          outbox(makeHttpConfig(config, headers, this), transport, &BufferedClientDesktopPqueue::clockNow, this) {}
+
+    static pqueue::http::PosixCurlTransportConfig makeTransportConfig(const ::Config& config) {
+        pqueue::http::PosixCurlTransportConfig transportConfig;
+        transportConfig.common.userAgent = "my-app/1.0";
+        transportConfig.common.timeoutMs = 15000;
+        transportConfig.caBundlePath = config.api.pemFile.empty() ? nullptr : config.api.pemFile.c_str();
+        return transportConfig;
+    }
+
+    static pqueue::http::Config makeHttpConfig(
+        const ::Config& config,
+        const std::array<pqueue::http::Header, 2>& headers,
+        BufferedClientDesktopPqueue* self
+    ) {
+        pqueue::http::Config httpConfig;
+        httpConfig.queue.basePath = "pqueue_api_spool";
+        httpConfig.queue.diskReserveBytes = config.api.buffer.diskReserveBytes;
+        httpConfig.outbox.retryDelayMs = static_cast<std::uint32_t>(config.api.buffer.drainRateTickS) * 1000U;
+        httpConfig.baseUrl = config.api.baseUrl.c_str();
+        httpConfig.headers = headers.data();
+        httpConfig.headerCount = headers.size();
+        httpConfig.responseContext = self;
+        httpConfig.onResponse = &BufferedClientDesktopPqueue::onResponse;
+        httpConfig.dropContext = self;
+        httpConfig.onDrop = &BufferedClientDesktopPqueue::onDrop;
+        return httpConfig;
+    }
+
+    static std::uint64_t clockNow(void* context) {
+        (void)context;
+        return platform::millis();
+    }
+
+    static void onResponse(
+        void* context,
+        const pqueue::http::RequestEnvelope& request,
+        const pqueue::http::Response& response
+    ) {
+        (void)request;
+        auto* self = static_cast<BufferedClientDesktopPqueue*>(context);
+        self->lastResponse = response;
+    }
+
+    static void onDrop(
+        void* context,
+        const pqueue::http::RequestEnvelope* request,
+        pqueue::http::DropReason reason,
+        const pqueue::http::Response* response
+    ) {
+        auto* self = static_cast<BufferedClientDesktopPqueue*>(context);
+        self->logDrop(request, reason, response);
+    }
+
+    void logDrop(
+        const pqueue::http::RequestEnvelope* request,
+        pqueue::http::DropReason reason,
+        const pqueue::http::Response* response
+    ) const {
+        const std::string path = request == nullptr ? std::string{} : request->path;
+        const std::string body = request == nullptr ? std::string{} : request->body;
+        ApiRequest apiRequest{path, body};
+        const std::string mac = diagnosticMac(apiRequest);
+        const network::HttpResponse networkResponse = response == nullptr
+            ? network::HttpResponse{}
+            : toNetworkResponse(*response);
+
+        logLine(
+            LogLevel::Warn,
+            "Dropping API request from pqueue: " + dropReasonName(reason) +
+            (path.empty() ? std::string{} : ", " + path) +
+            (mac.empty() ? std::string{} : " for " + mac) +
+            ", HTTP " + std::to_string(networkResponse.statusCode)
+        );
+
+        dropped_log::appendDroppedRequest(
+            dropReasonName(reason),
+            path,
+            mac,
+            body,
+            networkResponse.statusCode,
+            static_cast<int>(networkResponse.transport),
+            networkResponse.error,
+            0,
+            0
+        );
+    }
+
+    const ::Config& config;
+    std::array<pqueue::http::Header, 2> headers;
+    pqueue::http::PosixCurlTransport transport;
+    pqueue::http::Outbox outbox;
+    std::optional<pqueue::http::Response> lastResponse;
+};
+#endif
 
 BufferedClient::BufferedClient(
     const ::Config& config,
@@ -356,7 +507,12 @@ BufferedClient::BufferedClient(
       buffer_(buffer),
       poster_(poster),
       store_(store) {
+#ifndef ARDUINO
+    desktopPqueue_ = std::make_unique<BufferedClientDesktopPqueue>(config_);
+#endif
 }
+
+BufferedClient::~BufferedClient() = default;
 
 WriteResult BufferedClient::postSwitchbotReading(
     const SensorIdentity& identity,
@@ -405,6 +561,58 @@ void BufferedClient::delayNextDrain(std::uint64_t nowMs) {
 }
 
 WriteResult BufferedClient::send(ApiRequest request) {
+#ifndef ARDUINO
+    if (desktopPqueue_) {
+        desktopPqueue_->lastResponse.reset();
+        const pqueue::SubmitResult submitResult =
+            desktopPqueue_->outbox.submitPost(request.path, request.payload);
+
+        const network::HttpResponse response = desktopPqueue_->lastResponse.has_value()
+            ? toNetworkResponse(*desktopPqueue_->lastResponse)
+            : network::HttpResponse{};
+
+        switch (submitResult.status) {
+            case pqueue::SubmitStatus::Sent:
+                return makeWriteResult(
+                    WriteStatus::Sent,
+                    parseBackendWriteResult(response),
+                    response.statusCode,
+                    response.body
+                );
+
+            case pqueue::SubmitStatus::Queued:
+                logLine(
+                    LogLevel::Warn,
+                    "Buffered API request in pqueue: " +
+                    std::to_string(desktopPqueue_->outbox.stats().count) + " queued"
+                );
+                return makeWriteResult(
+                    WriteStatus::Buffered,
+                    BackendWriteResult::Failed,
+                    response.statusCode,
+                    response.body
+                );
+
+            case pqueue::SubmitStatus::Dropped:
+                return makeWriteResult(
+                    WriteStatus::DroppedPermanent,
+                    BackendWriteResult::Failed,
+                    response.statusCode,
+                    response.body
+                );
+
+            case pqueue::SubmitStatus::QueueFull:
+                logDroppedBufferFullRequest(request);
+                return makeWriteResult(WriteStatus::DroppedBufferFull);
+
+            case pqueue::SubmitStatus::SendError:
+                return makeWriteResult(WriteStatus::DroppedPermanent);
+        }
+
+        return makeWriteResult(WriteStatus::DroppedPermanent);
+    }
+#endif
+
     if (hasBacklog(buffer_, store_)) {
         const bool wroteToDisk =
             buffer_.ramQueue.size() >= static_cast<std::size_t>(config_.api.buffer.inMemory);
@@ -483,6 +691,21 @@ WriteResult BufferedClient::send(ApiRequest request) {
 
 BufferDrainResult BufferedClient::drainPending(std::uint64_t nowMs) {
     BufferDrainResult result;
+
+#ifndef ARDUINO
+    if (desktopPqueue_) {
+        (void)nowMs;
+        const pqueue::DrainResult drainResult = desktopPqueue_->outbox.drain();
+        result.attempted = drainResult.attempts;
+        result.sent = drainResult.sent;
+        result.dropped = drainResult.dropped +
+            drainResult.droppedMaxAttempts +
+            drainResult.corruptDropped;
+        result.notDueYet = drainResult.notDue || drainResult.rateLimited;
+        result.blockedByRetryableFailure = drainResult.sendError || drainResult.queueError;
+        return result;
+    }
+#endif
 
     if (nowMs < nextDrainAllowedAtMs_) {
         result.notDueYet = true;
