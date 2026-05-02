@@ -44,6 +44,7 @@ COMMON_SRC := \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
 	src/pqueue/envelope.cpp \
+	src/pqueue/http/esp32_arduino_transport.cpp \
 	src/pqueue/http/outbox.cpp \
 	src/pqueue/http/posix_curl_transport.cpp \
 	src/pqueue/http/request_envelope.cpp \
