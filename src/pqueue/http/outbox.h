@@ -30,6 +30,13 @@ struct Response {
     TransportError error = TransportError::Unknown;
 };
 
+struct TransportConfig {
+    std::uint32_t timeoutMs = 15000;
+    const char* userAgent = "pqueue-http/1.0";
+    bool followRedirects = true;
+    bool allowInsecureTls = false;
+};
+
 using PostCallback = Response (*)(
     void* context,
     const char* url,

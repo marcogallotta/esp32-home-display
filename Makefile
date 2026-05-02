@@ -45,6 +45,7 @@ COMMON_SRC := \
 	src/platform_desktop.cpp \
 	src/pqueue/envelope.cpp \
 	src/pqueue/http/outbox.cpp \
+	src/pqueue/http/posix_curl_transport.cpp \
 	src/pqueue/http/request_envelope.cpp \
 	src/pqueue/file_store.cpp \
 	src/pqueue/outbox.cpp \
