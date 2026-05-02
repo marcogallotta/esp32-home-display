@@ -32,12 +32,36 @@ struct PostedRequest {
     std::string body;
 };
 
-struct FakeHttpTransport {
+struct FakeHttpTransport : pqueue::http::Transport {
     std::vector<pqueue::http::Response> responses;
     std::vector<PostedRequest> posts;
+
+    pqueue::http::Response post(
+        const char* url,
+        const pqueue::http::Header* headers,
+        std::size_t headerCount,
+        const std::uint8_t* body,
+        std::size_t bodySize
+    ) override {
+        PostedRequest request;
+        request.url = url == nullptr ? std::string{} : std::string{url};
+        for (std::size_t i = 0; i < headerCount; ++i) {
+            request.headers.push_back(headers[i]);
+        }
+        request.body.assign(reinterpret_cast<const char*>(body), bodySize);
+        posts.push_back(request);
+
+        if (responses.empty()) {
+            return {200, pqueue::http::TransportError::None};
+        }
+
+        const pqueue::http::Response response = responses.front();
+        responses.erase(responses.begin());
+        return response;
+    }
 };
 
-pqueue::http::Response fakePost(
+pqueue::http::Response callbackPost(
     void* context,
     const char* url,
     const pqueue::http::Header* headers,
@@ -45,23 +69,7 @@ pqueue::http::Response fakePost(
     const std::uint8_t* body,
     std::size_t bodySize
 ) {
-    auto* transport = static_cast<FakeHttpTransport*>(context);
-
-    PostedRequest request;
-    request.url = url == nullptr ? std::string{} : std::string{url};
-    for (std::size_t i = 0; i < headerCount; ++i) {
-        request.headers.push_back(headers[i]);
-    }
-    request.body.assign(reinterpret_cast<const char*>(body), bodySize);
-    transport->posts.push_back(request);
-
-    if (transport->responses.empty()) {
-        return {200, pqueue::http::TransportError::None};
-    }
-
-    const pqueue::http::Response response = transport->responses.front();
-    transport->responses.erase(transport->responses.begin());
-    return response;
+    return static_cast<FakeHttpTransport*>(context)->post(url, headers, headerCount, body, bodySize);
 }
 
 pqueue::http::Outbox makeHttpOutbox(
@@ -77,10 +85,8 @@ pqueue::http::Outbox makeHttpOutbox(
     httpConfig.baseUrl = "https://example.test/api";
     httpConfig.headers = headers;
     httpConfig.headerCount = headerCount;
-    httpConfig.post = fakePost;
-    httpConfig.postContext = &transport;
 
-    return pqueue::http::Outbox(httpConfig, fakeClockNow, &clock);
+    return pqueue::http::Outbox(httpConfig, transport, fakeClockNow, &clock);
 }
 
 struct CustomClassifier {
@@ -169,17 +175,36 @@ TEST_CASE("pqueue http outbox allows classifier override") {
     httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
     httpConfig.outbox.retryDelayMs = 1000;
     httpConfig.baseUrl = "https://example.test";
-    httpConfig.post = fakePost;
-    httpConfig.postContext = &transport;
     httpConfig.classify = customClassify;
     httpConfig.classifyContext = &classifier;
 
-    pqueue::http::Outbox outbox(httpConfig, fakeClockNow, &clock);
+    pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
     auto submit = outbox.submitPost("/bad", "body");
 
     CHECK(submit.status == pqueue::SubmitStatus::Queued);
     REQUIRE_EQ(classifier.statuses.size(), 1U);
     CHECK_EQ(classifier.statuses[0], 422);
+#endif
+}
+
+TEST_CASE("pqueue http callback transport adapts a post callback") {
+#ifndef ARDUINO
+    FakeHttpTransport fake;
+    fake.responses.push_back({204, pqueue::http::TransportError::None});
+    pqueue::http::CallbackTransport transport(callbackPost, &fake);
+
+    const auto response = transport.post(
+        "https://example.test/api",
+        nullptr,
+        0,
+        reinterpret_cast<const std::uint8_t*>("body"),
+        4
+    );
+
+    CHECK_EQ(response.statusCode, 204);
+    REQUIRE_EQ(fake.posts.size(), 1U);
+    CHECK_EQ(fake.posts[0].url, "https://example.test/api");
+    CHECK_EQ(fake.posts[0].body, "body");
 #endif
 }
 

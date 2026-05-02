@@ -20,11 +20,29 @@ bool isRetryableStatus(int statusCode) {
 
 } // namespace
 
+CallbackTransport::CallbackTransport(PostCallback post, void* context)
+    : post_(post), context_(context) {}
+
+Response CallbackTransport::post(
+    const char* url,
+    const Header* headers,
+    std::size_t headerCount,
+    const std::uint8_t* body,
+    std::size_t bodySize
+) {
+    if (post_ == nullptr) {
+        return {kNoStatusCode, TransportError::Unknown};
+    }
+    return post_(context_, url, headers, headerCount, body, bodySize);
+}
+
 Outbox::Outbox(
     Config httpConfig,
+    Transport& transport,
     ClockCallback clock,
     void* clockContext
 ) : httpConfig_(httpConfig),
+    transport_(transport),
     outbox_(httpConfig.queue, httpConfig.outbox, sendStoredRequest, this, clock, clockContext) {}
 
 pqueue::SubmitResult Outbox::submitPost(const std::string& path, const std::string& body) {
@@ -54,18 +72,13 @@ SendResult Outbox::sendStoredRequest(void* context, const std::string& encodedRe
 }
 
 SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const RetryState&) {
-    if (httpConfig_.post == nullptr) {
-        return {SendDecision::Drop};
-    }
-
     RequestEnvelope request;
     if (!decodeRequestEnvelope(encodedRequest, request) || request.method != Method::Post) {
         return {SendDecision::Drop};
     }
 
     const std::string url = buildUrl(request.path);
-    const Response response = httpConfig_.post(
-        httpConfig_.postContext,
+    const Response response = transport_.post(
         url.c_str(),
         httpConfig_.headers,
         httpConfig_.headerCount,

@@ -39,6 +39,37 @@ using PostCallback = Response (*)(
     std::size_t bodySize
 );
 
+class Transport {
+public:
+    virtual ~Transport() = default;
+
+    // TODO: add a generic send() API if/when GET or other methods are supported.
+    virtual Response post(
+        const char* url,
+        const Header* headers,
+        std::size_t headerCount,
+        const std::uint8_t* body,
+        std::size_t bodySize
+    ) = 0;
+};
+
+class CallbackTransport final : public Transport {
+public:
+    CallbackTransport(PostCallback post, void* context);
+
+    Response post(
+        const char* url,
+        const Header* headers,
+        std::size_t headerCount,
+        const std::uint8_t* body,
+        std::size_t bodySize
+    ) override;
+
+private:
+    PostCallback post_ = nullptr;
+    void* context_ = nullptr;
+};
+
 using ClassifyResponseCallback = SendDecision (*)(void* context, const Response& response);
 
 struct Config {
@@ -49,9 +80,6 @@ struct Config {
     const Header* headers = nullptr;
     std::size_t headerCount = 0;
 
-    void* postContext = nullptr;
-    PostCallback post = nullptr;
-
     void* classifyContext = nullptr;
     ClassifyResponseCallback classify = nullptr;
 };
@@ -61,6 +89,7 @@ public:
     // TODO: add an advanced constructor for dependency-injected core Outbox/storage in tests or custom backends.
     Outbox(
         Config httpConfig,
+        Transport& transport,
         ClockCallback clock,
         void* clockContext
     );
@@ -76,6 +105,7 @@ private:
     std::string buildUrl(const std::string& path) const;
 
     Config httpConfig_;
+    Transport& transport_;
     pqueue::Outbox outbox_;
 };
 
