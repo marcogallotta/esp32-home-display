@@ -10,7 +10,12 @@ bool isSuccessfulStatus(int statusCode) {
 }
 
 bool isRetryableStatus(int statusCode) {
-    return statusCode == 408 || statusCode == 429 || (statusCode >= 500 && statusCode < 600);
+    return statusCode == 408 ||
+           statusCode == 429 ||
+           statusCode == 500 ||
+           statusCode == 502 ||
+           statusCode == 503 ||
+           statusCode == 504;
 }
 
 } // namespace
@@ -107,16 +112,9 @@ SendDecision defaultClassifyResponse(const Response& response) {
     if (isRetryableStatus(response.statusCode)) {
         return SendDecision::RetryLater;
     }
-    switch (response.statusCode) {
-        case 400:
-        case 401:
-        case 403:
-        case 404:
-        case 422:
-            return SendDecision::Drop;
-        default:
-            return SendDecision::RetryLater;
-    }
+
+    // TODO: consider a slow-retry policy for capacity-style responses such as 507.
+    return SendDecision::Drop;
 }
 
 } // namespace pqueue::http

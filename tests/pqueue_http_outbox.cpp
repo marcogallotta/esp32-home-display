@@ -183,10 +183,12 @@ TEST_CASE("pqueue http outbox allows classifier override") {
 #endif
 }
 
-TEST_CASE("pqueue http default classifier retries unknown and transport errors") {
-    CHECK(pqueue::http::defaultClassifyResponse({0, pqueue::http::TransportError::Unknown}) == pqueue::SendDecision::RetryLater);
-    CHECK(pqueue::http::defaultClassifyResponse({0, pqueue::http::TransportError::Timeout}) == pqueue::SendDecision::RetryLater);
-    CHECK(pqueue::http::defaultClassifyResponse({429, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
-    CHECK(pqueue::http::defaultClassifyResponse({404, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
+TEST_CASE("pqueue http default classifier handles representative outcomes") {
     CHECK(pqueue::http::defaultClassifyResponse({204, pqueue::http::TransportError::None}) == pqueue::SendDecision::Sent);
+    CHECK(pqueue::http::defaultClassifyResponse({408, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({500, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({502, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Timeout}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({404, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
+    CHECK(pqueue::http::defaultClassifyResponse({507, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
 }

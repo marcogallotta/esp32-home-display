@@ -9,6 +9,8 @@
 
 namespace pqueue::http {
 
+constexpr int kNoStatusCode = 0;
+
 struct Header {
     const char* name = nullptr;
     const char* value = nullptr;
@@ -24,7 +26,7 @@ enum class TransportError {
 };
 
 struct Response {
-    int statusCode = 0;
+    int statusCode = kNoStatusCode;
     TransportError error = TransportError::Unknown;
 };
 
