@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+
+#include "file_system.h"
 
 namespace pqueue {
 
@@ -18,6 +21,7 @@ struct FileStoreConfig {
     std::string basePath = "pqueue_spool";
 #endif
     StorageBackend backend = StorageBackend::Default;
+    std::shared_ptr<FileSystem> fileSystem;
 };
 
 struct FileStoreIndex {
@@ -44,8 +48,10 @@ public:
 
 private:
     StorageBackend resolvedBackend() const;
+    std::shared_ptr<FileSystem> fileSystem() const;
 
     FileStoreConfig config_;
+    mutable std::shared_ptr<FileSystem> fileSystem_;
 };
 
 } // namespace pqueue

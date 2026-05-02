@@ -4,7 +4,12 @@ namespace pqueue {
 
 Queue::Queue(Config config)
     : config_(config),
-      store_(FileStoreConfig{config.basePath, config.storageBackend}) {}
+      store_([&config] {
+          FileStoreConfig storeConfig;
+          storeConfig.basePath = config.basePath;
+          storeConfig.backend = config.storageBackend;
+          return storeConfig;
+      }()) {}
 
 bool Queue::ensureLoaded() {
     if (loaded_) {
