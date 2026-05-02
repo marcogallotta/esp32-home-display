@@ -84,6 +84,7 @@ TEST_SRC := \
 	tests/main.cpp \
 	tests/pqueue.cpp \
 	tests/pqueue_envelope.cpp \
+	tests/pqueue_file_store.cpp \
 	tests/pqueue_http_outbox.cpp \
 	tests/pqueue_http_request_envelope.cpp \
 	tests/pqueue_outbox.cpp \
