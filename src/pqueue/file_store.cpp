@@ -27,14 +27,45 @@ bool readIndexAt(FileSystem& fs, const char* name, IndexRecord& out) {
     return validIndex(out);
 }
 
-bool writeIndexAt(FileSystem& fs, const char* name, const IndexRecord& record) {
-    const std::string tempName = std::string(name) + ".tmp";
-    if (!fs.writeFile(tempName, bytesFromObject(&record, sizeof(record)))) {
+bool fileExists(FileSystem& fs, const std::string& name) {
+    std::string ignored;
+    return fs.readFile(name, ignored);
+}
+
+bool writeFileAtomic(FileSystem& fs, const std::string& name, const std::string& bytes) {
+    const std::string tempName = name + ".tmp";
+    const std::string backupName = name + ".bak";
+
+    if (!fs.writeFile(tempName, bytes)) {
         return false;
     }
 
-    fs.removeFile(name);
-    return fs.renameFile(tempName, name);
+    if (!fileExists(fs, name)) {
+        if (fs.renameFile(tempName, name)) {
+            return true;
+        }
+        fs.removeFile(tempName);
+        return false;
+    }
+
+    fs.removeFile(backupName);
+    if (!fs.renameFile(name, backupName)) {
+        fs.removeFile(tempName);
+        return false;
+    }
+
+    if (fs.renameFile(tempName, name)) {
+        fs.removeFile(backupName);
+        return true;
+    }
+
+    fs.renameFile(backupName, name);
+    fs.removeFile(tempName);
+    return false;
+}
+
+bool writeIndexAt(FileSystem& fs, const char* name, const IndexRecord& record) {
+    return writeFileAtomic(fs, name, bytesFromObject(&record, sizeof(record)));
 }
 
 std::string recordName(std::uint32_t sequence) {
@@ -114,19 +145,20 @@ bool FileStore::readIndex(FileStoreIndex& out) {
     }
 
     std::vector<std::string> files;
+    if (!fs->listFiles(files)) {
+        return false;
+    }
+
     std::vector<std::uint32_t> sequences;
-    if (fs->listFiles(files)) {
-        for (const auto& name : files) {
-            std::uint32_t sequence = 0;
-            if (parseRecordSequence(name, sequence)) {
-                sequences.push_back(sequence);
-            }
+    for (const auto& name : files) {
+        std::uint32_t sequence = 0;
+        if (parseRecordSequence(name, sequence)) {
+            sequences.push_back(sequence);
         }
     }
 
     out = rebuildIndexFromSequences(sequences);
-    writeIndex(out);
-    return true;
+    return writeIndex(out);
 }
 
 bool FileStore::writeIndex(const FileStoreIndex& index) {
@@ -153,20 +185,13 @@ bool FileStore::writeRecord(std::uint32_t sequence, const std::string& record) {
     if (name.empty()) {
         return false;
     }
-    const std::string tempName = name + ".tmp";
-
     RecordHeader header;
     header.recordBytes = static_cast<std::uint32_t>(record.size());
     header.crc = recordCrc(header, record);
 
     std::string bytes = bytesFromObject(&header, sizeof(header));
     bytes.append(record);
-    if (!fileSystem()->writeFile(tempName, bytes)) {
-        return false;
-    }
-
-    fileSystem()->removeFile(name);
-    return fileSystem()->renameFile(tempName, name);
+    return writeFileAtomic(*fileSystem(), name, bytes);
 }
 
 bool FileStore::readRecord(std::uint32_t sequence, std::string& out) {

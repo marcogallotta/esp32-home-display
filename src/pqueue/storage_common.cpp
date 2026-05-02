@@ -74,8 +74,16 @@ FileStoreIndex rebuildIndexFromSequences(std::vector<std::uint32_t>& sequences) 
         return out;
     }
     std::sort(sequences.begin(), sequences.end());
+    sequences.erase(std::unique(sequences.begin(), sequences.end()), sequences.end());
+
     out.head = sequences.front();
-    out.tail = sequences.back() + 1;
+    out.tail = out.head;
+    for (const auto sequence : sequences) {
+        if (sequence != out.tail) {
+            break;
+        }
+        ++out.tail;
+    }
     out.count = out.tail - out.head;
     return out;
 }
