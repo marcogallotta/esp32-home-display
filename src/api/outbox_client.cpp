@@ -6,6 +6,10 @@
 #include <string>
 #include <utility>
 
+#ifndef ARDUINO
+#include <filesystem>
+#endif
+
 #ifdef ARDUINO
 #include <LittleFS.h>
 #include "pqueue/http/esp32_arduino_transport.h"
@@ -24,6 +28,21 @@
 
 namespace api {
 namespace {
+
+#ifndef ARDUINO
+std::string resolveDesktopPemPath(const std::string& pemFile) {
+    if (pemFile.empty()) {
+        return {};
+    }
+
+    const std::filesystem::path configured(pemFile);
+    if (configured.is_absolute()) {
+        return (std::filesystem::path("data") / configured.filename()).string();
+    }
+
+    return pemFile;
+}
+#endif
 
 std::string invalidTimestampReason(const std::optional<std::int64_t>& epochS) {
     if (!epochS.has_value()) {
@@ -365,7 +384,7 @@ struct OutboxClientImpl {
         transportConfig.common.userAgent = "my-app/1.0";
         transportConfig.common.timeoutMs = 15000;
         transportConfig.common.events = events;
-        transportConfig.caBundlePath = config.api.pemFile.empty() ? nullptr : config.api.pemFile.c_str();
+        transportConfig.caBundlePath = resolveDesktopPemPath(config.api.pemFile);
         return transportConfig;
     }
 

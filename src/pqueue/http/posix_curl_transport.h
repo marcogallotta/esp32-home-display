@@ -2,11 +2,13 @@
 
 #include "outbox.h"
 
+#include <string>
+
 namespace pqueue::http {
 
 struct PosixCurlTransportConfig {
     TransportConfig common;
-    const char* caBundlePath = nullptr;
+    std::string caBundlePath;
 };
 
 class PosixCurlTransport final : public Transport {

@@ -123,7 +123,7 @@ Response PosixCurlTransport::post(
         config_.common,
         Severity::Debug,
         Status::success(),
-        config_.caBundlePath == nullptr ? "post_start_no_ca_bundle" : "post_start_with_ca_bundle",
+        config_.caBundlePath.empty() ? "post_start_no_ca_bundle" : "post_start_with_ca_bundle",
         url,
         headerCount,
         bodySize);
@@ -171,8 +171,8 @@ Response PosixCurlTransport::post(
     if (config_.common.userAgent != nullptr) {
         curl_easy_setopt(curl, CURLOPT_USERAGENT, config_.common.userAgent);
     }
-    if (config_.caBundlePath != nullptr) {
-        curl_easy_setopt(curl, CURLOPT_CAINFO, config_.caBundlePath);
+    if (!config_.caBundlePath.empty()) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, config_.caBundlePath.c_str());
     }
     if (curlHeaders != nullptr) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curlHeaders);
