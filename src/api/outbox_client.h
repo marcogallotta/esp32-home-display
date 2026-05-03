@@ -42,7 +42,22 @@ struct OutboxDrainResult {
 
 struct OutboxClientImpl;
 
-class OutboxClient {
+class ApiWriter {
+public:
+    virtual ~ApiWriter() = default;
+
+    virtual WriteResult postSwitchbotReading(
+        const SensorIdentity& identity,
+        const SwitchbotReading& reading
+    ) = 0;
+
+    virtual WriteResult postXiaomiReading(
+        const SensorIdentity& identity,
+        const XiaomiReading& reading
+    ) = 0;
+};
+
+class OutboxClient : public ApiWriter {
 public:
     explicit OutboxClient(const ::Config& config);
     ~OutboxClient();
@@ -50,12 +65,12 @@ public:
     WriteResult postSwitchbotReading(
         const SensorIdentity& identity,
         const SwitchbotReading& reading
-    );
+    ) override;
 
     WriteResult postXiaomiReading(
         const SensorIdentity& identity,
         const XiaomiReading& reading
-    );
+    ) override;
 
     WriteResult send(ApiRequest request);
     OutboxDrainResult drainPending(std::uint64_t nowMs);

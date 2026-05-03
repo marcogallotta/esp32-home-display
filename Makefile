@@ -73,6 +73,7 @@ MAIN_TEST_API_SRC := \
 TEST_SRC := \
 	tests/api_payloads.cpp \
 	tests/api_sensor_write_policy.cpp \
+	tests/api_sync.cpp \
 	tests/config.cpp \
 	tests/main.cpp \
 	tests/pqueue.cpp \

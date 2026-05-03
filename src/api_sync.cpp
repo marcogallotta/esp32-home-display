@@ -138,7 +138,23 @@ void syncApiState(
     const Config& config,
     const State& appState,
     api::State& apiState,
-    api::OutboxClient& client
+    api::ApiWriter& client
+) {
+    syncApiState(
+        config,
+        appState,
+        apiState,
+        client,
+        static_cast<std::int64_t>(std::time(nullptr))
+    );
+}
+
+void syncApiState(
+    const Config& config,
+    const State& appState,
+    api::State& apiState,
+    api::ApiWriter& client,
+    std::int64_t nowEpochS
 ) {
     for (std::size_t i = 0; i < appState.switchbotSensors.size(); ++i) {
         const auto& sensor = appState.switchbotSensors[i];
@@ -176,8 +192,6 @@ void syncApiState(
         }
     }
 
-    const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-
     for (std::size_t i = 0; i < appState.xiaomiSensors.size(); ++i) {
         const auto& sensor = appState.xiaomiSensors[i];
         const auto& current = sensor.reading;
@@ -207,7 +221,7 @@ void syncApiState(
 
         const bool flushDueToComplete = hasCompleteXiaomiReading(pending.reading);
         const bool flushDueToTimeout =
-            now >= pending.openedAtEpochS + kXiaomiPendingWindowSeconds;
+            nowEpochS >= pending.openedAtEpochS + kXiaomiPendingWindowSeconds;
 
         if (!flushDueToComplete && !flushDueToTimeout) {
             continue;
