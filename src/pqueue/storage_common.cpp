@@ -1,8 +1,6 @@
 #include "storage_common.h"
 
-#include <algorithm>
 #include <cstddef>
-#include <cstdio>
 
 namespace pqueue::storage_detail {
 
@@ -27,16 +25,31 @@ std::uint32_t recordCrc(const RecordHeader& header, const std::string& record) {
     return crc32Update(crc, record.data(), record.size());
 }
 
-bool validIndex(const IndexRecord& record) {
+bool validIndexShape(const IndexRecord& record) {
     return record.magic == kFileStoreIndexMagic &&
            record.version == kFormatVersion &&
+           record.headerBytes == sizeof(IndexRecord) &&
            record.crc == indexCrc(record) &&
+           record.capacityRecords > 0 &&
+           record.recordSizeBytes > 0 &&
+           record.reservedBytes > 0 &&
+           record.count <= record.capacityRecords &&
            record.tail >= record.head &&
            record.count == record.tail - record.head;
 }
 
-IndexRecord toRecord(const FileStoreIndex& index, std::uint32_t generation) {
+bool validIndexForConfig(const IndexRecord& record, std::uint32_t capacityRecords, std::uint32_t recordSizeBytes, std::uint32_t reservedBytes) {
+    return validIndexShape(record) &&
+           record.capacityRecords == capacityRecords &&
+           record.recordSizeBytes == recordSizeBytes &&
+           record.reservedBytes == reservedBytes;
+}
+
+IndexRecord toRecord(const FileStoreIndex& index, std::uint32_t generation, std::uint32_t capacityRecords, std::uint32_t recordSizeBytes, std::uint32_t reservedBytes) {
     IndexRecord out;
+    out.capacityRecords = capacityRecords;
+    out.recordSizeBytes = recordSizeBytes;
+    out.reservedBytes = reservedBytes;
     out.head = index.head;
     out.tail = index.tail;
     out.count = index.count;
@@ -50,41 +63,6 @@ FileStoreIndex fromRecord(const IndexRecord& record) {
     out.head = record.head;
     out.tail = record.tail;
     out.count = record.count;
-    return out;
-}
-
-bool makeRecordName(std::uint32_t sequence, char* out, std::size_t outSize) {
-    const int n = std::snprintf(out, outSize, "pqueue_rec_%08lu.bin", static_cast<unsigned long>(sequence));
-    return n > 0 && static_cast<std::size_t>(n) < outSize;
-}
-
-bool parseRecordSequence(const std::string& name, std::uint32_t& out) {
-    unsigned long value = 0;
-    char suffix = '\0';
-    if (std::sscanf(name.c_str(), "pqueue_rec_%08lu.bin%c", &value, &suffix) != 1) {
-        return false;
-    }
-    out = static_cast<std::uint32_t>(value);
-    return true;
-}
-
-FileStoreIndex rebuildIndexFromSequences(std::vector<std::uint32_t>& sequences) {
-    FileStoreIndex out;
-    if (sequences.empty()) {
-        return out;
-    }
-    std::sort(sequences.begin(), sequences.end());
-    sequences.erase(std::unique(sequences.begin(), sequences.end()), sequences.end());
-
-    out.head = sequences.front();
-    out.tail = out.head;
-    for (const auto sequence : sequences) {
-        if (sequence != out.tail) {
-            break;
-        }
-        ++out.tail;
-    }
-    out.count = out.tail - out.head;
     return out;
 }
 

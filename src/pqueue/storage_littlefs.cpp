@@ -97,6 +97,82 @@ public:
         return Status::success();
     }
 
+
+    Status readAt(const std::string& name, std::uint64_t offset, std::size_t size, std::string& out) override {
+        File file = LittleFS.open(path(name).c_str(), "r");
+        if (!file) {
+            return Status::failure(StatusCode::ReadFailed, "failed to open LittleFS file for positioned read");
+        }
+        if (!file.seek(static_cast<std::uint32_t>(offset), SeekSet)) {
+            file.close();
+            return Status::failure(StatusCode::ReadFailed, "failed to seek LittleFS file for read");
+        }
+        out.assign(size, '\0');
+        const std::size_t bytesRead = file.read(reinterpret_cast<std::uint8_t*>(out.data()), size);
+        file.close();
+        if (bytesRead != size) {
+            return Status::failure(StatusCode::ReadFailed, "failed to read complete LittleFS range");
+        }
+        return Status::success();
+    }
+
+    Status writeAt(const std::string& name, std::uint64_t offset, const std::string& data) override {
+        File file = LittleFS.open(path(name).c_str(), "r+");
+        if (!file) {
+            return Status::failure(StatusCode::WriteFailed, "failed to open LittleFS file for positioned write");
+        }
+        if (!file.seek(static_cast<std::uint32_t>(offset), SeekSet)) {
+            file.close();
+            return Status::failure(StatusCode::WriteFailed, "failed to seek LittleFS file for write");
+        }
+        const std::size_t bytesWritten = file.write(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
+        file.flush();
+        file.close();
+        if (bytesWritten != data.size()) {
+            return Status::failure(StatusCode::WriteFailed, "failed to write complete LittleFS range");
+        }
+        return Status::success();
+    }
+
+    Status resizeFile(const std::string& name, std::uint64_t size) override {
+        const std::string fullPath = path(name);
+        File file = LittleFS.open(fullPath.c_str(), "r+");
+        if (!file) {
+            file = LittleFS.open(fullPath.c_str(), "w");
+        }
+        if (!file) {
+            return Status::failure(StatusCode::WriteFailed, "failed to open LittleFS file for resize");
+        }
+        const std::uint64_t current = file.size();
+        if (current > size) {
+            file.close();
+            LittleFS.remove(fullPath.c_str());
+            file = LittleFS.open(fullPath.c_str(), "w");
+            if (!file) {
+                return Status::failure(StatusCode::WriteFailed, "failed to recreate LittleFS file for resize");
+            }
+        } else if (current < size) {
+            if (!file.seek(static_cast<std::uint32_t>(current), SeekSet)) {
+                file.close();
+                return Status::failure(StatusCode::WriteFailed, "failed to seek LittleFS file for resize");
+            }
+        }
+        char zeros[128] = {};
+        std::uint64_t written = current > size ? 0 : current;
+        while (written < size) {
+            const std::uint64_t remaining = size - written;
+            const std::size_t chunk = remaining > sizeof(zeros) ? sizeof(zeros) : static_cast<std::size_t>(remaining);
+            if (file.write(reinterpret_cast<const std::uint8_t*>(zeros), chunk) != chunk) {
+                file.close();
+                return Status::failure(StatusCode::WriteFailed, "failed to size LittleFS file");
+            }
+            written += chunk;
+        }
+        file.flush();
+        file.close();
+        return Status::success();
+    }
+
     Status removeFile(const std::string& name) override {
         if (!LittleFS.remove(path(name).c_str())) {
             return Status::failure(StatusCode::RemoveFailed, "failed to remove LittleFS file");

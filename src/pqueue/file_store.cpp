@@ -3,29 +3,20 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <utility>
-#include <vector>
 
 namespace pqueue {
 namespace {
 
 using namespace storage_detail;
 
-constexpr const char* kIndexAName = "pqueue_idx_a.bin";
-constexpr const char* kIndexBName = "pqueue_idx_b.bin";
+constexpr const char* kIndexAName = "pqueue.meta_a";
+constexpr const char* kIndexBName = "pqueue.meta_b";
+constexpr const char* kSpoolName = "pqueue.spool";
 
 std::string bytesFromObject(const void* data, std::size_t size) {
     return std::string(static_cast<const char*>(data), size);
-}
-
-bool readIndexAt(FileSystem& fs, const char* name, IndexRecord& out) {
-    std::string bytes;
-    const Status read = fs.readFile(name, bytes);
-    if (!read.ok() || bytes.size() != sizeof(out)) {
-        return false;
-    }
-    std::memcpy(&out, bytes.data(), sizeof(out));
-    return validIndex(out);
 }
 
 bool fileExists(FileSystem& fs, const std::string& name) {
@@ -69,16 +60,68 @@ Status writeFileAtomic(FileSystem& fs, const std::string& name, const std::strin
     return st;
 }
 
-Status writeIndexAt(FileSystem& fs, const char* name, const IndexRecord& record) {
-    return writeFileAtomic(fs, name, bytesFromObject(&record, sizeof(record)));
+struct Layout {
+    std::uint32_t capacityRecords = 0;
+    std::uint32_t recordSizeBytes = 0;
+    std::uint32_t reservedBytes = 0;
+    std::uint32_t slotSizeBytes = 0;
+    std::uint32_t spoolBytes = 0;
+};
+
+bool makeLayout(const FileStoreConfig& config, Layout& out) {
+    if (config.recordSizeBytes == 0 || config.reservedBytes == 0) {
+        return false;
+    }
+    if (config.recordSizeBytes > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+    const auto slotSize = sizeof(RecordHeader) + config.recordSizeBytes;
+    if (slotSize > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+    const auto capacity = config.reservedBytes / slotSize;
+    if (capacity == 0 || capacity > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+    out.capacityRecords = static_cast<std::uint32_t>(capacity);
+    out.recordSizeBytes = static_cast<std::uint32_t>(config.recordSizeBytes);
+    out.reservedBytes = config.reservedBytes;
+    out.slotSizeBytes = static_cast<std::uint32_t>(slotSize);
+    out.spoolBytes = out.capacityRecords * out.slotSizeBytes;
+    return true;
 }
 
-std::string recordName(std::uint32_t sequence) {
-    char name[kMaxPathBytes];
-    if (!makeRecordName(sequence, name, sizeof(name))) {
-        return {};
+std::uint64_t slotOffset(const Layout& layout, std::uint32_t sequence) {
+    return static_cast<std::uint64_t>(sequence % layout.capacityRecords) * layout.slotSizeBytes;
+}
+
+struct ReadIndexResult {
+    bool exists = false;
+    bool configMismatch = false;
+    IndexRecord record;
+};
+
+ReadIndexResult readIndexAt(FileSystem& fs, const char* name, const Layout& layout) {
+    ReadIndexResult out;
+    std::string bytes;
+    const Status read = fs.readFile(name, bytes);
+    if (!read.ok()) {
+        return out;
     }
-    return name;
+    out.exists = true;
+    if (bytes.size() != sizeof(out.record)) {
+        return out;
+    }
+    std::memcpy(&out.record, bytes.data(), sizeof(out.record));
+    if (!validIndexShape(out.record)) {
+        return out;
+    }
+    out.configMismatch = !validIndexForConfig(out.record, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
+    return out;
+}
+
+bool usableIndex(const ReadIndexResult& result) {
+    return result.exists && validIndexShape(result.record) && !result.configMismatch;
 }
 
 } // namespace
@@ -146,6 +189,19 @@ Status FileStore::mount() {
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "mount");
     }
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config: reservedBytes must fit at least one recordSizeBytes slot"), "mount");
+    }
+    const auto a = readIndexAt(*fs, kIndexAName, layout);
+    const auto b = readIndexAt(*fs, kIndexBName, layout);
+    if (a.configMismatch || b.configMismatch) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "mount");
+    }
+    st = fs->resizeFile(kSpoolName, layout.spoolBytes);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
+    }
     return Status::success();
 }
 
@@ -154,41 +210,35 @@ Status FileStore::readIndex(FileStoreIndex& out) {
     if (!st.ok()) {
         return st;
     }
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "readIndex");
+    }
     const auto fs = fileSystem();
 
-    IndexRecord a;
-    IndexRecord b;
-    const bool hasA = readIndexAt(*fs, kIndexAName, a);
-    const bool hasB = readIndexAt(*fs, kIndexBName, b);
+    const auto a = readIndexAt(*fs, kIndexAName, layout);
+    const auto b = readIndexAt(*fs, kIndexBName, layout);
 
+    if (a.configMismatch || b.configMismatch) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "readIndex");
+    }
+
+    const bool hasA = usableIndex(a);
+    const bool hasB = usableIndex(b);
     if (hasA && hasB) {
-        out = fromRecord(a.generation >= b.generation ? a : b);
+        out = fromRecord(a.record.generation >= b.record.generation ? a.record : b.record);
         return Status::success();
     }
     if (hasA) {
-        out = fromRecord(a);
+        out = fromRecord(a.record);
         return Status::success();
     }
     if (hasB) {
-        out = fromRecord(b);
+        out = fromRecord(b.record);
         return Status::success();
     }
 
-    std::vector<std::string> files;
-    st = fs->listFiles(files);
-    if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "readIndex");
-    }
-
-    std::vector<std::uint32_t> sequences;
-    for (const auto& name : files) {
-        std::uint32_t sequence = 0;
-        if (parseRecordSequence(name, sequence)) {
-            sequences.push_back(sequence);
-        }
-    }
-
-    out = rebuildIndexFromSequences(sequences);
+    out = FileStoreIndex{};
     st = writeIndex(out);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "readIndex");
@@ -201,18 +251,26 @@ Status FileStore::writeIndex(const FileStoreIndex& index) {
     if (!st.ok()) {
         return st;
     }
-    if (index.tail < index.head || index.count != index.tail - index.head) {
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "writeIndex");
+    }
+    if (index.tail < index.head || index.count != index.tail - index.head || index.count > layout.capacityRecords) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "invalid queue index"), "writeIndex");
     }
     const auto fs = fileSystem();
 
-    IndexRecord currentA;
-    IndexRecord currentB;
-    const bool hasA = readIndexAt(*fs, kIndexAName, currentA);
-    const bool hasB = readIndexAt(*fs, kIndexBName, currentB);
-    const std::uint32_t generation = std::max(hasA ? currentA.generation : 0, hasB ? currentB.generation : 0) + 1;
-    const bool writeA = !hasA || (hasB && currentA.generation <= currentB.generation);
-    st = writeIndexAt(*fs, writeA ? kIndexAName : kIndexBName, toRecord(index, generation));
+    const auto currentA = readIndexAt(*fs, kIndexAName, layout);
+    const auto currentB = readIndexAt(*fs, kIndexBName, layout);
+    if (currentA.configMismatch || currentB.configMismatch) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "writeIndex");
+    }
+    const bool hasA = usableIndex(currentA);
+    const bool hasB = usableIndex(currentB);
+    const std::uint32_t generation = std::max(hasA ? currentA.record.generation : 0, hasB ? currentB.record.generation : 0) + 1;
+    const bool writeA = !hasA || (hasB && currentA.record.generation <= currentB.record.generation);
+    const IndexRecord record = toRecord(index, generation, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
+    st = writeFileAtomic(*fs, writeA ? kIndexAName : kIndexBName, bytesFromObject(&record, sizeof(record)));
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "writeIndex", kNoSequence, writeA ? kIndexAName : kIndexBName);
     }
@@ -224,23 +282,26 @@ Status FileStore::writeRecord(std::uint32_t sequence, const std::string& record)
     if (!st.ok()) {
         return st;
     }
-    if (record.size() > kMaxRecordBytes) {
-        return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds file-store maximum"), "writeRecord", sequence);
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "writeRecord", sequence);
+    }
+    if (record.size() > layout.recordSizeBytes) {
+        return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured pqueue slot size"), "writeRecord", sequence);
     }
 
-    const std::string name = recordName(sequence);
-    if (name.empty()) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid record sequence"), "writeRecord", sequence);
-    }
     RecordHeader header;
+    header.sequence = sequence;
     header.recordBytes = static_cast<std::uint32_t>(record.size());
     header.crc = recordCrc(header, record);
 
     std::string bytes = bytesFromObject(&header, sizeof(header));
     bytes.append(record);
-    st = writeFileAtomic(*fileSystem(), name, bytes);
+    bytes.resize(layout.slotSizeBytes, '\0');
+
+    st = fileSystem()->writeAt(kSpoolName, slotOffset(layout, sequence), bytes);
     if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "writeRecord", sequence, name.c_str());
+        return diagnostic(Severity::Error, st, "writeRecord", sequence, kSpoolName);
     }
     return Status::success();
 }
@@ -250,18 +311,18 @@ Status FileStore::readRecord(std::uint32_t sequence, std::string& out) {
     if (!st.ok()) {
         return st;
     }
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "readRecord", sequence);
+    }
 
-    const std::string name = recordName(sequence);
     std::string bytes;
-    if (name.empty()) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid record sequence"), "readRecord", sequence);
-    }
-    st = fileSystem()->readFile(name, bytes);
+    st = fileSystem()->readAt(kSpoolName, slotOffset(layout, sequence), layout.slotSizeBytes, bytes);
     if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "readRecord", sequence, name.c_str());
+        return diagnostic(Severity::Error, st, "readRecord", sequence, kSpoolName);
     }
-    if (bytes.size() < sizeof(RecordHeader)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "record file is truncated"), "readRecord", sequence, name.c_str());
+    if (bytes.size() != layout.slotSizeBytes || bytes.size() < sizeof(RecordHeader)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot is truncated"), "readRecord", sequence, kSpoolName);
     }
 
     RecordHeader header;
@@ -269,17 +330,16 @@ Status FileStore::readRecord(std::uint32_t sequence, std::string& out) {
     if (header.magic != kFileStoreRecordMagic ||
         header.version != kFormatVersion ||
         header.headerBytes != sizeof(RecordHeader) ||
-        header.recordBytes > kMaxRecordBytes) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "record header is invalid"), "readRecord", sequence, name.c_str());
+        header.sequence != sequence ||
+        header.recordBytes > layout.recordSizeBytes) {
+        // TODO: expose an fsck/recovery path that can log and repair/drop corrupt front records.
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot header is invalid"), "readRecord", sequence, kSpoolName);
     }
 
-    if (bytes.size() != sizeof(RecordHeader) + header.recordBytes) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "record size does not match header"), "readRecord", sequence, name.c_str());
-    }
-
-    std::string record = bytes.substr(sizeof(RecordHeader));
+    std::string record = bytes.substr(sizeof(RecordHeader), header.recordBytes);
     if (header.crc != recordCrc(header, record)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::CrcMismatch, "record CRC mismatch"), "readRecord", sequence, name.c_str());
+        // TODO: expose an fsck/recovery path that can log and repair/drop corrupt front records.
+        return diagnostic(Severity::Error, Status::failure(StatusCode::CrcMismatch, "spool slot CRC mismatch"), "readRecord", sequence, kSpoolName);
     }
 
     out = std::move(record);
@@ -291,14 +351,14 @@ Status FileStore::removeRecord(std::uint32_t sequence) {
     if (!st.ok()) {
         return st;
     }
-
-    const std::string name = recordName(sequence);
-    if (name.empty()) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid record sequence"), "removeRecord", sequence);
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "removeRecord", sequence);
     }
-    st = fileSystem()->removeFile(name);
+    const std::string empty(layout.slotSizeBytes, '\0');
+    st = fileSystem()->writeAt(kSpoolName, slotOffset(layout, sequence), empty);
     if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "removeRecord", sequence, name.c_str());
+        return diagnostic(Severity::Error, st, "removeRecord", sequence, kSpoolName);
     }
     return Status::success();
 }

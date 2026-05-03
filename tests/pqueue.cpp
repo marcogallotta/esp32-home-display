@@ -1,4 +1,5 @@
 #include "pqueue/queue.h"
+#include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
 
@@ -96,12 +97,36 @@ TEST_CASE("pqueue rejects records over the configured max size") {
     cleanSpool();
     pqueue::Config config;
     config.basePath = kSpoolDir.string();
-    config.maxRecordBytes = 4;
-    config.diskReserveBytes = 0;
+    config.recordSizeBytes = 4;
+    config.reservedBytes = 128;
     pqueue::Queue queue(config);
 
     CHECK_FALSE(queue.enqueue("12345").ok());
     CHECK_EQ(queue.stats().count, 0U);
+#endif
+}
+
+
+TEST_CASE("pqueue rejects newest record when the fixed ring is full") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 8;
+    config.reservedBytes = static_cast<std::uint32_t>((sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes) * 2);
+    pqueue::Queue queue(config);
+
+    REQUIRE(queue.enqueue("one").ok());
+    REQUIRE(queue.enqueue("two").ok());
+    const auto full = queue.enqueue("three");
+
+    CHECK_FALSE(full.ok());
+    CHECK(full.code == pqueue::StatusCode::QueueFull);
+    CHECK_EQ(queue.stats().count, 2U);
+
+    std::string out;
+    REQUIRE(queue.peek(out).ok());
+    CHECK_EQ(out, "one");
 #endif
 }
 
@@ -111,7 +136,8 @@ TEST_CASE("pqueue lock prevents two active queues using the same spool") {
 
     pqueue::Config config;
     config.basePath = kSpoolDir.string();
-    config.diskReserveBytes = 0;
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 160;
 
     pqueue::Queue first(config);
     REQUIRE(first.enqueue("held").ok());
@@ -133,7 +159,8 @@ TEST_CASE("pqueue releases lock when queue is destroyed") {
 
     pqueue::Config config;
     config.basePath = kSpoolDir.string();
-    config.diskReserveBytes = 0;
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 160;
 
     {
         pqueue::Queue first(config);

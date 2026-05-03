@@ -24,6 +24,8 @@ struct FileStoreConfig {
 #endif
     StorageBackend backend = StorageBackend::Default;
     std::shared_ptr<FileSystem> fileSystem;
+    std::uint32_t reservedBytes = 128 * 1024;
+    std::size_t recordSizeBytes = 4096;
     EventOptions events;
 };
 

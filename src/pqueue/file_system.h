@@ -16,6 +16,9 @@ public:
     virtual Status mount(const std::string& basePath) = 0;
     virtual Status readFile(const std::string& name, std::string& out) = 0;
     virtual Status writeFile(const std::string& name, const std::string& data) = 0;
+    virtual Status readAt(const std::string& name, std::uint64_t offset, std::size_t size, std::string& out) = 0;
+    virtual Status writeAt(const std::string& name, std::uint64_t offset, const std::string& data) = 0;
+    virtual Status resizeFile(const std::string& name, std::uint64_t size) = 0;
     virtual Status removeFile(const std::string& name) = 0;
     virtual Status renameFile(const std::string& fromName, const std::string& toName) = 0;
     virtual Status listFiles(std::vector<std::string>& out) = 0;

@@ -54,6 +54,58 @@ public:
         return Status::success();
     }
 
+
+    Status readAt(const std::string& name, std::uint64_t offset, std::size_t size, std::string& out) override {
+        errno = 0;
+        std::ifstream file(path(name), std::ios::binary);
+        if (!file) {
+            return Status::failure(StatusCode::ReadFailed, "failed to open file for positioned read", errno);
+        }
+        file.seekg(static_cast<std::streamoff>(offset));
+        if (!file.good()) {
+            return Status::failure(StatusCode::ReadFailed, "failed to seek file for read", errno);
+        }
+        out.assign(size, '\0');
+        file.read(out.data(), static_cast<std::streamsize>(size));
+        if (file.gcount() != static_cast<std::streamsize>(size)) {
+            return Status::failure(StatusCode::ReadFailed, "failed to read complete file range", errno);
+        }
+        return Status::success();
+    }
+
+    Status writeAt(const std::string& name, std::uint64_t offset, const std::string& data) override {
+        errno = 0;
+        std::fstream file(path(name), std::ios::binary | std::ios::in | std::ios::out);
+        if (!file) {
+            return Status::failure(StatusCode::WriteFailed, "failed to open file for positioned write", errno);
+        }
+        file.seekp(static_cast<std::streamoff>(offset));
+        if (!file.good()) {
+            return Status::failure(StatusCode::WriteFailed, "failed to seek file for write", errno);
+        }
+        file.write(data.data(), static_cast<std::streamsize>(data.size()));
+        if (!file.good()) {
+            return Status::failure(StatusCode::WriteFailed, "failed to write complete file range", errno);
+        }
+        return Status::success();
+    }
+
+    Status resizeFile(const std::string& name, std::uint64_t size) override {
+        std::error_code ec;
+        const auto fullPath = path(name);
+        if (!std::filesystem::exists(fullPath, ec)) {
+            std::ofstream create(fullPath, std::ios::binary);
+            if (!create) {
+                return Status::failure(StatusCode::WriteFailed, "failed to create file before resize", errno);
+            }
+        }
+        std::filesystem::resize_file(fullPath, size, ec);
+        if (ec) {
+            return Status::failure(StatusCode::WriteFailed, "failed to resize file", ec.value());
+        }
+        return Status::success();
+    }
+
     Status removeFile(const std::string& name) override {
         std::error_code ec;
         std::filesystem::remove(path(name), ec);

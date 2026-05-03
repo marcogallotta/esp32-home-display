@@ -323,7 +323,7 @@ pqueue::http::Config makeHttpConfig(
 #else
     httpConfig.queue.basePath = "pqueue_api_spool";
 #endif
-    httpConfig.queue.diskReserveBytes = config.api.outbox.diskReserveBytes;
+    httpConfig.queue.reservedBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
     httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
     httpConfig.outbox.events = {onEvent, callbackContext};

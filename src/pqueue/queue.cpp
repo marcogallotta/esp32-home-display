@@ -1,4 +1,5 @@
 #include "queue.h"
+#include "storage_common.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -31,6 +32,8 @@ Queue::Queue(Config config)
           storeConfig.basePath = config.basePath;
           storeConfig.backend = config.storageBackend;
           storeConfig.events = config.events;
+          storeConfig.reservedBytes = config.reservedBytes;
+          storeConfig.recordSizeBytes = config.recordSizeBytes;
           return storeConfig;
       }()) {}
 
@@ -105,12 +108,17 @@ Status Queue::enqueue(const std::string& record) {
     if (!st.ok()) {
         return st;
     }
-    if (record.size() > config_.maxRecordBytes) {
+    if (record.size() > config_.recordSizeBytes) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "enqueue");
     }
-    if (store_.freeBytes() <= config_.diskReserveBytes) {
-        // TODO: make full-queue behavior configurable instead of always rejecting newest.
-        return diagnostic(Severity::Warning, Status::failure(StatusCode::QueueFull, "queue disk reserve reached"), "enqueue");
+    const std::uint32_t slotSizeBytes = static_cast<std::uint32_t>(sizeof(storage_detail::RecordHeader) + config_.recordSizeBytes);
+    const std::uint32_t capacityRecords = slotSizeBytes == 0 ? 0 : config_.reservedBytes / slotSizeBytes;
+    if (capacityRecords == 0) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "enqueue");
+    }
+    if (index_.count >= capacityRecords) {
+        // TODO: Consider making full-buffer behavior configurable. Options: reject newest, drop oldest, overwrite oldest.
+        return diagnostic(Severity::Warning, Status::failure(StatusCode::QueueFull, "queue is full"), "enqueue");
     }
 
     const std::uint32_t sequence = index_.tail;
@@ -174,7 +182,7 @@ Status Queue::rewriteFront(const std::string& record) {
     if (index_.count == 0) {
         return Status::failure(StatusCode::QueueEmpty, "queue is empty");
     }
-    if (record.size() > config_.maxRecordBytes) {
+    if (record.size() > config_.recordSizeBytes) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "rewriteFront");
     }
     return store_.writeRecord(index_.head, record);
