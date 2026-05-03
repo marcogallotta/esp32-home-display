@@ -12,6 +12,7 @@ BUILD_DIR := .build_desktop
 OBJ_DIR := $(BUILD_DIR)/obj/main
 MAIN_TEST_API_OBJ_DIR := $(BUILD_DIR)/obj/main-test-api
 TEST_OBJ_DIR := $(BUILD_DIR)/obj/tests
+PQUEUE_PROFILING_OBJ_DIR := $(BUILD_DIR)/obj/pqueue-profiling
 
 COV_BUILD_DIR := .build_coverage
 COV_OBJ_DIR := $(COV_BUILD_DIR)/obj
@@ -20,6 +21,7 @@ COV_FLAGS := -O0 -g --coverage
 MAIN_TARGET := $(BUILD_DIR)/main
 MAIN_TEST_API_TARGET := $(BUILD_DIR)/main-test-api
 TEST_TARGET := $(BUILD_DIR)/tests
+PQUEUE_PROFILING_TARGET := $(BUILD_DIR)/pqueue-profiling
 COV_TEST_TARGET := $(COV_BUILD_DIR)/tests
 
 # --- COMMON SOURCES ---
@@ -88,6 +90,18 @@ TEST_SRC := \
 	tests/ui_state.cpp \
 	$(COMMON_SRC)
 
+PQUEUE_PROFILING_SRC := \
+	tools/pqueue_profiling.cpp \
+	src/pqueue/envelope.cpp \
+	src/pqueue/http/outbox.cpp \
+	src/pqueue/http/request_envelope.cpp \
+	src/pqueue/file_store.cpp \
+	src/pqueue/storage_common.cpp \
+	src/pqueue/storage_posix.cpp \
+	src/pqueue/storage_littlefs.cpp \
+	src/pqueue/outbox.cpp \
+	src/pqueue/queue.cpp
+
 # --- OBJECT CONVERSION ---
 
 define make_objs
@@ -97,11 +111,12 @@ endef
 MAIN_OBJ := $(call make_objs,$(MAIN_SRC),$(OBJ_DIR))
 MAIN_TEST_API_OBJ := $(call make_objs,$(MAIN_TEST_API_SRC),$(MAIN_TEST_API_OBJ_DIR))
 TEST_OBJ := $(call make_objs,$(TEST_SRC),$(TEST_OBJ_DIR))
+PQUEUE_PROFILING_OBJ := $(call make_objs,$(PQUEUE_PROFILING_SRC),$(PQUEUE_PROFILING_OBJ_DIR))
 COV_TEST_OBJ := $(call make_objs,$(TEST_SRC),$(COV_OBJ_DIR))
 
 # --- RULES ---
 
-.PHONY: all clean clean-coverage run run-test-api tests run-tests coverage
+.PHONY: all clean clean-coverage run run-test-api tests run-tests coverage pqueue-profiling
 
 all: $(MAIN_TARGET)
 
@@ -118,6 +133,10 @@ $(TEST_TARGET): $(TEST_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $^ -o $@ $(LDFLAGS)
 
+$(PQUEUE_PROFILING_TARGET): $(PQUEUE_PROFILING_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $^ -o $@ $(LDFLAGS)
+
 run: $(MAIN_TARGET)
 	./$(MAIN_TARGET)
 
@@ -126,6 +145,9 @@ run-test-api: $(MAIN_TEST_API_TARGET)
 
 run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
+
+pqueue-profiling: $(PQUEUE_PROFILING_TARGET)
+	./$(PQUEUE_PROFILING_TARGET) all
 
 coverage: $(COV_TEST_TARGET)
 	./$(COV_TEST_TARGET)
@@ -161,6 +183,10 @@ $(TEST_OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(PQUEUE_PROFILING_OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(COV_OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS_20) $(COV_FLAGS) -c $< -o $@
@@ -175,4 +201,4 @@ clean:
 clean-coverage:
 	rm -rf $(COV_BUILD_DIR)
 
--include $(MAIN_OBJ:.o=.d) $(MAIN_TEST_API_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(COV_TEST_OBJ:.o=.d)
+-include $(MAIN_OBJ:.o=.d) $(MAIN_TEST_API_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(PQUEUE_PROFILING_OBJ:.o=.d) $(COV_TEST_OBJ:.o=.d)

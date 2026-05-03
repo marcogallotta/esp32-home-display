@@ -73,6 +73,7 @@ Queue::Queue(Config config)
           storeConfig.basePath = config.basePath;
           storeConfig.backend = config.storageBackend;
           storeConfig.events = config.events;
+          storeConfig.fileSystem = config.fileSystem;
           storeConfig.reservedBytes = config.reservedBytes;
           storeConfig.recordSizeBytes = config.recordSizeBytes;
           return storeConfig;

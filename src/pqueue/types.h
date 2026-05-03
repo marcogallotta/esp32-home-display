@@ -21,6 +21,9 @@ struct Config {
     std::uint32_t reservedBytes = 128 * 1024;
     std::size_t recordSizeBytes = 4096;
     EventOptions events;
+    // Optional filesystem injection for tests/profiling/custom backends.
+    // Production users normally leave this unset and select storageBackend instead.
+    std::shared_ptr<FileSystem> fileSystem;
     // TODO: make full-buffer behavior configurable. Options: reject newest, drop oldest, overwrite oldest.
 };
 
