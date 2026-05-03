@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "events.h"
 #include "file_system.h"
@@ -35,12 +36,48 @@ struct FileStoreIndex {
     std::uint32_t count = 0;
 };
 
+enum class ValidationIssueCode {
+    InvalidConfig,
+    MetadataMissing,
+    MetadataCorrupt,
+    ConfigMismatch,
+    SpoolMissing,
+    SpoolSizeMismatch,
+    InvalidRingState,
+    SlotReadFailed,
+    SlotHeaderInvalid,
+    SlotCrcMismatch,
+};
+
+struct ValidationIssue {
+    ValidationIssueCode code = ValidationIssueCode::InvalidConfig;
+    std::string message;
+    std::uint32_t slotIndex = 0;
+    std::uint32_t expectedSequence = 0;
+    std::uint32_t actualSequence = 0;
+    bool hasSlotIndex = false;
+    bool hasExpectedSequence = false;
+    bool hasActualSequence = false;
+};
+
+struct ValidationResult {
+    bool ok = true;
+    std::uint32_t checkedRecords = 0;
+    bool stoppedEarly = false;
+    std::vector<ValidationIssue> errors;
+};
+
+struct ValidationOptions {
+    std::size_t maxErrors = 100;
+};
+
 class FileStore {
 public:
     explicit FileStore(FileStoreConfig config = FileStoreConfig{});
     explicit FileStore(std::string basePath);
 
     Status mount();
+    ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Status readIndex(FileStoreIndex& out);
     Status writeIndex(const FileStoreIndex& index);
 

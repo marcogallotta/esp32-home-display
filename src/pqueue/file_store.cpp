@@ -136,6 +136,38 @@ bool usableIndex(const ReadIndexResult& result) {
     return result.exists && validIndexShape(result.record) && !result.configMismatch;
 }
 
+
+bool ringStateMatches(const IndexRecord& record) {
+    return record.count <= record.capacityRecords &&
+           record.tail >= record.head &&
+           record.count == record.tail - record.head;
+}
+
+void addValidationError(ValidationResult& result, const ValidationOptions& options, ValidationIssue issue) {
+    result.ok = false;
+    if (result.errors.size() < options.maxErrors) {
+        result.errors.push_back(std::move(issue));
+    } else {
+        result.stoppedEarly = true;
+    }
+}
+
+ValidationIssue makeIssue(ValidationIssueCode code, std::string message) {
+    ValidationIssue issue;
+    issue.code = code;
+    issue.message = std::move(message);
+    return issue;
+}
+
+ValidationIssue makeSlotIssue(ValidationIssueCode code, std::string message, std::uint32_t slotIndex, std::uint32_t expectedSequence) {
+    ValidationIssue issue = makeIssue(code, std::move(message));
+    issue.slotIndex = slotIndex;
+    issue.expectedSequence = expectedSequence;
+    issue.hasSlotIndex = true;
+    issue.hasExpectedSequence = true;
+    return issue;
+}
+
 } // namespace
 
 FileStore::FileStore(FileStoreConfig config)
@@ -242,6 +274,129 @@ Status FileStore::mount() {
     }
 
     return Status::success();
+}
+
+
+ValidationResult FileStore::validate(const ValidationOptions& options) {
+    ValidationResult result;
+
+    const auto fs = fileSystem();
+    if (!fs) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidConfig, "file system backend unavailable"));
+        return result;
+    }
+
+    Status st = fs->mount(config_.basePath);
+    if (!st.ok()) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidConfig, st.message));
+        return result;
+    }
+
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidConfig, "invalid pqueue storage config"));
+        return result;
+    }
+
+    const auto a = readIndexAt(*fs, kIndexAName, layout);
+    const auto b = readIndexAt(*fs, kIndexBName, layout);
+    const bool hasAnyMetadata = a.exists || b.exists;
+    const bool hasSpool = fileExists(*fs, kSpoolName);
+
+    if (!hasAnyMetadata) {
+        if (hasSpool) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataMissing, "pqueue spool exists but metadata is missing"));
+        }
+        return result;
+    }
+
+    if (!hasSpool) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::SpoolMissing, "pqueue metadata exists but spool file is missing"));
+        return result;
+    }
+
+    if (a.exists && !validIndexShape(a.record)) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue meta_a is corrupt or invalid"));
+    }
+    if (b.exists && !validIndexShape(b.record)) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue meta_b is corrupt or invalid"));
+    }
+    if (a.configMismatch) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue meta_a config does not match current storage config"));
+    }
+    if (b.configMismatch) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue meta_b config does not match current storage config"));
+    }
+
+    const bool hasA = usableIndex(a);
+    const bool hasB = usableIndex(b);
+    if (!hasA && !hasB) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "no usable pqueue metadata copy found"));
+        return result;
+    }
+
+    std::uint64_t actualSpoolBytes = 0;
+    st = fs->fileSize(kSpoolName, actualSpoolBytes);
+    if (!st.ok()) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::SpoolMissing, "pqueue spool file is missing"));
+        return result;
+    }
+    if (actualSpoolBytes != layout.spoolBytes) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::SpoolSizeMismatch, "pqueue spool size does not match configured storage layout"));
+        return result;
+    }
+
+    const IndexRecord& active = hasA && hasB
+        ? (a.record.generation >= b.record.generation ? a.record : b.record)
+        : (hasA ? a.record : b.record);
+
+    if (!ringStateMatches(active)) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidRingState, "pqueue metadata ring state is invalid"));
+        return result;
+    }
+
+    for (std::uint32_t sequence = active.head; sequence < active.tail; ++sequence) {
+        const std::uint32_t slotIndex = sequence % layout.capacityRecords;
+        std::string bytes;
+        st = fs->readAt(kSpoolName, slotOffset(layout, sequence), layout.slotSizeBytes, bytes);
+        if (!st.ok() || bytes.size() != layout.slotSizeBytes || bytes.size() < sizeof(RecordHeader)) {
+            addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotReadFailed, "failed to read active pqueue spool slot", slotIndex, sequence));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+
+        RecordHeader header;
+        std::memcpy(&header, bytes.data(), sizeof(header));
+        if (header.magic != kFileStoreRecordMagic ||
+            header.version != kFormatVersion ||
+            header.headerBytes != sizeof(RecordHeader) ||
+            header.sequence != sequence ||
+            header.recordBytes > layout.recordSizeBytes) {
+            auto issue = makeSlotIssue(ValidationIssueCode::SlotHeaderInvalid, "active pqueue spool slot header is invalid", slotIndex, sequence);
+            issue.actualSequence = header.sequence;
+            issue.hasActualSequence = true;
+            addValidationError(result, options, std::move(issue));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+
+        const std::string record = bytes.substr(sizeof(RecordHeader), header.recordBytes);
+        if (header.crc != recordCrc(header, record)) {
+            addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotCrcMismatch, "active pqueue spool slot CRC mismatch", slotIndex, sequence));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+
+        ++result.checkedRecords;
+    }
+
+    return result;
 }
 
 Status FileStore::readIndex(FileStoreIndex& out) {

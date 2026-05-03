@@ -175,6 +175,14 @@ public:
         it->second[slot * slotSize] ^= static_cast<char>(0xff);
     }
 
+    void corruptSlotPayload(std::uint32_t slot, std::size_t slotSize) {
+        auto it = files.find("pqueue.spool");
+        REQUIRE(it != files.end());
+        const auto offset = slot * slotSize + sizeof(pqueue::storage_detail::RecordHeader);
+        REQUIRE(it->second.size() > offset);
+        it->second[offset] ^= static_cast<char>(0xff);
+    }
+
     std::map<std::string, std::string> files;
     std::string mountedBasePath;
 
@@ -402,6 +410,111 @@ TEST_CASE("FileStore fails loudly when spool size does not match layout") {
     const auto status = reopened.mount();
     REQUIRE_FALSE(status.ok());
     CHECK(status.code == pqueue::StatusCode::InvalidIndex);
+}
+
+
+TEST_CASE("FileStore validate reports clean active records") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeRecord(0, "first").ok());
+    REQUIRE(store.writeRecord(1, "second").ok());
+    REQUIRE(store.writeIndex({0, 2, 2}).ok());
+
+    const auto result = store.validate();
+    CHECK(result.ok);
+    CHECK_EQ(result.checkedRecords, 2U);
+    CHECK(result.errors.empty());
+}
+
+TEST_CASE("FileStore validate is read-only for empty uninitialized storage") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    const auto result = store.validate();
+    CHECK(result.ok);
+    CHECK_EQ(result.checkedRecords, 0U);
+    CHECK(result.errors.empty());
+    CHECK_FALSE(fileSystem->exists("pqueue.spool"));
+}
+
+TEST_CASE("FileStore validate detects corrupt active slot header") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeRecord(0, "payload").ok());
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    fileSystem->corruptSlotHeader(0, slotSize());
+
+    const auto result = store.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotHeaderInvalid);
+    CHECK(result.errors[0].hasSlotIndex);
+    CHECK_EQ(result.errors[0].slotIndex, 0U);
+    CHECK_EQ(result.checkedRecords, 0U);
+}
+
+TEST_CASE("FileStore validate detects corrupt active slot payload") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeRecord(0, "payload").ok());
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    fileSystem->corruptSlotPayload(0, slotSize());
+
+    const auto result = store.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotCrcMismatch);
+}
+
+TEST_CASE("FileStore validate ignores inactive corrupt slots") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeRecord(0, "old").ok());
+    REQUIRE(store.writeRecord(1, "active").ok());
+    REQUIRE(store.writeIndex({1, 2, 1}).ok());
+    fileSystem->corruptSlotHeader(0, slotSize());
+
+    const auto result = store.validate();
+    CHECK(result.ok);
+    CHECK_EQ(result.checkedRecords, 1U);
+    CHECK(result.errors.empty());
+}
+
+TEST_CASE("FileStore validate reports corrupt metadata copy") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeRecord(0, "payload").ok());
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    fileSystem->corruptFile("pqueue.meta_a");
+
+    const auto result = store.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::MetadataCorrupt);
+}
+
+TEST_CASE("FileStore validate caps reported errors") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeRecord(0, "first").ok());
+    REQUIRE(store.writeRecord(1, "second").ok());
+    REQUIRE(store.writeIndex({0, 2, 2}).ok());
+    fileSystem->corruptSlotHeader(0, slotSize());
+    fileSystem->corruptSlotHeader(1, slotSize());
+
+    pqueue::ValidationOptions options;
+    options.maxErrors = 1;
+    const auto result = store.validate(options);
+    REQUIRE_FALSE(result.ok);
+    CHECK(result.stoppedEarly);
+    CHECK_EQ(result.errors.size(), 1U);
 }
 
 #endif // !ARDUINO
