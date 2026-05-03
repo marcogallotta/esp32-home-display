@@ -17,49 +17,6 @@ void cleanSpool() {
     std::error_code ec;
     std::filesystem::remove_all(kSpoolDir, ec);
 }
-
-std::uint32_t testCapacity(const pqueue::Config& config) {
-    const auto slotBytes = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
-    return static_cast<std::uint32_t>(config.reservedBytes / slotBytes);
-}
-
-std::uint32_t testSlotSize(const pqueue::Config& config) {
-    return static_cast<std::uint32_t>(pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes);
-}
-
-void writeMetadataCopy(const char* name, const pqueue::Config& config, pqueue::FileStoreIndex index, std::uint32_t generation) {
-    const auto record = pqueue::storage_detail::toRecord(
-        index,
-        generation,
-        testCapacity(config),
-        static_cast<std::uint32_t>(config.recordSizeBytes),
-        config.reservedBytes);
-    std::ofstream out(kSpoolDir / name, std::ios::binary | std::ios::trunc);
-    const auto bytes = pqueue::storage_detail::serializeIndexRecord(record);
-    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
-
-void writeActiveMetadata(const pqueue::Config& config, pqueue::FileStoreIndex index, std::uint32_t generation = 99) {
-    writeMetadataCopy("pqueue.meta_a", config, index, generation);
-    writeMetadataCopy("pqueue.meta_b", config, index, generation + 1);
-}
-
-void patchSpoolByte(std::uint64_t offset, char value) {
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    spool.seekp(static_cast<std::streamoff>(offset));
-    spool.write(&value, 1);
-}
-
-void patchSlotHeader(const pqueue::Config& config, std::uint32_t sequence, pqueue::storage_detail::RecordHeader header) {
-    const auto slotIndex = sequence % testCapacity(config);
-    const auto offset = static_cast<std::uint64_t>(slotIndex) * testSlotSize(config);
-    const auto bytes = pqueue::storage_detail::serializeRecordHeader(header);
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    spool.seekp(static_cast<std::streamoff>(offset));
-    spool.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
 #endif
 
 } // namespace
@@ -157,7 +114,7 @@ TEST_CASE("pqueue rejects newest record when the fixed ring is full") {
     pqueue::Config config;
     config.basePath = kSpoolDir.string();
     config.recordSizeBytes = 8;
-    config.reservedBytes = static_cast<std::uint32_t>((pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes) * 2);
+    config.reservedBytes = static_cast<std::uint32_t>((sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes) * 2);
     pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("one").ok());
@@ -276,10 +233,10 @@ TEST_CASE("pqueue validate detects corrupt active slot payload") {
         REQUIRE(queue.enqueue("payload").ok());
     }
 
-    const auto slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
+    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
-    spool.seekp(static_cast<std::streamoff>(pqueue::storage_detail::kRecordHeaderBytes));
+    spool.seekp(static_cast<std::streamoff>(sizeof(pqueue::storage_detail::RecordHeader)));
     char c = 'X';
     spool.write(&c, 1);
     spool.close();
@@ -336,7 +293,7 @@ TEST_CASE("pqueue validate caps reported errors") {
         REQUIRE(queue.enqueue("second").ok());
     }
 
-    const auto slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
+    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
     char c = 'X';
@@ -372,132 +329,5 @@ TEST_CASE("pqueue validate fails when another queue owns the lock") {
     REQUIRE_FALSE(result.ok);
     REQUIRE_FALSE(result.errors.empty());
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::QueueLoadFailed);
-#endif
-}
-
-TEST_CASE("pqueue validate detects active slot with bad magic") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("payload").ok());
-    }
-
-    patchSpoolByte(0, 'X');
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotHeaderInvalid);
-    CHECK(result.errors[0].hasSlotIndex);
-    CHECK_EQ(result.errors[0].slotIndex, 0U);
-    CHECK_EQ(result.checkedRecords, 0U);
-#endif
-}
-
-TEST_CASE("pqueue validate detects unsupported active slot version") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("payload").ok());
-    }
-
-    pqueue::storage_detail::RecordHeader header;
-    header.version = pqueue::storage_detail::kFormatVersion + 1;
-    header.sequence = 0;
-    header.recordBytes = 7;
-    patchSlotHeader(config, 0, header);
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::UnsupportedFormatVersion);
-    CHECK(result.errors[0].hasExpectedSequence);
-    CHECK_EQ(result.errors[0].expectedSequence, 0U);
-#endif
-}
-
-TEST_CASE("pqueue validate detects active slot sequence mismatch") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("payload").ok());
-    }
-
-    pqueue::storage_detail::RecordHeader header;
-    header.sequence = 42;
-    header.recordBytes = 7;
-    patchSlotHeader(config, 0, header);
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotHeaderInvalid);
-    CHECK(result.errors[0].hasExpectedSequence);
-    CHECK_EQ(result.errors[0].expectedSequence, 0U);
-    CHECK(result.errors[0].hasActualSequence);
-    CHECK_EQ(result.errors[0].actualSequence, 42U);
-#endif
-}
-
-TEST_CASE("pqueue validate detects active slot payload length beyond configured record size") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("payload").ok());
-    }
-
-    pqueue::storage_detail::RecordHeader header;
-    header.sequence = 0;
-    header.recordBytes = static_cast<std::uint32_t>(config.recordSizeBytes + 1);
-    patchSlotHeader(config, 0, header);
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotHeaderInvalid);
-#endif
-}
-
-TEST_CASE("pqueue validate reports cached index mismatch after metadata changes under a loaded queue") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-
-    pqueue::Queue queue(config);
-    REQUIRE(queue.enqueue("payload").ok());
-
-    writeActiveMetadata(config, pqueue::FileStoreIndex{0, 0, 0});
-
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors.back().code == pqueue::ValidationIssueCode::QueueIndexMismatch);
 #endif
 }

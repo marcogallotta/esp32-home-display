@@ -75,6 +75,7 @@ MAIN_TEST_API_SRC := \
 TEST_SRC := \
 	tests/api_payloads.cpp \
 	tests/api_sensor_write_policy.cpp \
+	tests/api_sync.cpp \
 	tests/config.cpp \
 	tests/main.cpp \
 	tests/pqueue.cpp \
@@ -86,8 +87,12 @@ TEST_SRC := \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
+	tests/switchbot_ble.cpp \
+	tests/switchbot_protocol.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
+	tests/xiaomi_ble.cpp \
+	tests/xiaomi_protocol.cpp \
 	$(COMMON_SRC)
 
 PQUEUE_PROFILING_SRC := \

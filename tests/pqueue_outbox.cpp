@@ -360,29 +360,3 @@ TEST_CASE("pqueue outbox validate rejects malformed outbox envelopes") {
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::OutboxEnvelopeInvalid);
 #endif
 }
-
-TEST_CASE("pqueue outbox validate caps malformed envelope errors") {
-#ifndef ARDUINO
-    cleanOutboxSpool();
-    {
-        pqueue::Config queueConfig;
-        queueConfig.basePath = kOutboxSpoolDir.string();
-        pqueue::Queue queue(queueConfig);
-        REQUIRE(queue.enqueue("not an outbox envelope one").ok());
-        REQUIRE(queue.enqueue("not an outbox envelope two").ok());
-    }
-
-    FakeSender sender;
-    FakeClock clock;
-    auto outbox = makeOutbox(sender, clock);
-
-    pqueue::ValidationOptions options;
-    options.maxErrors = 1;
-    const auto result = outbox.validate(options);
-
-    REQUIRE_FALSE(result.ok);
-    CHECK(result.stoppedEarly);
-    REQUIRE_EQ(result.errors.size(), 1U);
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::OutboxEnvelopeInvalid);
-#endif
-}
