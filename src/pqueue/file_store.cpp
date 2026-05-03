@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <utility>
 
 namespace pqueue {
@@ -104,7 +105,9 @@ std::uint64_t slotOffset(const Layout& layout, std::uint32_t sequence) {
 
 struct ReadIndexResult {
     bool exists = false;
+    bool unsupportedFormatVersion = false;
     bool configMismatch = false;
+    std::uint16_t foundVersion = 0;
     IndexRecord record;
 };
 
@@ -117,6 +120,13 @@ ReadIndexResult readIndexAt(FileSystem& fs, const char* name, const Layout& layo
     }
     out.exists = true;
     if (!parseIndexRecord(bytes, out.record)) {
+        return out;
+    }
+    out.foundVersion = out.record.version;
+    if (out.record.magic == kFileStoreIndexMagic &&
+        out.record.headerBytes == kIndexRecordBytes &&
+        out.record.version != kFormatVersion) {
+        out.unsupportedFormatVersion = true;
         return out;
     }
     if (!validIndexShape(out.record)) {
@@ -151,6 +161,20 @@ ValidationIssue makeIssue(ValidationIssueCode code, std::string message) {
     issue.code = code;
     issue.message = std::move(message);
     return issue;
+}
+
+std::string unsupportedFormatMessage(std::uint16_t foundVersion) {
+    return "Unsupported pqueue storage format: found version " +
+           std::to_string(foundVersion) +
+           ", library supports version " +
+           std::to_string(kFormatVersion) +
+           ". Delete/reformat queue storage to continue.";
+}
+
+Status unsupportedFormatStatus() {
+    return Status::failure(
+        StatusCode::UnsupportedFormatVersion,
+        "unsupported pqueue storage format; delete or reformat queue files to continue");
 }
 
 ValidationIssue makeSlotIssue(ValidationIssueCode code, std::string message, std::uint32_t slotIndex, std::uint32_t expectedSequence) {
@@ -234,6 +258,9 @@ Status FileStore::mount() {
 
     const auto a = readIndexAt(*fs, kIndexAName, layout);
     const auto b = readIndexAt(*fs, kIndexBName, layout);
+    if (a.unsupportedFormatVersion || b.unsupportedFormatVersion) {
+        return diagnostic(Severity::Error, unsupportedFormatStatus(), "mount");
+    }
     if (a.configMismatch || b.configMismatch) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "mount");
     }
@@ -309,10 +336,14 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         return result;
     }
 
-    if (a.exists && !validIndexShape(a.record)) {
+    if (a.unsupportedFormatVersion) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::UnsupportedFormatVersion, unsupportedFormatMessage(a.foundVersion)));
+    } else if (a.exists && !validIndexShape(a.record)) {
         addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue meta_a is corrupt or invalid"));
     }
-    if (b.exists && !validIndexShape(b.record)) {
+    if (b.unsupportedFormatVersion) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::UnsupportedFormatVersion, unsupportedFormatMessage(b.foundVersion)));
+    } else if (b.exists && !validIndexShape(b.record)) {
         addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue meta_b is corrupt or invalid"));
     }
     if (a.configMismatch) {
@@ -364,6 +395,15 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         RecordHeader header;
         if (!parseRecordHeader(bytes, header)) {
             addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotHeaderInvalid, "active pqueue spool slot header is truncated", slotIndex, sequence));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+        if (header.magic == kFileStoreRecordMagic &&
+            header.headerBytes == kRecordHeaderBytes &&
+            header.version != kFormatVersion) {
+            addValidationError(result, options, makeSlotIssue(ValidationIssueCode::UnsupportedFormatVersion, unsupportedFormatMessage(header.version), slotIndex, sequence));
             if (result.stoppedEarly) {
                 return result;
             }

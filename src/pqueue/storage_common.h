@@ -10,7 +10,12 @@ namespace pqueue::storage_detail {
 
 constexpr std::uint32_t kFileStoreIndexMagic = 0x50514958;
 constexpr std::uint32_t kFileStoreRecordMagic = 0x50515243;
-constexpr std::uint16_t kFormatVersion = 2;
+// On-disk pqueue storage format.
+// 0 = unreleased/unstable development format.
+// 1+ = public stable formats.
+// Only exact-version reads are supported; future versions may add upgrade paths,
+// but never automatic downgrades.
+constexpr std::uint16_t kFormatVersion = 0;
 constexpr std::size_t kMaxPathBytes = 160;
 
 constexpr std::uint16_t kIndexRecordBytes = 40;

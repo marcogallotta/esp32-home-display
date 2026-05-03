@@ -255,6 +255,9 @@ std::string byteString(std::initializer_list<unsigned int> values) {
 
 } // namespace
 
+TEST_CASE("storage common uses pre-release on-disk format version zero") {
+    CHECK_EQ(pqueue::storage_detail::kFormatVersion, 0U);
+}
 
 TEST_CASE("storage common serializes index record as explicit little endian bytes") {
     pqueue::storage_detail::IndexRecord record;
@@ -268,11 +271,11 @@ TEST_CASE("storage common serializes index record as explicit little endian byte
     record.crc = pqueue::storage_detail::indexCrc(record);
 
     const std::string expected = byteString({
-        0x58, 0x49, 0x51, 0x50, 0x02, 0x00, 0x28, 0x00,
+        0x58, 0x49, 0x51, 0x50, 0x00, 0x00, 0x28, 0x00,
         0x03, 0x00, 0x00, 0x00, 0x44, 0x33, 0x22, 0x11,
         0x88, 0x77, 0x66, 0x55, 0x09, 0x00, 0x00, 0x00,
         0x0b, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
-        0x07, 0x00, 0x00, 0x00, 0x36, 0x56, 0x39, 0xfd,
+        0x07, 0x00, 0x00, 0x00, 0x23, 0x5b, 0xfc, 0xc5,
     });
 
     CHECK_EQ(pqueue::storage_detail::serializeIndexRecord(record), expected);
@@ -292,9 +295,9 @@ TEST_CASE("storage common serializes slot header as explicit little endian bytes
     header.crc = pqueue::storage_detail::recordCrc(header, "abc");
 
     const std::string expected = byteString({
-        0x43, 0x52, 0x51, 0x50, 0x02, 0x00, 0x14, 0x00,
+        0x43, 0x52, 0x51, 0x50, 0x00, 0x00, 0x14, 0x00,
         0x04, 0x03, 0x02, 0x01, 0x03, 0x00, 0x00, 0x00,
-        0xb2, 0x04, 0x43, 0x3e,
+        0x23, 0xb5, 0xc5, 0x96,
     });
 
     CHECK_EQ(pqueue::storage_detail::serializeRecordHeader(header), expected);
@@ -404,6 +407,27 @@ TEST_CASE("FileStore fails loudly when storage config changes") {
     const auto status = reopenedWithDifferentSlotSize.readIndex(out);
     REQUIRE_FALSE(status.ok());
     CHECK(status.code == pqueue::StatusCode::InvalidIndex);
+}
+
+TEST_CASE("FileStore rejects unsupported on-disk format version") {
+    auto fileSystem = makeFakeFileSystem();
+
+    pqueue::storage_detail::IndexRecord record;
+    record.version = pqueue::storage_detail::kFormatVersion + 1;
+    record.capacityRecords = 3;
+    record.recordSizeBytes = 32;
+    record.reservedBytes = 160;
+    record.generation = 1;
+    record.crc = pqueue::storage_detail::indexCrc(record);
+
+    fileSystem->files["pqueue.meta_a"] = pqueue::storage_detail::serializeIndexRecord(record);
+    fileSystem->files["pqueue.spool"].resize(3U * slotSize());
+
+    auto store = makeStore(fileSystem, {}, 160, 32);
+    pqueue::FileStoreIndex out;
+    const auto status = store.readIndex(out);
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::UnsupportedFormatVersion);
 }
 
 TEST_CASE("FileStore rounds reserved bytes down to whole slots") {

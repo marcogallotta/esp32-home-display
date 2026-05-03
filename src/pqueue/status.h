@@ -16,6 +16,7 @@ enum class StatusCode {
     ListFailed,
 
     InvalidIndex,
+    UnsupportedFormatVersion,
     InvalidRecord,
     CrcMismatch,
     RecordTooLarge,
@@ -41,6 +42,7 @@ inline const char* statusCodeName(StatusCode code) {
         case StatusCode::RemoveFailed: return "remove_failed";
         case StatusCode::ListFailed: return "list_failed";
         case StatusCode::InvalidIndex: return "invalid_index";
+        case StatusCode::UnsupportedFormatVersion: return "unsupported_format_version";
         case StatusCode::InvalidRecord: return "invalid_record";
         case StatusCode::CrcMismatch: return "crc_mismatch";
         case StatusCode::RecordTooLarge: return "record_too_large";
