@@ -13,6 +13,31 @@
 namespace pqueue::http {
 namespace {
 
+void emitTransportEvent(
+    const TransportConfig& config,
+    Severity severity,
+    Status status,
+    const char* operation,
+    const char* url,
+    std::size_t headerCount,
+    std::size_t bodySize,
+    int httpStatus = 0
+) {
+    Event event;
+    event.kind = EventKind::Diagnostic;
+    event.severity = severity;
+    event.status = status;
+    event.component = "Esp32ArduinoTransport";
+    event.operation = operation;
+    event.method = "POST";
+    event.path = url == nullptr ? "" : url;
+    event.bodyBytes = static_cast<std::uint32_t>(bodySize);
+    event.headerCount = static_cast<std::uint32_t>(headerCount);
+    event.timeoutMs = config.timeoutMs;
+    event.httpStatus = httpStatus;
+    config.events.emit(event);
+}
+
 std::string readFileToString(fs::FS* fileSystem, const char* path) {
     if (fileSystem == nullptr || path == nullptr || path[0] == '\0') {
         return {};
@@ -45,20 +70,61 @@ Response Esp32ArduinoTransport::post(
     std::size_t bodySize
 ) {
     if (url == nullptr) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Error,
+            Status::failure(StatusCode::InvalidArgument, "HTTP POST URL was null"),
+            "post_invalid_url",
+            nullptr,
+            headerCount,
+            bodySize);
         return {kNoStatusCode, TransportError::Unknown};
     }
 
+    emitTransportEvent(
+        config_.common,
+        Severity::Debug,
+        Status::success(),
+        config_.caCertPath == nullptr ? "post_start_no_ca_cert_path" : "post_start_with_ca_cert_path",
+        url,
+        headerCount,
+        bodySize);
+
     if (!isNetworkReady()) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Info,
+            Status::failure(StatusCode::BackendUnavailable, "network was not ready before HTTP POST"),
+            "network_not_ready",
+            url,
+            headerCount,
+            bodySize);
         return {kNoStatusCode, TransportError::Network};
     }
 
     WiFiClientSecure client;
     if (!configureTlsClient(client)) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Error,
+            Status::failure(StatusCode::SendFailed, "failed to configure TLS client"),
+            "configure_tls",
+            url,
+            headerCount,
+            bodySize);
         return {kNoStatusCode, TransportError::Tls};
     }
 
     HTTPClient http;
     if (!http.begin(client, url)) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Error,
+            Status::failure(StatusCode::SendFailed, "HTTPClient begin failed"),
+            "http_begin",
+            url,
+            headerCount,
+            bodySize);
         return {kNoStatusCode, TransportError::Unknown};
     }
 
@@ -75,6 +141,15 @@ Response Esp32ArduinoTransport::post(
         http.addHeader(headers[i].name, headers[i].value);
     }
 
+    emitTransportEvent(
+        config_.common,
+        Severity::Debug,
+        Status::success(),
+        config_.common.allowInsecureTls ? "http_post_start_insecure_tls" : "http_post_start_verify_tls",
+        url,
+        headerCount,
+        bodySize);
+
     int code = http.POST(const_cast<std::uint8_t*>(body), bodySize);
     Response response;
     if (code > 0) {
@@ -85,6 +160,18 @@ Response Esp32ArduinoTransport::post(
         response.statusCode = kNoStatusCode;
         response.error = mapHttpClientError(code);
     }
+
+    emitTransportEvent(
+        config_.common,
+        code > 0 ? Severity::Debug : Severity::Info,
+        code > 0
+            ? Status::success()
+            : Status::failure(StatusCode::SendFailed, "HTTPClient POST returned an error", code),
+        "http_post_complete",
+        url,
+        headerCount,
+        bodySize,
+        response.statusCode);
 
     http.end();
     return response;

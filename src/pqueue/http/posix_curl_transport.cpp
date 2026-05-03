@@ -68,6 +68,31 @@ curl_slist* buildCurlHeaders(const Header* headers, std::size_t headerCount) {
     return list;
 }
 
+void emitTransportEvent(
+    const TransportConfig& config,
+    Severity severity,
+    Status status,
+    const char* operation,
+    const char* url,
+    std::size_t headerCount,
+    std::size_t bodySize,
+    int httpStatus = 0
+) {
+    Event event;
+    event.kind = EventKind::Diagnostic;
+    event.severity = severity;
+    event.status = status;
+    event.component = "PosixCurlTransport";
+    event.operation = operation;
+    event.method = "POST";
+    event.path = url == nullptr ? "" : url;
+    event.bodyBytes = static_cast<std::uint32_t>(bodySize);
+    event.headerCount = static_cast<std::uint32_t>(headerCount);
+    event.timeoutMs = config.timeoutMs;
+    event.httpStatus = httpStatus;
+    config.events.emit(event);
+}
+
 } // namespace
 
 PosixCurlTransport::PosixCurlTransport(PosixCurlTransportConfig config)
@@ -83,17 +108,50 @@ Response PosixCurlTransport::post(
     std::size_t bodySize
 ) {
     if (url == nullptr) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Error,
+            Status::failure(StatusCode::InvalidArgument, "curl POST URL was null"),
+            "post_invalid_url",
+            nullptr,
+            headerCount,
+            bodySize);
         return {kNoStatusCode, TransportError::Unknown};
     }
+
+    emitTransportEvent(
+        config_.common,
+        Severity::Debug,
+        Status::success(),
+        config_.caBundlePath == nullptr ? "post_start_no_ca_bundle" : "post_start_with_ca_bundle",
+        url,
+        headerCount,
+        bodySize);
 
     ensureCurlGlobalInit();
     CURL* curl = curl_easy_init();
     if (curl == nullptr) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Error,
+            Status::failure(StatusCode::BackendUnavailable, "curl_easy_init failed"),
+            "curl_easy_init",
+            url,
+            headerCount,
+            bodySize);
         return {kNoStatusCode, TransportError::Unknown};
     }
 
     curl_slist* curlHeaders = buildCurlHeaders(headers, headerCount);
     if (headerCount > 0 && curlHeaders == nullptr) {
+        emitTransportEvent(
+            config_.common,
+            Severity::Error,
+            Status::failure(StatusCode::InvalidArgument, "failed to build curl headers"),
+            "build_headers",
+            url,
+            headerCount,
+            bodySize);
         curl_easy_cleanup(curl);
         return {kNoStatusCode, TransportError::Unknown};
     }
@@ -120,10 +178,43 @@ Response PosixCurlTransport::post(
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curlHeaders);
     }
 
+    emitTransportEvent(
+        config_.common,
+        Severity::Debug,
+        Status::success(),
+        config_.common.allowInsecureTls ? "curl_perform_start_insecure_tls" : "curl_perform_start_verify_tls",
+        url,
+        headerCount,
+        bodySize);
+
     const CURLcode result = curl_easy_perform(curl);
     long statusCode = kNoStatusCode;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+
+    emitTransportEvent(
+        config_.common,
+        result == CURLE_OK ? Severity::Debug : Severity::Info,
+        result == CURLE_OK
+            ? Status::success()
+            : Status::failure(StatusCode::SendFailed, curl_easy_strerror(result), static_cast<int>(result)),
+        "curl_perform_complete",
+        url,
+        headerCount,
+        bodySize,
+        static_cast<int>(statusCode));
+
     if (result == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+        Event event;
+        event.kind = EventKind::Diagnostic;
+        event.severity = Severity::Debug;
+        event.status = Status::success();
+        event.component = "PosixCurlTransport";
+        event.operation = "response_body_received";
+        event.method = "POST";
+        event.path = url;
+        event.httpStatus = static_cast<int>(statusCode);
+        event.bodyBytes = static_cast<std::uint32_t>(responseBody.size());
+        config_.common.events.emit(event);
     }
 
     curl_slist_free_all(curlHeaders);

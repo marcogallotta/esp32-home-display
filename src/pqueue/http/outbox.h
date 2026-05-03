@@ -41,6 +41,7 @@ struct TransportConfig {
     const char* userAgent = "pqueue-http/1.0";
     bool followRedirects = true;
     bool allowInsecureTls = false;
+    EventOptions events;
 };
 
 using PostCallback = Response (*)(

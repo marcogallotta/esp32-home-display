@@ -36,6 +36,8 @@ struct Event {
     std::uint32_t queueCount = 0;
     std::uint32_t bodyBytes = 0;
     std::uint32_t remainingMs = 0;
+    std::uint32_t timeoutMs = 0;
+    std::uint32_t headerCount = 0;
 };
 
 using EventSink = void (*)(const Event& event, void* user);

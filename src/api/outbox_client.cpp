@@ -220,6 +220,14 @@ void logPqueueEvent(const pqueue::Event& event, api::PqueueLogLevel configured) 
         message += " body_bytes=";
         message += std::to_string(event.bodyBytes);
     }
+    if (event.timeoutMs != 0) {
+        message += " timeout_ms=";
+        message += std::to_string(event.timeoutMs);
+    }
+    if (event.headerCount != 0) {
+        message += " headers=";
+        message += std::to_string(event.headerCount);
+    }
 
     logLine(level, message);
 }
@@ -329,7 +337,7 @@ struct OutboxClientImpl {
               {"Content-Type", "application/json"},
               {"x-api-key", config.api.apiKey.c_str()},
           }},
-          transport(makeTransportConfig(config)),
+          transport(makeTransportConfig(config, {&OutboxClientImpl::onPqueueEvent, this})),
           outbox(
               makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent),
               transport,
@@ -338,10 +346,11 @@ struct OutboxClientImpl {
           ) {}
 
 #ifdef ARDUINO
-    static pqueue::http::Esp32ArduinoTransportConfig makeTransportConfig(const ::Config& config) {
+    static pqueue::http::Esp32ArduinoTransportConfig makeTransportConfig(const ::Config& config, pqueue::EventOptions events) {
         pqueue::http::Esp32ArduinoTransportConfig transportConfig;
         transportConfig.common.userAgent = "my-app/1.0";
         transportConfig.common.timeoutMs = 15000;
+        transportConfig.common.events = events;
         transportConfig.caCertPath = config.api.pemFile.empty() ? nullptr : config.api.pemFile.c_str();
         transportConfig.caCertFileSystem = &LittleFS;
         transportConfig.networkReadyContext = const_cast<::Config*>(&config);
@@ -351,10 +360,11 @@ struct OutboxClientImpl {
 
     using TransportType = pqueue::http::Esp32ArduinoTransport;
 #else
-    static pqueue::http::PosixCurlTransportConfig makeTransportConfig(const ::Config& config) {
+    static pqueue::http::PosixCurlTransportConfig makeTransportConfig(const ::Config& config, pqueue::EventOptions events) {
         pqueue::http::PosixCurlTransportConfig transportConfig;
         transportConfig.common.userAgent = "my-app/1.0";
         transportConfig.common.timeoutMs = 15000;
+        transportConfig.common.events = events;
         transportConfig.caBundlePath = config.api.pemFile.empty() ? nullptr : config.api.pemFile.c_str();
         return transportConfig;
     }
