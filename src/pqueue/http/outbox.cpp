@@ -11,6 +11,18 @@ bool isSuccessfulStatus(int statusCode) {
     return statusCode >= 200 && statusCode < 300;
 }
 
+
+bool validateHttpRequestPayload(void*, const std::string& payload, ValidationIssue& issue) {
+    RequestEnvelope request;
+    if (decodeRequestEnvelope(payload, request)) {
+        return true;
+    }
+
+    issue.code = ValidationIssueCode::HttpRequestEnvelopeInvalid;
+    issue.message = "stored HTTP request envelope could not be decoded";
+    return false;
+}
+
 bool isRetryableStatus(int statusCode) {
     // Simple v1 policy: retry all server-side failures, plus explicit client-side throttling/timeouts.
     // TODO: respect Retry-After for 429 and 503.
@@ -75,6 +87,10 @@ pqueue::DrainResult Outbox::drain() {
 
 pqueue::DrainResult Outbox::drainBurst(std::uint16_t maxAttempts) {
     return outbox_.drainBurst(maxAttempts);
+}
+
+ValidationResult Outbox::validate(const ValidationOptions& options) {
+    return outbox_.validatePayloads(validateHttpRequestPayload, nullptr, options);
 }
 
 Stats Outbox::stats() {

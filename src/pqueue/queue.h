@@ -17,6 +17,8 @@ namespace pqueue {
 // rewriteFront() is intentionally exposed for Outbox v1 so retry attempts can
 // be persisted without changing FIFO order. Future backends may replace this
 // with a cheaper metadata/sidecar strategy.
+class Outbox;
+
 class Queue {
 public:
     explicit Queue(Config config = Config{});
@@ -33,10 +35,14 @@ public:
     Stats stats();
 
 private:
+    friend class Outbox;
+    using RecordVisitor = bool (*)(void* context, const std::string& record, std::uint32_t sequence, std::uint32_t ordinal);
+
     Status ensureLoaded();
     Status acquireLock();
     void releaseLock();
     Status emit(Event event) const;
+    Status visitRecords(RecordVisitor visitor, void* context);
     Status diagnostic(Severity severity, Status status, const char* operation) const;
 
     Config config_;

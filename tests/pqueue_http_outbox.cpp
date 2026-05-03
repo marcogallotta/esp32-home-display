@@ -1,4 +1,5 @@
 #include "pqueue/http/outbox.h"
+#include "pqueue/envelope.h"
 
 #include "doctest/doctest.h"
 
@@ -494,5 +495,46 @@ TEST_CASE("pqueue http outbox burst drain sends multiple queued requests in one 
     CHECK_EQ(transport.posts[1].url, "https://example.test/api/one");
     CHECK_EQ(transport.posts[2].url, "https://example.test/api/two");
     CHECK_EQ(transport.posts[3].url, "https://example.test/api/three");
+#endif
+}
+
+TEST_CASE("pqueue http outbox validate accepts queued request envelopes") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({503, pqueue::http::TransportError::None});
+    FakeClock clock;
+
+    auto outbox = makeHttpOutbox(transport, clock);
+    REQUIRE(outbox.submitPost("/switchbot/reading", "{\"ok\":true}").status == pqueue::SubmitStatus::Queued);
+
+    const auto result = outbox.validate();
+
+    CHECK(result.ok);
+    CHECK(result.errors.empty());
+#endif
+}
+
+TEST_CASE("pqueue http outbox validate rejects malformed request envelopes") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    std::string encodedOutbox;
+    REQUIRE(pqueue::envelope::encodeEnvelope(0, "not an HTTP request envelope", encodedOutbox));
+    {
+        pqueue::Config queueConfig;
+        queueConfig.basePath = kHttpOutboxSpoolDir.string();
+        pqueue::Queue queue(queueConfig);
+        REQUIRE(queue.enqueue(encodedOutbox).ok());
+    }
+
+    FakeHttpTransport transport;
+    FakeClock clock;
+    auto outbox = makeHttpOutbox(transport, clock);
+
+    const auto result = outbox.validate();
+
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_EQ(result.errors.size(), 1U);
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::HttpRequestEnvelopeInvalid);
 #endif
 }

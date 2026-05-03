@@ -49,6 +49,8 @@ enum class ValidationIssueCode {
     SlotCrcMismatch,
     QueueLoadFailed,
     QueueIndexMismatch,
+    OutboxEnvelopeInvalid,
+    HttpRequestEnvelopeInvalid,
 };
 
 struct ValidationIssue {

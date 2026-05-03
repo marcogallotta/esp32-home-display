@@ -1,6 +1,7 @@
 #include "outbox.h"
 
 #include <limits>
+#include <utility>
 
 #include "envelope.h"
 
@@ -9,6 +10,58 @@ namespace {
 
 SubmitResult submitResult(SubmitStatus submitStatus, Status detail = Status::success()) {
     return {submitStatus, detail};
+}
+
+void addOutboxValidationError(ValidationResult& result, const ValidationOptions& options, ValidationIssue issue) {
+    result.ok = false;
+    if (result.errors.size() < options.maxErrors) {
+        result.errors.push_back(std::move(issue));
+    } else {
+        result.stoppedEarly = true;
+    }
+}
+
+ValidationIssue makeOutboxIssue(ValidationIssueCode code, const char* message, std::uint32_t sequence) {
+    ValidationIssue issue;
+    issue.code = code;
+    issue.message = message;
+    issue.expectedSequence = sequence;
+    issue.hasExpectedSequence = true;
+    return issue;
+}
+
+struct OutboxValidationContext {
+    ValidationResult* result = nullptr;
+    const ValidationOptions* options = nullptr;
+    OutboxPayloadValidator payloadValidator = nullptr;
+    void* payloadValidatorContext = nullptr;
+};
+
+bool validateOutboxRecord(void* rawContext, const std::string& record, std::uint32_t sequence, std::uint32_t) {
+    auto* context = static_cast<OutboxValidationContext*>(rawContext);
+
+    envelope::DecodedEnvelope decoded;
+    if (!envelope::decodeEnvelope(record, decoded)) {
+        addOutboxValidationError(
+            *context->result,
+            *context->options,
+            makeOutboxIssue(ValidationIssueCode::OutboxEnvelopeInvalid, "stored outbox envelope could not be decoded", sequence));
+        return !context->result->stoppedEarly;
+    }
+
+    if (context->payloadValidator != nullptr) {
+        ValidationIssue issue;
+        if (!context->payloadValidator(context->payloadValidatorContext, decoded.payload, issue)) {
+            if (!issue.hasExpectedSequence) {
+                issue.expectedSequence = sequence;
+                issue.hasExpectedSequence = true;
+            }
+            addOutboxValidationError(*context->result, *context->options, std::move(issue));
+            return !context->result->stoppedEarly;
+        }
+    }
+
+    return true;
 }
 
 } // namespace
@@ -272,6 +325,37 @@ DrainResult Outbox::drainOne(bool enforceRateLimit) {
     result.sendError = true;
     result.detail = Status::failure(StatusCode::SendFailed, "unknown send decision");
     emitDiagnostic(Severity::Error, result.detail, "drain");
+    return result;
+}
+
+ValidationResult Outbox::validate(const ValidationOptions& options) {
+    return validatePayloads(nullptr, nullptr, options);
+}
+
+ValidationResult Outbox::validatePayloads(
+    OutboxPayloadValidator payloadValidator,
+    void* payloadValidatorContext,
+    const ValidationOptions& options
+) {
+    ValidationResult result = queue_.validate(options);
+    if (!result.ok || result.stoppedEarly || result.errors.size() >= options.maxErrors) {
+        return result;
+    }
+
+    OutboxValidationContext context;
+    context.result = &result;
+    context.options = &options;
+    context.payloadValidator = payloadValidator;
+    context.payloadValidatorContext = payloadValidatorContext;
+
+    const Status st = queue_.visitRecords(validateOutboxRecord, &context);
+    if (!st.ok() && result.errors.size() < options.maxErrors) {
+        addOutboxValidationError(
+            result,
+            options,
+            makeOutboxIssue(ValidationIssueCode::QueueLoadFailed, st.message, 0));
+    }
+
     return result;
 }
 

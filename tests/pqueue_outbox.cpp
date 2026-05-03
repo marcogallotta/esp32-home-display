@@ -321,3 +321,42 @@ TEST_CASE("pqueue outbox burst drain sends multiple queued records in one call")
     CHECK_EQ(outbox.stats().count, 0U);
 #endif
 }
+
+TEST_CASE("pqueue outbox validate accepts queued outbox envelopes") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+
+    auto outbox = makeOutbox(sender, clock);
+    REQUIRE(outbox.submit("fresh").status == pqueue::SubmitStatus::Queued);
+
+    const auto result = outbox.validate();
+
+    CHECK(result.ok);
+    CHECK(result.errors.empty());
+#endif
+}
+
+TEST_CASE("pqueue outbox validate rejects malformed outbox envelopes") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    {
+        pqueue::Config queueConfig;
+        queueConfig.basePath = kOutboxSpoolDir.string();
+        pqueue::Queue queue(queueConfig);
+        REQUIRE(queue.enqueue("not an outbox envelope").ok());
+    }
+
+    FakeSender sender;
+    FakeClock clock;
+    auto outbox = makeOutbox(sender, clock);
+
+    const auto result = outbox.validate();
+
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_EQ(result.errors.size(), 1U);
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::OutboxEnvelopeInvalid);
+#endif
+}

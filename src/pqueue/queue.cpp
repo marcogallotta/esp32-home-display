@@ -233,6 +233,30 @@ Status Queue::rewriteFront(const std::string& record) {
 }
 
 
+Status Queue::visitRecords(RecordVisitor visitor, void* context) {
+    Status st = ensureLoaded();
+    if (!st.ok()) {
+        return st;
+    }
+    if (visitor == nullptr) {
+        return Status::failure(StatusCode::InvalidArgument, "record visitor is null");
+    }
+
+    for (std::uint32_t ordinal = 0; ordinal < index_.count; ++ordinal) {
+        const std::uint32_t sequence = index_.head + ordinal;
+        std::string record;
+        st = store_.readRecord(sequence, record);
+        if (!st.ok()) {
+            return st;
+        }
+        if (!visitor(context, record, sequence, ordinal)) {
+            break;
+        }
+    }
+
+    return Status::success();
+}
+
 ValidationResult Queue::validate(const ValidationOptions& options) {
     ValidationResult result;
 

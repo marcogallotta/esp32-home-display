@@ -9,6 +9,7 @@
 #include "types.h"
 
 namespace pqueue {
+namespace http { class Outbox; }
 
 enum class SendDecision {
     Sent,
@@ -30,6 +31,7 @@ using SendCallback = SendResult (*)(void* context, const std::string& payload, c
 // Must return monotonic milliseconds. Do not use wall/NTP time here.
 // ESP32 callers should use esp_timer_get_time() / 1000.
 using ClockCallback = std::uint64_t (*)(void* context);
+using OutboxPayloadValidator = bool (*)(void* context, const std::string& payload, ValidationIssue& issue);
 
 // Persistent-only v1 outbox config.
 // Retry attempt count is persisted in the envelope; retry cooldown timing is RAM-only.
@@ -87,9 +89,18 @@ public:
     SubmitResult submit(const std::string& payload);
     DrainResult drain();
     DrainResult drainBurst(std::uint16_t maxAttempts);
+    ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 
 private:
+    friend class http::Outbox;
+
+    ValidationResult validatePayloads(
+        OutboxPayloadValidator payloadValidator,
+        void* payloadValidatorContext,
+        const ValidationOptions& options = ValidationOptions{}
+    );
+
     SubmitResult enqueueRecord(const std::string& payload, std::uint8_t attempts);
     DrainResult drainOne(bool enforceRateLimit);
     void setFrontCooldown(std::uint64_t nextAttemptMs);
