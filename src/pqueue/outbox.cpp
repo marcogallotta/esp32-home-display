@@ -76,7 +76,7 @@ SubmitResult Outbox::submit(const std::string& payload) {
     const SendResult result = send_(sendContext_, payload, RetryState{});
     switch (result.decision) {
         case SendDecision::Sent:
-            emitRequestEvent(EventKind::RequestSent, Severity::Info, Status::success(), "submit", 0, 0);
+            emitRequestEvent(EventKind::RequestSent, Severity::Debug, Status::success(), "submit", 0, 0);
             return submitResult(SubmitStatus::Sent);
         case SendDecision::Drop: {
             const Status st = Status::failure(StatusCode::Dropped, "request was dropped by send policy");
@@ -223,7 +223,7 @@ DrainResult Outbox::drainOne(bool enforceRateLimit) {
             }
             clearFrontCooldown();
             result.sent += 1;
-            emitRequestEvent(EventKind::RequestSent, Severity::Info, Status::success(), "drain", decoded.attempts, 0);
+            emitRequestEvent(EventKind::RequestSent, Severity::Debug, Status::success(), "drain", decoded.attempts, 0);
             return result;
 
         case SendDecision::Drop:

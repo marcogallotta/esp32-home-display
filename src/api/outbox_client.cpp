@@ -531,7 +531,7 @@ WriteResult OutboxClient::send(ApiRequest request) {
 
         case pqueue::SubmitStatus::Queued:
             logLine(
-                LogLevel::Info,
+                LogLevel::Debug,
                 "Queued API request in pqueue: " +
                 std::to_string(pqueue_->outbox.stats().count) + " queued"
             );
