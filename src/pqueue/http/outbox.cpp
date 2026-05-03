@@ -12,12 +12,14 @@ bool isSuccessfulStatus(int statusCode) {
 }
 
 bool isRetryableStatus(int statusCode) {
+    // Simple v1 policy: retry all server-side failures, plus explicit client-side throttling/timeouts.
+    // TODO: respect Retry-After for 429 and 503.
+    // TODO: add exponential backoff with jitter for repeated 5xx/transport failures.
+    // TODO: consider special handling/alerts for 501/505/506/508/510 server capability/config errors.
+    // TODO: consider app-configurable handling for 409 and oversized payloads such as 413.
     return statusCode == 408 ||
            statusCode == 429 ||
-           statusCode == 500 ||
-           statusCode == 502 ||
-           statusCode == 503 ||
-           statusCode == 504;
+           (statusCode >= 500 && statusCode < 600);
 }
 
 } // namespace
@@ -122,8 +124,6 @@ SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const Re
     const SendDecision decision = classifyResponse(response);
     if (decision == SendDecision::Drop) {
         notifyDrop(&request, DropReason::ClassifiedDrop, &response);
-    } else if (decision == SendDecision::RetryLater && retryWouldReachMaxAttempts(retry)) {
-        notifyDrop(&request, DropReason::MaxAttempts, &response);
     }
 
     return {decision};
@@ -170,13 +170,6 @@ SendDecision Outbox::classifyResponse(const Response& response) const {
     return defaultClassifyResponse(response);
 }
 
-bool Outbox::retryWouldReachMaxAttempts(const RetryState& retry) const {
-    if (httpConfig_.outbox.maxAttempts == 0) {
-        return true;
-    }
-    return retry.attempts + 1 >= httpConfig_.outbox.maxAttempts;
-}
-
 std::string Outbox::buildUrl(const std::string& path) const {
     const std::string baseUrl = httpConfig_.baseUrl == nullptr ? std::string{} : std::string{httpConfig_.baseUrl};
     if (baseUrl.empty()) {
@@ -208,7 +201,6 @@ SendDecision defaultClassifyResponse(const Response& response) {
         return SendDecision::RetryLater;
     }
 
-    // TODO: consider a slow-retry policy for capacity-style responses such as 507.
     return SendDecision::Drop;
 }
 

@@ -152,7 +152,7 @@ TEST_CASE("pqueue outbox respects retry delay") {
 #endif
 }
 
-TEST_CASE("pqueue outbox drops after max attempts") {
+TEST_CASE("pqueue outbox retries transient failures indefinitely") {
 #ifndef ARDUINO
     cleanOutboxSpool();
     FakeSender sender;
@@ -169,8 +169,8 @@ TEST_CASE("pqueue outbox drops after max attempts") {
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     auto drain = outbox.drain();
 
-    CHECK_EQ(drain.droppedMaxAttempts, 1U);
-    CHECK_EQ(outbox.stats().count, 0U);
+    CHECK_EQ(drain.droppedMaxAttempts, 0U);
+    CHECK_EQ(outbox.stats().count, 1U);
 #endif
 }
 

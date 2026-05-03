@@ -34,6 +34,8 @@ using ClockCallback = std::uint64_t (*)(void* context);
 // Persistent-only v1 outbox config.
 // Retry attempt count is persisted in the envelope; retry cooldown timing is RAM-only.
 struct OutboxConfig {
+    // Retryable sends are retried indefinitely. attempts is retained only as a saturated diagnostic counter.
+    // TODO: replace/remove maxAttempts after adding explicit max-age and per-failure policy controls.
     std::uint8_t maxAttempts = 5;
     std::uint16_t maxDrainAttemptsPerSecond = 1;
     std::uint32_t retryDelayMs = 60000;

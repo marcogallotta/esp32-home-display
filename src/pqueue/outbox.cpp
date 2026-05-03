@@ -63,7 +63,7 @@ void Outbox::emitRequestEvent(
 }
 
 SubmitResult Outbox::submit(const std::string& payload) {
-    if (send_ == nullptr || clock_ == nullptr || config_.maxAttempts == 0) {
+    if (send_ == nullptr || clock_ == nullptr) {
         const Status st = Status::failure(StatusCode::SendFailed, "outbox is not configured for sending");
         emitDiagnostic(Severity::Error, st, "submit");
         return submitResult(SubmitStatus::SendError, st);
@@ -100,7 +100,7 @@ SubmitResult Outbox::submit(const std::string& payload) {
 
 DrainResult Outbox::drain() {
     DrainResult result;
-    if (send_ == nullptr || clock_ == nullptr || config_.maxAttempts == 0) {
+    if (send_ == nullptr || clock_ == nullptr) {
         result.sendError = true;
         result.detail = Status::failure(StatusCode::SendFailed, "outbox is not configured for sending");
         emitDiagnostic(Severity::Error, result.detail, "drain");
@@ -211,46 +211,9 @@ DrainResult Outbox::drain() {
             return result;
 
         case SendDecision::RetryLater: {
-            if (decoded.attempts == std::numeric_limits<std::uint8_t>::max()) {
-                st = queue_.pop();
-                if (!st.ok()) {
-                    result.queueError = true;
-                    result.detail = st;
-                    emitDiagnostic(Severity::Error, st, "drain");
-                    return result;
-                }
-                clearFrontCooldown();
-                result.droppedMaxAttempts += 1;
-                emitRequestEvent(
-                    EventKind::RequestDropped,
-                    Severity::Warning,
-                    Status::failure(StatusCode::Dropped, "request reached maximum retry attempts"),
-                    "drain",
-                    decoded.attempts,
-                    0);
-                return result;
-            }
-
-            const std::uint8_t nextAttempts = static_cast<std::uint8_t>(decoded.attempts + 1);
-            if (nextAttempts >= config_.maxAttempts) {
-                st = queue_.pop();
-                if (!st.ok()) {
-                    result.queueError = true;
-                    result.detail = st;
-                    emitDiagnostic(Severity::Error, st, "drain");
-                    return result;
-                }
-                clearFrontCooldown();
-                result.droppedMaxAttempts += 1;
-                emitRequestEvent(
-                    EventKind::RequestDropped,
-                    Severity::Warning,
-                    Status::failure(StatusCode::Dropped, "request reached maximum retry attempts"),
-                    "drain",
-                    decoded.attempts,
-                    0);
-                return result;
-            }
+            const std::uint8_t nextAttempts = decoded.attempts == std::numeric_limits<std::uint8_t>::max()
+                ? decoded.attempts
+                : static_cast<std::uint8_t>(decoded.attempts + 1);
 
             if (!envelope::encodeEnvelope(nextAttempts, decoded.payload, record)) {
                 result.queueError = true;
@@ -282,12 +245,6 @@ Stats Outbox::stats() {
 }
 
 SubmitResult Outbox::enqueueRecord(const std::string& payload, std::uint8_t attempts) {
-    if (attempts >= config_.maxAttempts) {
-        const Status st = Status::failure(StatusCode::Dropped, "request reached maximum retry attempts");
-        emitRequestEvent(EventKind::RequestDropped, Severity::Warning, st, "enqueueRecord", attempts, 0);
-        return submitResult(SubmitStatus::Dropped, st);
-    }
-
     std::string record;
     if (!envelope::encodeEnvelope(attempts, payload, record)) {
         const Status st = Status::failure(StatusCode::EncodeFailed, "failed to encode outbox envelope");

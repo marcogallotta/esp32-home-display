@@ -139,7 +139,6 @@ private:
     void notifyDrop(const RequestEnvelope* request, DropReason reason, const Response* response) const;
     void emitDiagnostic(Severity severity, Status status, const char* operation, const RequestEnvelope* request = nullptr, const Response* response = nullptr, std::uint8_t attempt = 0) const;
     SendDecision classifyResponse(const Response& response) const;
-    bool retryWouldReachMaxAttempts(const RetryState& retry) const;
     std::string buildUrl(const std::string& path) const;
 
     Config httpConfig_;

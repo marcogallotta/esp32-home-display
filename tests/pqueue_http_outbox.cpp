@@ -240,7 +240,7 @@ TEST_CASE("pqueue http outbox notifies when a request is dropped by classificati
 #endif
 }
 
-TEST_CASE("pqueue http outbox notifies when retries reach max attempts") {
+TEST_CASE("pqueue http outbox retries 503 without max-attempt drop") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
     FakeHttpTransport transport;
@@ -259,13 +259,9 @@ TEST_CASE("pqueue http outbox notifies when retries reach max attempts") {
     pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
     const auto submit = outbox.submitPost("/retry", "body");
 
-    CHECK(submit.status == pqueue::SubmitStatus::Dropped);
-    REQUIRE_EQ(observer.seen.size(), 1U);
-    CHECK(observer.seen[0].reason == pqueue::http::DropReason::MaxAttempts);
-    CHECK(observer.seen[0].hasRequest);
-    CHECK_EQ(observer.seen[0].path, "/retry");
-    CHECK(observer.seen[0].hasResponse);
-    CHECK_EQ(observer.seen[0].statusCode, 503);
+    CHECK(submit.status == pqueue::SubmitStatus::Queued);
+    CHECK(observer.seen.empty());
+    CHECK_EQ(outbox.stats().count, 1U);
 #endif
 }
 
@@ -346,11 +342,13 @@ TEST_CASE("pqueue http outbox calls response callback with request and response"
 TEST_CASE("pqueue http default classifier handles representative outcomes") {
     CHECK(pqueue::http::defaultClassifyResponse({204, pqueue::http::TransportError::None}) == pqueue::SendDecision::Sent);
     CHECK(pqueue::http::defaultClassifyResponse({408, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({429, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
     CHECK(pqueue::http::defaultClassifyResponse({500, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
     CHECK(pqueue::http::defaultClassifyResponse({502, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({507, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({511, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
     CHECK(pqueue::http::defaultClassifyResponse({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Timeout}) == pqueue::SendDecision::RetryLater);
     CHECK(pqueue::http::defaultClassifyResponse({404, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
-    CHECK(pqueue::http::defaultClassifyResponse({507, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
 }
 
 TEST_CASE("pqueue http outbox drains queued backlog after transport recovers") {
@@ -422,7 +420,7 @@ TEST_CASE("pqueue http outbox does not extend front retry cooldown when more req
 #endif
 }
 
-TEST_CASE("pqueue http outbox continues draining backlog after exhausted front request is dropped") {
+TEST_CASE("pqueue http outbox keeps retryable front request instead of dropping after max attempts") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
     FakeHttpTransport transport;
@@ -445,7 +443,13 @@ TEST_CASE("pqueue http outbox continues draining backlog after exhausted front r
 
     clock.nowMs += 1000;
     auto drain = outbox.drain();
-    CHECK_EQ(drain.droppedMaxAttempts, 1U);
+    CHECK_EQ(drain.droppedMaxAttempts, 0U);
+    CHECK_EQ(drain.sent, 0U);
+    CHECK_EQ(outbox.stats().count, 3U);
+
+    clock.nowMs += 1000;
+    drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
     CHECK_EQ(outbox.stats().count, 2U);
 
     clock.nowMs += 1000;
@@ -453,15 +457,10 @@ TEST_CASE("pqueue http outbox continues draining backlog after exhausted front r
     CHECK_EQ(drain.sent, 1U);
     CHECK_EQ(outbox.stats().count, 1U);
 
-    clock.nowMs += 1000;
-    drain = outbox.drain();
-    CHECK_EQ(drain.sent, 1U);
-    CHECK_EQ(outbox.stats().count, 0U);
-
     REQUIRE_EQ(transport.posts.size(), 4U);
     CHECK_EQ(transport.posts[0].url, "https://example.test/api/first");
     CHECK_EQ(transport.posts[1].url, "https://example.test/api/first");
-    CHECK_EQ(transport.posts[2].url, "https://example.test/api/second");
-    CHECK_EQ(transport.posts[3].url, "https://example.test/api/third");
+    CHECK_EQ(transport.posts[2].url, "https://example.test/api/first");
+    CHECK_EQ(transport.posts[3].url, "https://example.test/api/second");
 #endif
 }
