@@ -20,8 +20,20 @@ std::string bytesFromObject(const void* data, std::size_t size) {
 }
 
 bool fileExists(FileSystem& fs, const std::string& name) {
-    std::string ignored;
-    return fs.readFile(name, ignored).ok();
+    std::uint64_t ignored = 0;
+    return fs.fileSize(name, ignored).ok();
+}
+
+Status requireFileSize(FileSystem& fs, const std::string& name, std::uint64_t expected) {
+    std::uint64_t actual = 0;
+    Status st = fs.fileSize(name, actual);
+    if (!st.ok()) {
+        return Status::failure(StatusCode::ReadFailed, "pqueue storage file is missing");
+    }
+    if (actual != expected) {
+        return Status::failure(StatusCode::InvalidIndex, "pqueue spool size does not match configured storage layout");
+    }
+    return Status::success();
 }
 
 Status writeFileAtomic(FileSystem& fs, const std::string& name, const std::string& bytes) {
@@ -193,15 +205,42 @@ Status FileStore::mount() {
     if (!makeLayout(config_, layout)) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config: reservedBytes must fit at least one recordSizeBytes slot"), "mount");
     }
+
     const auto a = readIndexAt(*fs, kIndexAName, layout);
     const auto b = readIndexAt(*fs, kIndexBName, layout);
     if (a.configMismatch || b.configMismatch) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "mount");
     }
-    st = fs->resizeFile(kSpoolName, layout.spoolBytes);
+
+    const bool hasAnyMetadata = a.exists || b.exists;
+    const bool hasUsableMetadata = usableIndex(a) || usableIndex(b);
+    const bool hasSpool = fileExists(*fs, kSpoolName);
+
+    if (!hasAnyMetadata) {
+        if (hasSpool) {
+            return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue spool exists but metadata is missing; delete or reformat queue files to continue"), "mount", kNoSequence, kSpoolName);
+        }
+        st = fs->resizeFile(kSpoolName, layout.spoolBytes);
+        if (!st.ok()) {
+            return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
+        }
+        const IndexRecord empty = toRecord(FileStoreIndex{}, 1, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
+        st = writeFileAtomic(*fs, kIndexAName, bytesFromObject(&empty, sizeof(empty)));
+        if (!st.ok()) {
+            return diagnostic(Severity::Error, st, "mount", kNoSequence, kIndexAName);
+        }
+        return Status::success();
+    }
+
+    if (!hasUsableMetadata) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue metadata is corrupt or invalid; delete or repair queue files to continue"), "mount");
+    }
+
+    st = requireFileSize(*fs, kSpoolName, layout.spoolBytes);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
     }
+
     return Status::success();
 }
 
@@ -363,20 +402,20 @@ Status FileStore::removeRecord(std::uint32_t sequence) {
     return Status::success();
 }
 
-Status FileStore::tryAcquireLockFile(const std::string& name) {
+Status FileStore::tryAcquireLockFile(const std::string& name, const std::string& contents) {
     Status st = mount();
     if (!st.ok()) {
         return st;
     }
-    return fileSystem()->tryAcquireLockFile(name);
+    return fileSystem()->tryAcquireLockFile(name, contents);
 }
 
-Status FileStore::releaseLockFile(const std::string& name) {
+Status FileStore::releaseLockFile(const std::string& name, const std::string& expectedContents) {
     Status st = mount();
     if (!st.ok()) {
         return st;
     }
-    return fileSystem()->releaseLockFile(name);
+    return fileSystem()->releaseLockFile(name, expectedContents);
 }
 
 std::uint64_t FileStore::freeBytes() const {

@@ -173,6 +173,16 @@ public:
         return Status::success();
     }
 
+    Status fileSize(const std::string& name, std::uint64_t& out) override {
+        File file = LittleFS.open(path(name).c_str(), "r");
+        if (!file) {
+            return Status::failure(StatusCode::ReadFailed, "failed to stat LittleFS file");
+        }
+        out = static_cast<std::uint64_t>(file.size());
+        file.close();
+        return Status::success();
+    }
+
     Status removeFile(const std::string& name) override {
         if (!LittleFS.remove(path(name).c_str())) {
             return Status::failure(StatusCode::RemoveFailed, "failed to remove LittleFS file");
@@ -209,26 +219,33 @@ public:
         return Status::success();
     }
 
-    Status tryAcquireLockFile(const std::string& name) override {
+    Status tryAcquireLockFile(const std::string& name, const std::string& contents) override {
         const std::string fullPath = path(name);
         if (LittleFS.exists(fullPath.c_str())) {
             return Status::failure(StatusCode::LockTimeout, "queue lock already exists");
         }
 
         // TODO: LittleFS create-after-exists is not a true atomic lock primitive.
-        // Add owner metadata and stale-lock recovery before supporting multi-process/multi-task writers.
+        // POSIX can recover stale pid locks; ESP32 needs a future boot-id/age/force recovery policy.
         File file = LittleFS.open(fullPath.c_str(), "w");
         if (!file) {
             return Status::failure(StatusCode::WriteFailed, "failed to create LittleFS queue lock file");
         }
-        file.print("locked
-");
+        file.write(reinterpret_cast<const uint8_t*>(contents.data()), contents.size());
         file.flush();
         file.close();
         return Status::success();
     }
 
-    Status releaseLockFile(const std::string& name) override {
+    Status releaseLockFile(const std::string& name, const std::string& expectedContents) override {
+        std::string actual;
+        Status st = readFile(name, actual);
+        if (!st.ok()) {
+            return st;
+        }
+        if (actual != expectedContents) {
+            return Status::failure(StatusCode::LockTimeout, "queue lock is owned by another process");
+        }
         return removeFile(name);
     }
 

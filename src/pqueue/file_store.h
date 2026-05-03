@@ -48,8 +48,8 @@ public:
     Status readRecord(std::uint32_t sequence, std::string& out);
     Status removeRecord(std::uint32_t sequence);
 
-    Status tryAcquireLockFile(const std::string& name);
-    Status releaseLockFile(const std::string& name);
+    Status tryAcquireLockFile(const std::string& name, const std::string& contents);
+    Status releaseLockFile(const std::string& name, const std::string& expectedContents);
 
     std::uint64_t freeBytes() const;
 

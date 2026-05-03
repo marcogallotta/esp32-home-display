@@ -3,9 +3,12 @@
 
 #ifdef ARDUINO
 #include <Arduino.h>
+#include <sstream>
 #else
 #include <chrono>
+#include <sstream>
 #include <thread>
+#include <unistd.h>
 #endif
 
 namespace pqueue {
@@ -14,6 +17,21 @@ namespace {
 constexpr const char* kLockFileName = ".pqueue.lock";
 constexpr int kLockAttempts = 10;
 constexpr int kLockRetryDelayMs = 10;
+
+
+std::string makeLockContents(const void* owner) {
+    std::ostringstream out;
+    out << "pqueue-lock-v1\n";
+#ifdef ARDUINO
+    out << "pid=0\n";
+    out << "token=" << reinterpret_cast<std::uintptr_t>(owner) << "-" << millis() << "\n";
+#else
+    out << "pid=" << static_cast<long>(::getpid()) << "\n";
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    out << "token=" << reinterpret_cast<std::uintptr_t>(owner) << "-" << now << "\n";
+#endif
+    return out.str();
+}
 
 void waitBeforeLockRetry() {
 #ifdef ARDUINO
@@ -61,10 +79,13 @@ Status Queue::acquireLock() {
         return Status::success();
     }
 
-    // TODO: add owner metadata plus stale-lock detection/recovery for crashed writers.
+    if (lockContents_.empty()) {
+        lockContents_ = makeLockContents(this);
+    }
+
     Status last = Status::failure(StatusCode::LockTimeout, "queue lock timeout");
     for (int attempt = 0; attempt < kLockAttempts; ++attempt) {
-        Status st = store_.tryAcquireLockFile(kLockFileName);
+        Status st = store_.tryAcquireLockFile(kLockFileName, lockContents_);
         if (st.ok()) {
             lockHeld_ = true;
             return Status::success();
@@ -83,7 +104,7 @@ void Queue::releaseLock() {
     if (!lockHeld_) {
         return;
     }
-    store_.releaseLockFile(kLockFileName);
+    store_.releaseLockFile(kLockFileName, lockContents_);
     lockHeld_ = false;
 }
 

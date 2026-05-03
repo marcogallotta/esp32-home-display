@@ -12,6 +12,8 @@
 #include <system_error>
 #include <vector>
 #include <unistd.h>
+#include <cstdlib>
+#include <signal.h>
 
 namespace pqueue {
 namespace {
@@ -106,6 +108,16 @@ public:
         return Status::success();
     }
 
+    Status fileSize(const std::string& name, std::uint64_t& out) override {
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(path(name), ec);
+        if (ec) {
+            return Status::failure(StatusCode::ReadFailed, "failed to stat file", ec.value());
+        }
+        out = static_cast<std::uint64_t>(size);
+        return Status::success();
+    }
+
     Status removeFile(const std::string& name) override {
         std::error_code ec;
         std::filesystem::remove(path(name), ec);
@@ -138,20 +150,40 @@ public:
         return Status::success();
     }
 
-    Status tryAcquireLockFile(const std::string& name) override {
-        errno = 0;
-        const int fd = ::open(path(name).c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
-        if (fd >= 0) {
-            ::close(fd);
-            return Status::success();
-        }
-        if (errno == EEXIST) {
+    Status tryAcquireLockFile(const std::string& name, const std::string& contents) override {
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            errno = 0;
+            const int fd = ::open(path(name).c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+            if (fd >= 0) {
+                const ssize_t written = ::write(fd, contents.data(), contents.size());
+                const int writeErrno = errno;
+                ::close(fd);
+                if (written != static_cast<ssize_t>(contents.size())) {
+                    removeFile(name);
+                    return Status::failure(StatusCode::WriteFailed, "failed to write queue lock file", writeErrno);
+                }
+                return Status::success();
+            }
+            if (errno != EEXIST) {
+                return Status::failure(StatusCode::WriteFailed, "failed to create queue lock file", errno);
+            }
+            if (attempt == 0 && removeStalePosixLock(name)) {
+                continue;
+            }
             return Status::failure(StatusCode::LockTimeout, "queue lock already exists", errno);
         }
-        return Status::failure(StatusCode::WriteFailed, "failed to create queue lock file", errno);
+        return Status::failure(StatusCode::LockTimeout, "queue lock already exists", EEXIST);
     }
 
-    Status releaseLockFile(const std::string& name) override {
+    Status releaseLockFile(const std::string& name, const std::string& expectedContents) override {
+        std::string actual;
+        Status st = readFile(name, actual);
+        if (!st.ok()) {
+            return st;
+        }
+        if (actual != expectedContents) {
+            return Status::failure(StatusCode::LockTimeout, "queue lock is owned by another process");
+        }
         return removeFile(name);
     }
 
@@ -162,6 +194,43 @@ public:
     }
 
 private:
+
+    static long parseLockPid(const std::string& contents) {
+        const std::string key = "pid=";
+        const auto pos = contents.find(key);
+        if (pos == std::string::npos) {
+            return -1;
+        }
+        const auto start = pos + key.size();
+        const auto end = contents.find('\n', start);
+        const std::string value = contents.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        char* parsedEnd = nullptr;
+        const long pid = std::strtol(value.c_str(), &parsedEnd, 10);
+        if (parsedEnd == value.c_str() || *parsedEnd != '\0') {
+            return -1;
+        }
+        return pid;
+    }
+
+    bool removeStalePosixLock(const std::string& name) {
+        std::string contents;
+        if (!readFile(name, contents).ok()) {
+            return false;
+        }
+        const long pid = parseLockPid(contents);
+        if (pid <= 0) {
+            return false;
+        }
+        errno = 0;
+        if (::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM) {
+            return false;
+        }
+        if (errno != ESRCH) {
+            return false;
+        }
+        return removeFile(name).ok();
+    }
+
     std::filesystem::path path(const std::string& name) const {
         return std::filesystem::path(basePath_) / name;
     }

@@ -87,6 +87,15 @@ public:
         return pqueue::Status::success();
     }
 
+    pqueue::Status fileSize(const std::string& name, std::uint64_t& out) override {
+        const auto it = files.find(name);
+        if (it == files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake stat missing");
+        }
+        out = static_cast<std::uint64_t>(it->second.size());
+        return pqueue::Status::success();
+    }
+
     pqueue::Status removeFile(const std::string& name) override {
         if (failRemoveOnce.consume()) {
             return pqueue::Status::failure(pqueue::StatusCode::RemoveFailed, "fake remove failed");
@@ -115,16 +124,23 @@ public:
         return pqueue::Status::success();
     }
 
-    pqueue::Status tryAcquireLockFile(const std::string& name) override {
+    pqueue::Status tryAcquireLockFile(const std::string& name, const std::string& contents) override {
         if (files.find(name) != files.end()) {
             return pqueue::Status::failure(pqueue::StatusCode::LockTimeout, "fake lock exists");
         }
-        files[name] = "locked\n";
+        files[name] = contents;
         return pqueue::Status::success();
     }
 
-    pqueue::Status releaseLockFile(const std::string& name) override {
-        files.erase(name);
+    pqueue::Status releaseLockFile(const std::string& name, const std::string& expectedContents) override {
+        const auto it = files.find(name);
+        if (it == files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake lock missing");
+        }
+        if (it->second != expectedContents) {
+            return pqueue::Status::failure(pqueue::StatusCode::LockTimeout, "fake lock owned by another queue");
+        }
+        files.erase(it);
         return pqueue::Status::success();
     }
 
@@ -288,7 +304,7 @@ TEST_CASE("FileStore keeps the older valid metadata copy when the latest is corr
     REQUIRE(fileSystem->exists("pqueue.meta_a"));
     REQUIRE(fileSystem->exists("pqueue.meta_b"));
 
-    fileSystem->corruptFile("pqueue.meta_b");
+    fileSystem->corruptFile("pqueue.meta_a");
 
     pqueue::FileStoreIndex out;
     REQUIRE(store.readIndex(out).ok());
@@ -346,6 +362,46 @@ TEST_CASE("FileStore removeRecord invalidates the slot") {
 
     std::string out;
     CHECK_FALSE(store.readRecord(0, out).ok());
+}
+
+
+TEST_CASE("FileStore fails loudly when spool exists without metadata") {
+    auto fileSystem = makeFakeFileSystem();
+    fileSystem->files["pqueue.spool"] = std::string(slotSize() * 2, '\0');
+    auto store = makeStore(fileSystem);
+
+    const auto status = store.mount();
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::InvalidIndex);
+}
+
+TEST_CASE("FileStore fails loudly when metadata exists but spool is missing") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem);
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    }
+    REQUIRE(fileSystem->exists("pqueue.spool"));
+    fileSystem->files.erase("pqueue.spool");
+
+    auto reopened = makeStore(fileSystem);
+    const auto status = reopened.mount();
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::ReadFailed);
+}
+
+TEST_CASE("FileStore fails loudly when spool size does not match layout") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem);
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    }
+    fileSystem->files["pqueue.spool"].resize(slotSize() * 2);
+
+    auto reopened = makeStore(fileSystem);
+    const auto status = reopened.mount();
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::InvalidIndex);
 }
 
 #endif // !ARDUINO

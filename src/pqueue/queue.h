@@ -41,6 +41,7 @@ private:
     Config config_;
     FileStore store_;
     FileStoreIndex index_;
+    std::string lockContents_;
     bool loaded_ = false;
     bool lockHeld_ = false;
 };
