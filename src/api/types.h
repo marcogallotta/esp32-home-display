@@ -14,10 +14,11 @@ enum class PqueueLogLevel {
 };
 
 struct OutboxConfig {
-    int inMemory = 32;
-    std::uint32_t diskReserveBytes = 256 * 1024;
-    int drainRateCap = 4;
-    int drainRateTickS = 5;
+    int inMemory = 16;
+    std::uint32_t diskReserveBytes = 128 * 1024;
+    int drainRateCap = 5;
+    int drainRateTickS = 1;
+    std::uint32_t retryDelayMs = 10000;
     PqueueLogLevel logLevel = PqueueLogLevel::Info;
 };
 

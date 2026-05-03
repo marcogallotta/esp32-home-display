@@ -114,6 +114,7 @@ void checkDefaults(const Config& config) {
     CHECK_EQ(config.api.outbox.diskReserveBytes, defaults.api.outbox.diskReserveBytes);
     CHECK_EQ(config.api.outbox.drainRateCap, defaults.api.outbox.drainRateCap);
     CHECK_EQ(config.api.outbox.drainRateTickS, defaults.api.outbox.drainRateTickS);
+    CHECK_EQ(config.api.outbox.retryDelayMs, defaults.api.outbox.retryDelayMs);
     CHECK(config.api.outbox.logLevel == defaults.api.outbox.logLevel);
     CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
     CHECK_EQ(config.salah.asrMakruhMinutes, defaults.salah.asrMakruhMinutes);
@@ -213,7 +214,8 @@ TEST_CASE("config validates API values") {
                  "in_memory",
                  "disk_reserve_bytes",
                  "drain_rate_cap",
-                 "drain_rate_tick_s"
+                 "drain_rate_tick_s",
+                 "retry_delay_ms"
              }) {
             CAPTURE(key);
             auto doc = exampleConfig();
@@ -238,7 +240,7 @@ TEST_CASE("config validates API values") {
     }
 
     SUBCASE("API outbox values must be positive") {
-        for (const char* key : {"in_memory", "drain_rate_cap", "drain_rate_tick_s"}) {
+        for (const char* key : {"in_memory", "drain_rate_cap", "drain_rate_tick_s", "retry_delay_ms"}) {
             CAPTURE(key);
             auto doc = exampleConfig();
             doc["api"]["outbox"][key] = 0;

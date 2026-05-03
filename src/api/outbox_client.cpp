@@ -325,7 +325,7 @@ pqueue::http::Config makeHttpConfig(
 #endif
     httpConfig.queue.diskReserveBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
-    httpConfig.outbox.retryDelayMs = static_cast<std::uint32_t>(config.api.outbox.drainRateTickS) * 1000U;
+    httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
     httpConfig.outbox.events = {onEvent, callbackContext};
     httpConfig.outbox.maxDrainAttemptsPerSecond = config.api.outbox.drainRateCap <= 0
         ? 1

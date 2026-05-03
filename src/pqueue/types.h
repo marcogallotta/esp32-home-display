@@ -18,7 +18,7 @@ struct Config {
     std::string basePath = "pqueue_spool";
 #endif
     StorageBackend storageBackend = StorageBackend::Default;
-    std::uint32_t diskReserveBytes = 256 * 1024;
+    std::uint32_t diskReserveBytes = 128 * 1024;
     std::size_t maxRecordBytes = 4096;
     EventOptions events;
     // TODO: make full-queue behavior configurable instead of always rejecting newest.

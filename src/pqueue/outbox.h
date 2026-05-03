@@ -37,8 +37,8 @@ struct OutboxConfig {
     // Retryable sends are retried indefinitely. attempts is retained only as a saturated diagnostic counter.
     // TODO: replace/remove maxAttempts after adding explicit max-age and per-failure policy controls.
     std::uint8_t maxAttempts = 5;
-    std::uint16_t maxDrainAttemptsPerSecond = 1;
-    std::uint32_t retryDelayMs = 60000;
+    std::uint16_t maxDrainAttemptsPerSecond = 5;
+    std::uint32_t retryDelayMs = 10000;
     EventOptions events;
     // TODO: make CRC configurable once the envelope has a published compatibility policy.
     // TODO: consider burst drain/backoff strategies after the strict FIFO v1 settles.

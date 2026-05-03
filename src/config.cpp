@@ -131,6 +131,7 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
          !readOptionalUint32(apiOutbox, "disk_reserve_bytes", apiOutboxConfig.diskReserveBytes, "api.outbox.disk_reserve_bytes") ||
          !readOptionalInt(apiOutbox, "drain_rate_cap", apiOutboxConfig.drainRateCap, "api.outbox.drain_rate_cap") ||
          !readOptionalInt(apiOutbox, "drain_rate_tick_s", apiOutboxConfig.drainRateTickS, "api.outbox.drain_rate_tick_s") ||
+         !readOptionalUint32(apiOutbox, "retry_delay_ms", apiOutboxConfig.retryDelayMs, "api.outbox.retry_delay_ms") ||
          !readOptionalPqueueLogLevel(apiOutbox, "pqueue_log_level", apiOutboxConfig.logLevel, "api.outbox.pqueue_log_level"))) {
         return false;
     }
@@ -160,6 +161,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     }
     if (apiOutboxConfig.drainRateTickS <= 0) {
         return fail("api.outbox.drain_rate_tick_s must be > 0");
+    }
+    if (apiOutboxConfig.retryDelayMs == 0) {
+        return fail("api.outbox.retry_delay_ms must be > 0");
     }
     if (sensorWritePolicyConfig.heartbeatMinutes <= 0) {
         return fail("api.sensor_write_policy.heartbeat_minutes must be > 0");
