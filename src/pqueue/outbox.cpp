@@ -99,6 +99,41 @@ SubmitResult Outbox::submit(const std::string& payload) {
 }
 
 DrainResult Outbox::drain() {
+    return drainOne(true);
+}
+
+DrainResult Outbox::drainBurst(std::uint16_t maxAttempts) {
+    DrainResult total;
+    if (maxAttempts == 0) {
+        maxAttempts = 1;
+    }
+
+    for (std::uint16_t i = 0; i < maxAttempts; ++i) {
+        const DrainResult current = drainOne(false);
+        total.attempts += current.attempts;
+        total.sent += current.sent;
+        total.dropped += current.dropped;
+        total.droppedMaxAttempts += current.droppedMaxAttempts;
+        total.corruptDropped += current.corruptDropped;
+        total.rateLimited = total.rateLimited || current.rateLimited;
+        total.notDue = total.notDue || current.notDue;
+        total.queueError = total.queueError || current.queueError;
+        total.sendError = total.sendError || current.sendError;
+        if (!current.detail.ok()) {
+            total.detail = current.detail;
+        }
+
+        const bool madeProgress = current.sent != 0 || current.dropped != 0 || current.droppedMaxAttempts != 0 || current.corruptDropped != 0;
+        const bool shouldStop = current.attempts == 0 || current.notDue || current.rateLimited || current.queueError || current.sendError || !madeProgress;
+        if (shouldStop) {
+            break;
+        }
+    }
+
+    return total;
+}
+
+DrainResult Outbox::drainOne(bool enforceRateLimit) {
     DrainResult result;
     if (send_ == nullptr || clock_ == nullptr) {
         result.sendError = true;
@@ -154,7 +189,7 @@ DrainResult Outbox::drain() {
         return result;
     }
 
-    if (!drainRateAllows(nowMs)) {
+    if (enforceRateLimit && !drainRateAllows(nowMs)) {
         result.rateLimited = true;
         emitRequestEvent(
             EventKind::Diagnostic,

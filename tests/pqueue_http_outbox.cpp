@@ -464,3 +464,35 @@ TEST_CASE("pqueue http outbox keeps retryable front request instead of dropping 
     CHECK_EQ(transport.posts[3].url, "https://example.test/api/second");
 #endif
 }
+
+TEST_CASE("pqueue http outbox burst drain sends multiple queued requests in one call") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+
+    pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.retryDelayMs = 0;
+    httpConfig.outbox.maxDrainAttemptsPerSecond = 1;
+    httpConfig.baseUrl = "https://example.test/api";
+
+    pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
+    REQUIRE(outbox.submitPost("/one", "one").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submitPost("/two", "two").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submitPost("/three", "three").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submitPost("/four", "four").status == pqueue::SubmitStatus::Queued);
+
+    const auto first = outbox.drainBurst(3);
+    CHECK_EQ(first.attempts, 3U);
+    CHECK_EQ(first.sent, 3U);
+    CHECK_FALSE(first.rateLimited);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    REQUIRE_EQ(transport.posts.size(), 4U);
+    CHECK_EQ(transport.posts[1].url, "https://example.test/api/one");
+    CHECK_EQ(transport.posts[2].url, "https://example.test/api/two");
+    CHECK_EQ(transport.posts[3].url, "https://example.test/api/three");
+#endif
+}

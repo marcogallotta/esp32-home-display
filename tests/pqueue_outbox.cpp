@@ -289,3 +289,32 @@ TEST_CASE("pqueue outbox allows first drain immediately") {
     CHECK_EQ(drain.sent, 1U);
 #endif
 }
+
+TEST_CASE("pqueue outbox burst drain sends multiple queued records in one call") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config;
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 1;
+
+    auto outbox = makeOutbox(sender, clock, config);
+    REQUIRE(outbox.submit("one").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("two").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("three").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("four").status == pqueue::SubmitStatus::Queued);
+    CHECK_EQ(outbox.stats().count, 4U);
+
+    const auto first = outbox.drainBurst(3);
+    CHECK_EQ(first.attempts, 3U);
+    CHECK_EQ(first.sent, 3U);
+    CHECK_FALSE(first.rateLimited);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    const auto second = outbox.drainBurst(3);
+    CHECK_EQ(second.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}

@@ -565,7 +565,10 @@ WriteResult OutboxClient::send(ApiRequest request) {
 OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     (void)nowMs;
     OutboxDrainResult result;
-    const pqueue::DrainResult drainResult = pqueue_->outbox.drain();
+    const std::uint16_t maxDrain = config_.api.outbox.drainRateCap <= 0
+        ? 1
+        : static_cast<std::uint16_t>(config_.api.outbox.drainRateCap);
+    const pqueue::DrainResult drainResult = pqueue_->outbox.drainBurst(maxDrain);
     result.attempted = drainResult.attempts;
     result.sent = drainResult.sent;
     result.dropped = drainResult.dropped +

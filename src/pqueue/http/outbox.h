@@ -130,6 +130,7 @@ public:
 
     pqueue::SubmitResult submitPost(const std::string& path, const std::string& body);
     pqueue::DrainResult drain();
+    pqueue::DrainResult drainBurst(std::uint16_t maxAttempts);
     Stats stats();
 
 private:

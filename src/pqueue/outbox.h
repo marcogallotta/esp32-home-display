@@ -86,10 +86,12 @@ public:
 
     SubmitResult submit(const std::string& payload);
     DrainResult drain();
+    DrainResult drainBurst(std::uint16_t maxAttempts);
     Stats stats();
 
 private:
     SubmitResult enqueueRecord(const std::string& payload, std::uint8_t attempts);
+    DrainResult drainOne(bool enforceRateLimit);
     void setFrontCooldown(std::uint64_t nextAttemptMs);
     void clearFrontCooldown();
     void emit(Event event) const;

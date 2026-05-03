@@ -73,6 +73,10 @@ pqueue::DrainResult Outbox::drain() {
     return outbox_.drain();
 }
 
+pqueue::DrainResult Outbox::drainBurst(std::uint16_t maxAttempts) {
+    return outbox_.drainBurst(maxAttempts);
+}
+
 Stats Outbox::stats() {
     return outbox_.stats();
 }
