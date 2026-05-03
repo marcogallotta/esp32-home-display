@@ -1,6 +1,8 @@
 #include "queue.h"
 #include "storage_common.h"
 
+#include <utility>
+
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <sstream>
@@ -39,6 +41,27 @@ void waitBeforeLockRetry() {
 #else
     std::this_thread::sleep_for(std::chrono::milliseconds(kLockRetryDelayMs));
 #endif
+}
+
+
+void addQueueValidationError(ValidationResult& result, const ValidationOptions& options, ValidationIssue issue) {
+    result.ok = false;
+    if (result.errors.size() < options.maxErrors) {
+        result.errors.push_back(std::move(issue));
+    } else {
+        result.stoppedEarly = true;
+    }
+}
+
+ValidationIssue makeQueueIssue(ValidationIssueCode code, std::string message) {
+    ValidationIssue issue;
+    issue.code = code;
+    issue.message = std::move(message);
+    return issue;
+}
+
+bool sameIndex(const FileStoreIndex& lhs, const FileStoreIndex& rhs) {
+    return lhs.head == rhs.head && lhs.tail == rhs.tail && lhs.count == rhs.count;
 }
 
 } // namespace
@@ -207,6 +230,35 @@ Status Queue::rewriteFront(const std::string& record) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "rewriteFront");
     }
     return store_.writeRecord(index_.head, record);
+}
+
+
+ValidationResult Queue::validate(const ValidationOptions& options) {
+    ValidationResult result;
+
+    Status st = ensureLoaded();
+    if (!st.ok()) {
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message));
+        return result;
+    }
+
+    result = store_.validateUnlocked(options);
+    if (result.stoppedEarly || result.errors.size() >= options.maxErrors) {
+        return result;
+    }
+
+    FileStoreIndex diskIndex;
+    st = store_.readIndex(diskIndex);
+    if (!st.ok()) {
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message));
+        return result;
+    }
+
+    if (!sameIndex(index_, diskIndex)) {
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueIndexMismatch, "queue cached index does not match storage metadata"));
+    }
+
+    return result;
 }
 
 Stats Queue::stats() {

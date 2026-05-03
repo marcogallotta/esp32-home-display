@@ -29,6 +29,7 @@ public:
     Status peek(std::string& out);
     Status pop();
     Status rewriteFront(const std::string& record);
+    ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 
 private:

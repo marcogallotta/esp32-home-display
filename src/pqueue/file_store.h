@@ -47,6 +47,8 @@ enum class ValidationIssueCode {
     SlotReadFailed,
     SlotHeaderInvalid,
     SlotCrcMismatch,
+    QueueLoadFailed,
+    QueueIndexMismatch,
 };
 
 struct ValidationIssue {
@@ -72,12 +74,13 @@ struct ValidationOptions {
 };
 
 class FileStore {
+    friend class Queue;
+
 public:
     explicit FileStore(FileStoreConfig config = FileStoreConfig{});
     explicit FileStore(std::string basePath);
 
     Status mount();
-    ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Status readIndex(FileStoreIndex& out);
     Status writeIndex(const FileStoreIndex& index);
 
@@ -95,6 +98,7 @@ private:
     std::shared_ptr<FileSystem> fileSystem() const;
     Status emit(Event event) const;
     Status diagnostic(Severity severity, Status status, const char* operation, std::uint32_t sequence = kNoSequence, const char* path = "") const;
+    ValidationResult validateUnlocked(const ValidationOptions& options = ValidationOptions{});
 
     FileStoreConfig config_;
     mutable std::shared_ptr<FileSystem> fileSystem_;

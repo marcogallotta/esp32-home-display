@@ -201,3 +201,133 @@ TEST_CASE("pqueue releases lock when queue is destroyed") {
     CHECK_EQ(second.stats().count, 2U);
 #endif
 }
+
+TEST_CASE("pqueue validate reports clean active records") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    pqueue::Queue queue(config);
+
+    REQUIRE(queue.enqueue("first").ok());
+    REQUIRE(queue.enqueue("second").ok());
+
+    const auto result = queue.validate();
+    CHECK(result.ok);
+    CHECK_EQ(result.checkedRecords, 2U);
+    CHECK(result.errors.empty());
+#endif
+}
+
+TEST_CASE("pqueue validate detects corrupt active slot payload") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("payload").ok());
+    }
+
+    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    spool.seekp(static_cast<std::streamoff>(sizeof(pqueue::storage_detail::RecordHeader)));
+    char c = 'X';
+    spool.write(&c, 1);
+    spool.close();
+    (void)slotSize;
+
+    pqueue::Queue queue(config);
+    const auto result = queue.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotCrcMismatch);
+    CHECK_EQ(result.checkedRecords, 0U);
+#endif
+}
+
+TEST_CASE("pqueue validate ignores inactive corrupt slots") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("old").ok());
+        REQUIRE(queue.enqueue("active").ok());
+        REQUIRE(queue.pop().ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(0);
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue queue(config);
+    const auto result = queue.validate();
+    CHECK(result.ok);
+    CHECK_EQ(result.checkedRecords, 1U);
+    CHECK(result.errors.empty());
+#endif
+}
+
+TEST_CASE("pqueue validate caps reported errors") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("first").ok());
+        REQUIRE(queue.enqueue("second").ok());
+    }
+
+    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(0);
+    spool.write(&c, 1);
+    spool.seekp(static_cast<std::streamoff>(slotSize));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::ValidationOptions options;
+    options.maxErrors = 1;
+    pqueue::Queue queue(config);
+    const auto result = queue.validate(options);
+    REQUIRE_FALSE(result.ok);
+    CHECK(result.stoppedEarly);
+    CHECK_EQ(result.errors.size(), 1U);
+#endif
+}
+
+TEST_CASE("pqueue validate fails when another queue owns the lock") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+
+    pqueue::Queue first(config);
+    REQUIRE(first.enqueue("held").ok());
+
+    pqueue::Queue second(config);
+    const auto result = second.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::QueueLoadFailed);
+#endif
+}

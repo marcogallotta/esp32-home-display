@@ -277,7 +277,7 @@ Status FileStore::mount() {
 }
 
 
-ValidationResult FileStore::validate(const ValidationOptions& options) {
+ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
     ValidationResult result;
 
     const auto fs = fileSystem();
