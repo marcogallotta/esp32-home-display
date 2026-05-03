@@ -352,3 +352,116 @@ TEST_CASE("pqueue http default classifier handles representative outcomes") {
     CHECK(pqueue::http::defaultClassifyResponse({404, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
     CHECK(pqueue::http::defaultClassifyResponse({507, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
 }
+
+TEST_CASE("pqueue http outbox drains queued backlog after transport recovers") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+
+    auto outbox = makeHttpOutbox(transport, clock);
+    CHECK(outbox.submitPost("/first", "one").status == pqueue::SubmitStatus::Queued);
+    CHECK(outbox.submitPost("/second", "two").status == pqueue::SubmitStatus::Queued);
+    CHECK(outbox.submitPost("/third", "three").status == pqueue::SubmitStatus::Queued);
+    CHECK_EQ(outbox.stats().count, 3U);
+    REQUIRE_EQ(transport.posts.size(), 1U);
+    CHECK_EQ(transport.posts[0].url, "https://example.test/api/first");
+
+    clock.nowMs += 1000;
+    auto drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_FALSE(drain.notDue);
+    CHECK_FALSE(drain.rateLimited);
+    CHECK_EQ(outbox.stats().count, 2U);
+
+    clock.nowMs += 1000;
+    drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    clock.nowMs += 1000;
+    drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 0U);
+
+    REQUIRE_EQ(transport.posts.size(), 4U);
+    CHECK_EQ(transport.posts[1].url, "https://example.test/api/first");
+    CHECK_EQ(transport.posts[2].url, "https://example.test/api/second");
+    CHECK_EQ(transport.posts[3].url, "https://example.test/api/third");
+#endif
+}
+
+TEST_CASE("pqueue http outbox does not extend front retry cooldown when more requests are queued") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+
+    auto outbox = makeHttpOutbox(transport, clock);
+    REQUIRE(outbox.submitPost("/first", "one").status == pqueue::SubmitStatus::Queued);
+
+    clock.nowMs += 250;
+    CHECK(outbox.submitPost("/second", "two").status == pqueue::SubmitStatus::Queued);
+    clock.nowMs += 250;
+    CHECK(outbox.submitPost("/third", "three").status == pqueue::SubmitStatus::Queued);
+
+    clock.nowMs = 1999;
+    auto drain = outbox.drain();
+    CHECK(drain.notDue);
+    CHECK_EQ(transport.posts.size(), 1U);
+
+    clock.nowMs = 2000;
+    drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_FALSE(drain.notDue);
+    CHECK_EQ(outbox.stats().count, 2U);
+    REQUIRE_EQ(transport.posts.size(), 2U);
+    CHECK_EQ(transport.posts[1].url, "https://example.test/api/first");
+#endif
+}
+
+TEST_CASE("pqueue http outbox continues draining backlog after exhausted front request is dropped") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+
+    pqueue::http::Config httpConfig;
+    httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
+    httpConfig.outbox.retryDelayMs = 1000;
+    httpConfig.outbox.maxAttempts = 2;
+    httpConfig.outbox.maxDrainAttemptsPerSecond = 1;
+    httpConfig.baseUrl = "https://example.test/api";
+
+    pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
+    CHECK(outbox.submitPost("/first", "one").status == pqueue::SubmitStatus::Queued);
+    CHECK(outbox.submitPost("/second", "two").status == pqueue::SubmitStatus::Queued);
+    CHECK(outbox.submitPost("/third", "three").status == pqueue::SubmitStatus::Queued);
+    CHECK_EQ(outbox.stats().count, 3U);
+
+    clock.nowMs += 1000;
+    auto drain = outbox.drain();
+    CHECK_EQ(drain.droppedMaxAttempts, 1U);
+    CHECK_EQ(outbox.stats().count, 2U);
+
+    clock.nowMs += 1000;
+    drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    clock.nowMs += 1000;
+    drain = outbox.drain();
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 0U);
+
+    REQUIRE_EQ(transport.posts.size(), 4U);
+    CHECK_EQ(transport.posts[0].url, "https://example.test/api/first");
+    CHECK_EQ(transport.posts[1].url, "https://example.test/api/first");
+    CHECK_EQ(transport.posts[2].url, "https://example.test/api/second");
+    CHECK_EQ(transport.posts[3].url, "https://example.test/api/third");
+#endif
+}
