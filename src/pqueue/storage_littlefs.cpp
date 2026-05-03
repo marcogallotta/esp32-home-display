@@ -133,6 +133,29 @@ public:
         return Status::success();
     }
 
+    Status tryAcquireLockFile(const std::string& name) override {
+        const std::string fullPath = path(name);
+        if (LittleFS.exists(fullPath.c_str())) {
+            return Status::failure(StatusCode::LockTimeout, "queue lock already exists");
+        }
+
+        // TODO: LittleFS create-after-exists is not a true atomic lock primitive.
+        // Add owner metadata and stale-lock recovery before supporting multi-process/multi-task writers.
+        File file = LittleFS.open(fullPath.c_str(), "w");
+        if (!file) {
+            return Status::failure(StatusCode::WriteFailed, "failed to create LittleFS queue lock file");
+        }
+        file.print("locked
+");
+        file.flush();
+        file.close();
+        return Status::success();
+    }
+
+    Status releaseLockFile(const std::string& name) override {
+        return removeFile(name);
+    }
+
     std::uint64_t freeBytes() const override {
         const auto total = LittleFS.totalBytes();
         const auto used = LittleFS.usedBytes();

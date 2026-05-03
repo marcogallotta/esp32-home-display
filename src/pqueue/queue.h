@@ -20,6 +20,10 @@ namespace pqueue {
 class Queue {
 public:
     explicit Queue(Config config = Config{});
+    ~Queue();
+
+    Queue(const Queue&) = delete;
+    Queue& operator=(const Queue&) = delete;
 
     Status enqueue(const std::string& record);
     Status peek(std::string& out);
@@ -29,6 +33,8 @@ public:
 
 private:
     Status ensureLoaded();
+    Status acquireLock();
+    void releaseLock();
     Status emit(Event event) const;
     Status diagnostic(Severity severity, Status status, const char* operation) const;
 
@@ -36,6 +42,7 @@ private:
     FileStore store_;
     FileStoreIndex index_;
     bool loaded_ = false;
+    bool lockHeld_ = false;
 };
 
 } // namespace pqueue

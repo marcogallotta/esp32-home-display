@@ -177,10 +177,13 @@ TEST_CASE("pqueue outbox retries transient failures indefinitely") {
 TEST_CASE("pqueue outbox drops corrupt front records") {
 #ifndef ARDUINO
     cleanOutboxSpool();
-    pqueue::Config queueConfig;
-    queueConfig.basePath = kOutboxSpoolDir.string();
-    pqueue::Queue queue(queueConfig);
-    REQUIRE(queue.enqueue("not an outbox envelope").ok());
+    {
+        pqueue::Config queueConfig;
+        queueConfig.basePath = kOutboxSpoolDir.string();
+        pqueue::Queue queue(queueConfig);
+        REQUIRE(queue.enqueue("not an outbox envelope").ok());
+    }
+
     FakeSender sender;
     FakeClock clock;
 

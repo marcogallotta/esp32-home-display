@@ -5,11 +5,13 @@
 #include <cerrno>
 #include <filesystem>
 #include <fstream>
+#include <fcntl.h>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <system_error>
 #include <vector>
+#include <unistd.h>
 
 namespace pqueue {
 namespace {
@@ -82,6 +84,23 @@ public:
             return Status::failure(StatusCode::ListFailed, "failed to list storage directory", ec.value());
         }
         return Status::success();
+    }
+
+    Status tryAcquireLockFile(const std::string& name) override {
+        errno = 0;
+        const int fd = ::open(path(name).c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd >= 0) {
+            ::close(fd);
+            return Status::success();
+        }
+        if (errno == EEXIST) {
+            return Status::failure(StatusCode::LockTimeout, "queue lock already exists", errno);
+        }
+        return Status::failure(StatusCode::WriteFailed, "failed to create queue lock file", errno);
+    }
+
+    Status releaseLockFile(const std::string& name) override {
+        return removeFile(name);
     }
 
     std::uint64_t freeBytes() const override {

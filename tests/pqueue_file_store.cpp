@@ -82,6 +82,19 @@ public:
         return pqueue::Status::success();
     }
 
+    pqueue::Status tryAcquireLockFile(const std::string& name) override {
+        if (files.find(name) != files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::LockTimeout, "fake lock exists");
+        }
+        files[name] = "locked\n";
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status releaseLockFile(const std::string& name) override {
+        files.erase(name);
+        return pqueue::Status::success();
+    }
+
     std::uint64_t freeBytes() const override {
         const auto used = usedBytes();
         return used < capacityBytes ? capacityBytes - used : 0;

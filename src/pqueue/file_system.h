@@ -19,6 +19,8 @@ public:
     virtual Status removeFile(const std::string& name) = 0;
     virtual Status renameFile(const std::string& fromName, const std::string& toName) = 0;
     virtual Status listFiles(std::vector<std::string>& out) = 0;
+    virtual Status tryAcquireLockFile(const std::string& name) = 0;
+    virtual Status releaseLockFile(const std::string& name) = 0;
     virtual std::uint64_t freeBytes() const = 0;
 };
 

@@ -1,6 +1,28 @@
 #include "queue.h"
 
+#ifdef ARDUINO
+#include <Arduino.h>
+#else
+#include <chrono>
+#include <thread>
+#endif
+
 namespace pqueue {
+namespace {
+
+constexpr const char* kLockFileName = ".pqueue.lock";
+constexpr int kLockAttempts = 10;
+constexpr int kLockRetryDelayMs = 10;
+
+void waitBeforeLockRetry() {
+#ifdef ARDUINO
+    delay(kLockRetryDelayMs);
+#else
+    std::this_thread::sleep_for(std::chrono::milliseconds(kLockRetryDelayMs));
+#endif
+}
+
+} // namespace
 
 Queue::Queue(Config config)
     : config_(config),
@@ -11,6 +33,10 @@ Queue::Queue(Config config)
           storeConfig.events = config.events;
           return storeConfig;
       }()) {}
+
+Queue::~Queue() {
+    releaseLock();
+}
 
 Status Queue::emit(Event event) const {
     config_.events.emit(event);
@@ -27,11 +53,46 @@ Status Queue::diagnostic(Severity severity, Status status, const char* operation
     });
 }
 
+Status Queue::acquireLock() {
+    if (lockHeld_) {
+        return Status::success();
+    }
+
+    // TODO: add owner metadata plus stale-lock detection/recovery for crashed writers.
+    Status last = Status::failure(StatusCode::LockTimeout, "queue lock timeout");
+    for (int attempt = 0; attempt < kLockAttempts; ++attempt) {
+        Status st = store_.tryAcquireLockFile(kLockFileName);
+        if (st.ok()) {
+            lockHeld_ = true;
+            return Status::success();
+        }
+        if (st.code != StatusCode::LockTimeout) {
+            return diagnostic(Severity::Error, st, "acquireLock");
+        }
+        last = st;
+        waitBeforeLockRetry();
+    }
+
+    return diagnostic(Severity::Error, Status::failure(StatusCode::LockTimeout, "queue lock timeout", last.backendCode), "acquireLock");
+}
+
+void Queue::releaseLock() {
+    if (!lockHeld_) {
+        return;
+    }
+    store_.releaseLockFile(kLockFileName);
+    lockHeld_ = false;
+}
+
 Status Queue::ensureLoaded() {
     if (loaded_) {
         return Status::success();
     }
-    Status st = store_.readIndex(index_);
+    Status st = acquireLock();
+    if (!st.ok()) {
+        return st;
+    }
+    st = store_.readIndex(index_);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "ensureLoaded");
     }

@@ -303,6 +303,22 @@ Status FileStore::removeRecord(std::uint32_t sequence) {
     return Status::success();
 }
 
+Status FileStore::tryAcquireLockFile(const std::string& name) {
+    Status st = mount();
+    if (!st.ok()) {
+        return st;
+    }
+    return fileSystem()->tryAcquireLockFile(name);
+}
+
+Status FileStore::releaseLockFile(const std::string& name) {
+    Status st = mount();
+    if (!st.ok()) {
+        return st;
+    }
+    return fileSystem()->releaseLockFile(name);
+}
+
 std::uint64_t FileStore::freeBytes() const {
     const auto fs = fileSystem();
     if (!fs || !fs->mount(config_.basePath).ok()) {

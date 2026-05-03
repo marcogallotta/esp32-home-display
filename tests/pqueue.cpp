@@ -104,3 +104,44 @@ TEST_CASE("pqueue rejects records over the configured max size") {
     CHECK_EQ(queue.stats().count, 0U);
 #endif
 }
+
+TEST_CASE("pqueue lock prevents two active queues using the same spool") {
+#ifndef ARDUINO
+    cleanSpool();
+
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.diskReserveBytes = 0;
+
+    pqueue::Queue first(config);
+    REQUIRE(first.enqueue("held").ok());
+
+    pqueue::Queue second(config);
+    const auto status = second.enqueue("blocked");
+    CHECK_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::LockTimeout);
+
+    std::string out;
+    REQUIRE(first.peek(out).ok());
+    CHECK_EQ(out, "held");
+#endif
+}
+
+TEST_CASE("pqueue releases lock when queue is destroyed") {
+#ifndef ARDUINO
+    cleanSpool();
+
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.diskReserveBytes = 0;
+
+    {
+        pqueue::Queue first(config);
+        REQUIRE(first.enqueue("first").ok());
+    }
+
+    pqueue::Queue second(config);
+    REQUIRE(second.enqueue("second").ok());
+    CHECK_EQ(second.stats().count, 2U);
+#endif
+}

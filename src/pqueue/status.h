@@ -21,6 +21,7 @@ enum class StatusCode {
     RecordTooLarge,
     QueueFull,
     QueueEmpty,
+    LockTimeout,
 
     EncodeFailed,
     DecodeFailed,
@@ -45,6 +46,7 @@ inline const char* statusCodeName(StatusCode code) {
         case StatusCode::RecordTooLarge: return "record_too_large";
         case StatusCode::QueueFull: return "queue_full";
         case StatusCode::QueueEmpty: return "queue_empty";
+        case StatusCode::LockTimeout: return "lock_timeout";
         case StatusCode::EncodeFailed: return "encode_failed";
         case StatusCode::DecodeFailed: return "decode_failed";
         case StatusCode::SendFailed: return "send_failed";
