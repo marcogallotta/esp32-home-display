@@ -114,6 +114,7 @@ void checkDefaults(const Config& config) {
     CHECK_EQ(config.api.outbox.diskReserveBytes, defaults.api.outbox.diskReserveBytes);
     CHECK_EQ(config.api.outbox.drainRateCap, defaults.api.outbox.drainRateCap);
     CHECK_EQ(config.api.outbox.drainRateTickS, defaults.api.outbox.drainRateTickS);
+    CHECK(config.api.outbox.logLevel == defaults.api.outbox.logLevel);
     CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
     CHECK_EQ(config.salah.asrMakruhMinutes, defaults.salah.asrMakruhMinutes);
     CHECK_EQ(config.salah.hanafiAsr, defaults.salah.hanafiAsr);
@@ -219,6 +220,21 @@ TEST_CASE("config validates API values") {
             doc["api"]["outbox"][key] = "1";
             expectInvalid(doc);
         }
+    }
+
+    SUBCASE("API outbox pqueue log level must be valid") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["pqueue_log_level"] = "verbose";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("API outbox pqueue log level parses") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["pqueue_log_level"] = "debug";
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK(config.api.outbox.logLevel == api::PqueueLogLevel::Debug);
     }
 
     SUBCASE("API outbox values must be positive") {

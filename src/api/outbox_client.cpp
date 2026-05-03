@@ -115,27 +115,113 @@ LogLevel mapPqueueSeverity(pqueue::Severity severity) {
     return LogLevel::Error;
 }
 
-void onPqueueEvent(const pqueue::Event& event, void*) {
-    if (event.kind != pqueue::EventKind::Diagnostic) {
-        // Drop/request lifecycle events are still handled by the existing HTTP onDrop/onResponse callbacks.
+int logLevelRank(LogLevel level) {
+    switch (level) {
+        case LogLevel::Debug:
+            return 0;
+        case LogLevel::Info:
+            return 1;
+        case LogLevel::Warn:
+            return 2;
+        case LogLevel::Error:
+            return 3;
+    }
+    return 3;
+}
+
+bool pqueueEventEnabled(api::PqueueLogLevel configured, LogLevel eventLevel) {
+    switch (configured) {
+        case api::PqueueLogLevel::Debug:
+            return true;
+        case api::PqueueLogLevel::Info:
+            return logLevelRank(eventLevel) >= logLevelRank(LogLevel::Info);
+        case api::PqueueLogLevel::Warning:
+            return logLevelRank(eventLevel) >= logLevelRank(LogLevel::Warn);
+        case api::PqueueLogLevel::Error:
+            return logLevelRank(eventLevel) >= logLevelRank(LogLevel::Error);
+        case api::PqueueLogLevel::None:
+            return false;
+    }
+    return logLevelRank(eventLevel) >= logLevelRank(LogLevel::Info);
+}
+
+const char* pqueueEventKindName(pqueue::EventKind kind) {
+    switch (kind) {
+        case pqueue::EventKind::Diagnostic:
+            return "diagnostic";
+        case pqueue::EventKind::RequestSent:
+            return "sent";
+        case pqueue::EventKind::RequestRetried:
+            return "retry";
+        case pqueue::EventKind::RequestDropped:
+            return "dropped";
+    }
+    return "event";
+}
+
+void logPqueueEvent(const pqueue::Event& event, api::PqueueLogLevel configured) {
+    // Dropped-request persistence still goes through the existing HTTP onDrop callback.
+    // The next patch can move that to RequestDropped events without changing behavior here.
+    if (event.kind == pqueue::EventKind::RequestDropped) {
+        return;
+    }
+
+    const LogLevel level = mapPqueueSeverity(event.severity);
+    if (!pqueueEventEnabled(configured, level)) {
         return;
     }
 
     std::string message = "pqueue ";
+    message += pqueueEventKindName(event.kind);
+    message += " ";
     message += event.component == nullptr ? "" : event.component;
     if (event.operation != nullptr && event.operation[0] != '\0') {
         message += ".";
         message += event.operation;
     }
+
     message += ": ";
-    message += event.status.message == nullptr ? "" : event.status.message;
+    message += event.status.message == nullptr || event.status.message[0] == '\0'
+        ? pqueue::statusCodeName(event.status.code)
+        : event.status.message;
+
+    message += " code=";
+    message += pqueue::statusCodeName(event.status.code);
+
+    if (event.status.backendCode != 0) {
+        message += " backend=";
+        message += std::to_string(event.status.backendCode);
+    }
+    if (event.queueCount != 0) {
+        message += " queued=";
+        message += std::to_string(event.queueCount);
+    }
+    if (event.attempt != 0) {
+        message += " attempt=";
+        message += std::to_string(event.attempt);
+    }
+    if (event.remainingMs != 0) {
+        message += " remaining_ms=";
+        message += std::to_string(event.remainingMs);
+    }
+    if (event.method != nullptr && event.method[0] != '\0') {
+        message += " method=";
+        message += event.method;
+    }
     if (event.path != nullptr && event.path[0] != '\0') {
-        message += " [";
+        message += " path=";
         message += event.path;
-        message += "]";
+    }
+    if (event.httpStatus != 0) {
+        message += " http=";
+        message += std::to_string(event.httpStatus);
+    }
+    if (event.bodyBytes != 0) {
+        message += " body_bytes=";
+        message += std::to_string(event.bodyBytes);
     }
 
-    logLine(mapPqueueSeverity(event.severity), message);
+    logLine(level, message);
 }
 
 network::TransportResult mapTransportError(pqueue::http::TransportError error) {
@@ -245,7 +331,7 @@ struct OutboxClientImpl {
           }},
           transport(makeTransportConfig(config)),
           outbox(
-              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &onPqueueEvent),
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent),
               transport,
               &OutboxClientImpl::clockNow,
               this
@@ -299,6 +385,14 @@ struct OutboxClientImpl {
     ) {
         auto* self = static_cast<OutboxClientImpl*>(context);
         self->logDrop(request, reason, response);
+    }
+
+    static void onPqueueEvent(const pqueue::Event& event, void* context) {
+        const auto* self = static_cast<const OutboxClientImpl*>(context);
+        logPqueueEvent(
+            event,
+            self == nullptr ? api::PqueueLogLevel::Info : self->config.api.outbox.logLevel
+        );
     }
 
     void logDrop(
@@ -408,7 +502,7 @@ WriteResult OutboxClient::send(ApiRequest request) {
 
         case pqueue::SubmitStatus::Queued:
             logLine(
-                LogLevel::Warn,
+                LogLevel::Info,
                 "Queued API request in pqueue: " +
                 std::to_string(pqueue_->outbox.stats().count) + " queued"
             );

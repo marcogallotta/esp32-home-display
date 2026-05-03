@@ -92,7 +92,14 @@ private:
     void clearFrontCooldown();
     void emit(Event event) const;
     void emitDiagnostic(Severity severity, Status status, const char* operation) const;
-    void emitRequestEvent(EventKind kind, Severity severity, Status status, const char* operation) const;
+    void emitRequestEvent(
+        EventKind kind,
+        Severity severity,
+        Status status,
+        const char* operation,
+        std::uint8_t attempt = 0,
+        std::uint32_t remainingMs = 0
+    );
     bool frontIsCoolingDown(std::uint64_t nowMs) const;
     bool drainRateAllows(std::uint64_t nowMs) const;
     std::uint64_t drainIntervalMs() const;

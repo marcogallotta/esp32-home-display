@@ -59,6 +59,38 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return true;
     };
 
+    auto readOptionalPqueueLogLevel = [&](JsonObject obj, const char* key, api::PqueueLogLevel& value, const char* path) {
+        const JsonVariant field = obj[key];
+        if (field.isNull()) {
+            return true;
+        }
+        if (!field.is<const char*>()) {
+            return fail(std::string(path) + " is not a string");
+        }
+        const std::string raw = field.as<const char*>();
+        if (raw == "debug") {
+            value = api::PqueueLogLevel::Debug;
+            return true;
+        }
+        if (raw == "info") {
+            value = api::PqueueLogLevel::Info;
+            return true;
+        }
+        if (raw == "warning" || raw == "warn") {
+            value = api::PqueueLogLevel::Warning;
+            return true;
+        }
+        if (raw == "error") {
+            value = api::PqueueLogLevel::Error;
+            return true;
+        }
+        if (raw == "none" || raw == "off") {
+            value = api::PqueueLogLevel::None;
+            return true;
+        }
+        return fail(std::string(path) + " must be one of debug, info, warning, error, none");
+    };
+
     const JsonObject forecast = json["forecast"];
     if (forecast.isNull()) {
         return fail("forecast is not an object");
@@ -98,7 +130,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         (!readOptionalInt(apiOutbox, "in_memory", apiOutboxConfig.inMemory, "api.outbox.in_memory") ||
          !readOptionalUint32(apiOutbox, "disk_reserve_bytes", apiOutboxConfig.diskReserveBytes, "api.outbox.disk_reserve_bytes") ||
          !readOptionalInt(apiOutbox, "drain_rate_cap", apiOutboxConfig.drainRateCap, "api.outbox.drain_rate_cap") ||
-         !readOptionalInt(apiOutbox, "drain_rate_tick_s", apiOutboxConfig.drainRateTickS, "api.outbox.drain_rate_tick_s"))) {
+         !readOptionalInt(apiOutbox, "drain_rate_tick_s", apiOutboxConfig.drainRateTickS, "api.outbox.drain_rate_tick_s") ||
+         !readOptionalPqueueLogLevel(apiOutbox, "pqueue_log_level", apiOutboxConfig.logLevel, "api.outbox.pqueue_log_level"))) {
         return false;
     }
 

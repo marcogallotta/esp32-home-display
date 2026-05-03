@@ -2,6 +2,8 @@
 
 #include "request_envelope.h"
 
+#include <cstdint>
+
 namespace pqueue::http {
 namespace {
 
@@ -53,9 +55,15 @@ pqueue::SubmitResult Outbox::submitPost(const std::string& path, const std::stri
 
     std::string encoded;
     if (!encodeRequestEnvelope(request, encoded)) {
+        emitDiagnostic(
+            Severity::Error,
+            Status::failure(StatusCode::EncodeFailed, "failed to encode HTTP request envelope"),
+            "submitPost",
+            &request);
         return {pqueue::SubmitStatus::SendError};
     }
 
+    emitDiagnostic(Severity::Debug, Status::success(), "submitPost", &request);
     return outbox_.submit(encoded);
 }
 
@@ -74,11 +82,25 @@ SendResult Outbox::sendStoredRequest(void* context, const std::string& encodedRe
 SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const RetryState& retry) {
     RequestEnvelope request;
     if (!decodeRequestEnvelope(encodedRequest, request) || request.method != Method::Post) {
+        emitDiagnostic(
+            Severity::Error,
+            Status::failure(StatusCode::DecodeFailed, "failed to decode HTTP request envelope"),
+            "sendStoredRequest",
+            nullptr,
+            nullptr,
+            retry.attempts);
         notifyDrop(nullptr, DropReason::DecodeFailed, nullptr);
         return {SendDecision::Drop};
     }
 
     const std::string url = buildUrl(request.path);
+    emitDiagnostic(
+        Severity::Debug,
+        Status::success(),
+        "transport_post_start",
+        &request,
+        nullptr,
+        retry.attempts);
     const Response response = transport_.post(
         url.c_str(),
         httpConfig_.headers,
@@ -87,6 +109,15 @@ SendResult Outbox::sendStoredRequest(const std::string& encodedRequest, const Re
         request.body.size()
     );
     notifyResponse(request, response);
+    emitDiagnostic(
+        response.error == TransportError::None ? Severity::Debug : Severity::Info,
+        response.error == TransportError::None
+            ? Status::success()
+            : Status::failure(StatusCode::SendFailed, "HTTP transport returned an error", static_cast<int>(response.error)),
+        "transport_post_complete",
+        &request,
+        &response,
+        retry.attempts);
 
     const SendDecision decision = classifyResponse(response);
     if (decision == SendDecision::Drop) {
@@ -108,6 +139,28 @@ void Outbox::notifyDrop(const RequestEnvelope* request, DropReason reason, const
     if (httpConfig_.onDrop != nullptr) {
         httpConfig_.onDrop(httpConfig_.dropContext, request, reason, response);
     }
+}
+
+void Outbox::emitDiagnostic(
+    Severity severity,
+    Status status,
+    const char* operation,
+    const RequestEnvelope* request,
+    const Response* response,
+    std::uint8_t attempt
+) const {
+    Event event;
+    event.kind = EventKind::Diagnostic;
+    event.severity = severity;
+    event.status = status;
+    event.component = "HttpOutbox";
+    event.operation = operation;
+    event.path = request == nullptr ? "" : request->path.c_str();
+    event.method = request == nullptr ? "" : "POST";
+    event.bodyBytes = request == nullptr ? 0U : static_cast<std::uint32_t>(request->body.size());
+    event.httpStatus = response == nullptr ? 0 : response->statusCode;
+    event.attempt = attempt;
+    httpConfig_.outbox.events.emit(event);
 }
 
 SendDecision Outbox::classifyResponse(const Response& response) const {

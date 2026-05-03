@@ -41,14 +41,25 @@ void Outbox::emitDiagnostic(Severity severity, Status status, const char* operat
     });
 }
 
-void Outbox::emitRequestEvent(EventKind kind, Severity severity, Status status, const char* operation) const {
-    emit(Event{
-        kind,
-        severity,
-        status,
-        "Outbox",
-        operation,
-    });
+void Outbox::emitRequestEvent(
+    EventKind kind,
+    Severity severity,
+    Status status,
+    const char* operation,
+    std::uint8_t attempt,
+    std::uint32_t remainingMs
+) {
+    const Stats currentStats = queue_.stats();
+    Event event;
+    event.kind = kind;
+    event.severity = severity;
+    event.status = status;
+    event.component = "Outbox";
+    event.operation = operation;
+    event.attempt = attempt;
+    event.queueCount = currentStats.count;
+    event.remainingMs = remainingMs;
+    emit(event);
 }
 
 SubmitResult Outbox::submit(const std::string& payload) {
@@ -65,18 +76,18 @@ SubmitResult Outbox::submit(const std::string& payload) {
     const SendResult result = send_(sendContext_, payload, RetryState{});
     switch (result.decision) {
         case SendDecision::Sent:
-            emitRequestEvent(EventKind::RequestSent, Severity::Info, Status::success(), "submit");
+            emitRequestEvent(EventKind::RequestSent, Severity::Info, Status::success(), "submit", 0, 0);
             return submitResult(SubmitStatus::Sent);
         case SendDecision::Drop: {
             const Status st = Status::failure(StatusCode::Dropped, "request was dropped by send policy");
-            emitRequestEvent(EventKind::RequestDropped, Severity::Warning, st, "submit");
+            emitRequestEvent(EventKind::RequestDropped, Severity::Warning, st, "submit", 0, 0);
             return submitResult(SubmitStatus::Dropped, st);
         }
         case SendDecision::RetryLater: {
             const auto queued = enqueueRecord(payload, 1);
             if (queued.status == SubmitStatus::Queued) {
                 setFrontCooldown(clock_(clockContext_) + config_.retryDelayMs);
-                emitRequestEvent(EventKind::RequestRetried, Severity::Info, Status::success(), "submit");
+                emitRequestEvent(EventKind::RequestRetried, Severity::Info, Status::success(), "submit", 1, config_.retryDelayMs);
             }
             return queued;
         }
@@ -125,23 +136,46 @@ DrainResult Outbox::drain() {
             EventKind::RequestDropped,
             Severity::Error,
             Status::failure(StatusCode::DecodeFailed, "stored outbox envelope could not be decoded"),
-            "drain");
+            "drain",
+            0,
+            0);
         return result;
     }
 
     if (frontIsCoolingDown(nowMs)) {
         result.notDue = true;
+        emitRequestEvent(
+            EventKind::Diagnostic,
+            Severity::Debug,
+            Status::failure(StatusCode::SendFailed, "front request retry cooldown not due"),
+            "drain",
+            decoded.attempts,
+            static_cast<std::uint32_t>(frontNextAttemptMs_ - nowMs));
         return result;
     }
 
     if (!drainRateAllows(nowMs)) {
         result.rateLimited = true;
+        emitRequestEvent(
+            EventKind::Diagnostic,
+            Severity::Debug,
+            Status::failure(StatusCode::SendFailed, "drain rate limit not due"),
+            "drain",
+            decoded.attempts,
+            static_cast<std::uint32_t>(drainIntervalMs() - (nowMs - lastDrainAttemptMs_)));
         return result;
     }
     lastDrainAttemptMs_ = nowMs;
     hasDrainAttempt_ = true;
 
     result.attempts += 1;
+    emitRequestEvent(
+        EventKind::Diagnostic,
+        Severity::Debug,
+        Status::success(),
+        "drain_send_start",
+        decoded.attempts,
+        0);
     const SendResult sendResult = send_(sendContext_, decoded.payload, RetryState{decoded.attempts});
     switch (sendResult.decision) {
         case SendDecision::Sent:
@@ -154,7 +188,7 @@ DrainResult Outbox::drain() {
             }
             clearFrontCooldown();
             result.sent += 1;
-            emitRequestEvent(EventKind::RequestSent, Severity::Info, Status::success(), "drain");
+            emitRequestEvent(EventKind::RequestSent, Severity::Info, Status::success(), "drain", decoded.attempts, 0);
             return result;
 
         case SendDecision::Drop:
@@ -171,7 +205,9 @@ DrainResult Outbox::drain() {
                 EventKind::RequestDropped,
                 Severity::Warning,
                 Status::failure(StatusCode::Dropped, "request was dropped by send policy"),
-                "drain");
+                "drain",
+                decoded.attempts,
+                0);
             return result;
 
         case SendDecision::RetryLater: {
@@ -189,7 +225,9 @@ DrainResult Outbox::drain() {
                     EventKind::RequestDropped,
                     Severity::Warning,
                     Status::failure(StatusCode::Dropped, "request reached maximum retry attempts"),
-                    "drain");
+                    "drain",
+                    decoded.attempts,
+                    0);
                 return result;
             }
 
@@ -208,7 +246,9 @@ DrainResult Outbox::drain() {
                     EventKind::RequestDropped,
                     Severity::Warning,
                     Status::failure(StatusCode::Dropped, "request reached maximum retry attempts"),
-                    "drain");
+                    "drain",
+                    decoded.attempts,
+                    0);
                 return result;
             }
 
@@ -226,7 +266,7 @@ DrainResult Outbox::drain() {
                 return result;
             }
             setFrontCooldown(nowMs + config_.retryDelayMs);
-            emitRequestEvent(EventKind::RequestRetried, Severity::Info, Status::success(), "drain");
+            emitRequestEvent(EventKind::RequestRetried, Severity::Info, Status::success(), "drain", nextAttempts, config_.retryDelayMs);
             return result;
         }
     }
@@ -244,7 +284,7 @@ Stats Outbox::stats() {
 SubmitResult Outbox::enqueueRecord(const std::string& payload, std::uint8_t attempts) {
     if (attempts >= config_.maxAttempts) {
         const Status st = Status::failure(StatusCode::Dropped, "request reached maximum retry attempts");
-        emitRequestEvent(EventKind::RequestDropped, Severity::Warning, st, "enqueueRecord");
+        emitRequestEvent(EventKind::RequestDropped, Severity::Warning, st, "enqueueRecord", attempts, 0);
         return submitResult(SubmitStatus::Dropped, st);
     }
 

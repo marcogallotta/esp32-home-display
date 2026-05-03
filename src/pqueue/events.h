@@ -32,6 +32,10 @@ struct Event {
     const char* path = "";
     int httpStatus = 0;
     const char* method = "";
+    std::uint8_t attempt = 0;
+    std::uint32_t queueCount = 0;
+    std::uint32_t bodyBytes = 0;
+    std::uint32_t remainingMs = 0;
 };
 
 using EventSink = void (*)(const Event& event, void* user);
