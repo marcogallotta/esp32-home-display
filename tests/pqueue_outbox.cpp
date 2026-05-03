@@ -180,7 +180,7 @@ TEST_CASE("pqueue outbox drops corrupt front records") {
     pqueue::Config queueConfig;
     queueConfig.basePath = kOutboxSpoolDir.string();
     pqueue::Queue queue(queueConfig);
-    REQUIRE(queue.enqueue("not an outbox envelope"));
+    REQUIRE(queue.enqueue("not an outbox envelope").ok());
     FakeSender sender;
     FakeClock clock;
 

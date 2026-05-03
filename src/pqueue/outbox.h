@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <string>
 
+#include "events.h"
 #include "queue.h"
+#include "status.h"
 #include "types.h"
 
 namespace pqueue {
@@ -35,6 +37,7 @@ struct OutboxConfig {
     std::uint8_t maxAttempts = 5;
     std::uint16_t maxDrainAttemptsPerSecond = 1;
     std::uint32_t retryDelayMs = 60000;
+    EventOptions events;
     // TODO: make CRC configurable once the envelope has a published compatibility policy.
     // TODO: consider burst drain/backoff strategies after the strict FIFO v1 settles.
 };
@@ -49,6 +52,7 @@ enum class SubmitStatus {
 
 struct SubmitResult {
     SubmitStatus status = SubmitStatus::SendError;
+    Status detail = Status::failure(StatusCode::SendFailed, "send failed");
 };
 
 struct DrainResult {
@@ -61,6 +65,7 @@ struct DrainResult {
     bool notDue = false;
     bool queueError = false;
     bool sendError = false;
+    Status detail = Status::success();
 };
 
 // Generic store-and-forward lifecycle over Queue.
@@ -85,6 +90,9 @@ private:
     SubmitResult enqueueRecord(const std::string& payload, std::uint8_t attempts);
     void setFrontCooldown(std::uint64_t nextAttemptMs);
     void clearFrontCooldown();
+    void emit(Event event) const;
+    void emitDiagnostic(Severity severity, Status status, const char* operation) const;
+    void emitRequestEvent(EventKind kind, Severity severity, Status status, const char* operation) const;
     bool frontIsCoolingDown(std::uint64_t nowMs) const;
     bool drainRateAllows(std::uint64_t nowMs) const;
     std::uint64_t drainIntervalMs() const;

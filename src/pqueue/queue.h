@@ -4,6 +4,7 @@
 #include <string>
 
 #include "file_store.h"
+#include "status.h"
 #include "types.h"
 
 namespace pqueue {
@@ -20,14 +21,16 @@ class Queue {
 public:
     explicit Queue(Config config = Config{});
 
-    bool enqueue(const std::string& record);
-    bool peek(std::string& out);
-    bool pop();
-    bool rewriteFront(const std::string& record);
+    Status enqueue(const std::string& record);
+    Status peek(std::string& out);
+    Status pop();
+    Status rewriteFront(const std::string& record);
     Stats stats();
 
 private:
-    bool ensureLoaded();
+    Status ensureLoaded();
+    Status emit(Event event) const;
+    Status diagnostic(Severity severity, Status status, const char* operation) const;
 
     Config config_;
     FileStore store_;

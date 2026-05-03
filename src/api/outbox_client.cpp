@@ -100,6 +100,44 @@ std::string diagnosticMac(const ApiRequest& request) {
     return request.payload.substr(valueStart, valueEnd - valueStart);
 }
 
+
+LogLevel mapPqueueSeverity(pqueue::Severity severity) {
+    switch (severity) {
+        case pqueue::Severity::Debug:
+            return LogLevel::Debug;
+        case pqueue::Severity::Info:
+            return LogLevel::Info;
+        case pqueue::Severity::Warning:
+            return LogLevel::Warn;
+        case pqueue::Severity::Error:
+            return LogLevel::Error;
+    }
+    return LogLevel::Error;
+}
+
+void onPqueueEvent(const pqueue::Event& event, void*) {
+    if (event.kind != pqueue::EventKind::Diagnostic) {
+        // Drop/request lifecycle events are still handled by the existing HTTP onDrop/onResponse callbacks.
+        return;
+    }
+
+    std::string message = "pqueue ";
+    message += event.component == nullptr ? "" : event.component;
+    if (event.operation != nullptr && event.operation[0] != '\0') {
+        message += ".";
+        message += event.operation;
+    }
+    message += ": ";
+    message += event.status.message == nullptr ? "" : event.status.message;
+    if (event.path != nullptr && event.path[0] != '\0') {
+        message += " [";
+        message += event.path;
+        message += "]";
+    }
+
+    logLine(mapPqueueSeverity(event.severity), message);
+}
+
 network::TransportResult mapTransportError(pqueue::http::TransportError error) {
     switch (error) {
         case pqueue::http::TransportError::None:
@@ -163,7 +201,8 @@ pqueue::http::Config makeHttpConfig(
     const std::array<pqueue::http::Header, 2>& headers,
     void* callbackContext,
     pqueue::http::ResponseCallback onResponse,
-    pqueue::http::DropCallback onDrop
+    pqueue::http::DropCallback onDrop,
+    pqueue::EventSink onEvent
 ) {
     pqueue::http::Config httpConfig;
 #ifdef ARDUINO
@@ -172,7 +211,9 @@ pqueue::http::Config makeHttpConfig(
     httpConfig.queue.basePath = "pqueue_api_spool";
 #endif
     httpConfig.queue.diskReserveBytes = config.api.outbox.diskReserveBytes;
+    httpConfig.queue.events = {onEvent, callbackContext};
     httpConfig.outbox.retryDelayMs = static_cast<std::uint32_t>(config.api.outbox.drainRateTickS) * 1000U;
+    httpConfig.outbox.events = {onEvent, callbackContext};
     httpConfig.outbox.maxDrainAttemptsPerSecond = config.api.outbox.drainRateCap <= 0
         ? 1
         : static_cast<std::uint16_t>(config.api.outbox.drainRateCap);
@@ -204,7 +245,7 @@ struct OutboxClientImpl {
           }},
           transport(makeTransportConfig(config)),
           outbox(
-              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop),
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &onPqueueEvent),
               transport,
               &OutboxClientImpl::clockNow,
               this

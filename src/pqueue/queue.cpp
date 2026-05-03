@@ -8,55 +8,86 @@ Queue::Queue(Config config)
           FileStoreConfig storeConfig;
           storeConfig.basePath = config.basePath;
           storeConfig.backend = config.storageBackend;
+          storeConfig.events = config.events;
           return storeConfig;
       }()) {}
 
-bool Queue::ensureLoaded() {
-    if (loaded_) {
-        return true;
-    }
-    if (!store_.readIndex(index_)) {
-        return false;
-    }
-    loaded_ = true;
-    return true;
+Status Queue::emit(Event event) const {
+    config_.events.emit(event);
+    return event.status;
 }
 
-bool Queue::enqueue(const std::string& record) {
-    if (!ensureLoaded() || record.size() > config_.maxRecordBytes) {
-        return false;
+Status Queue::diagnostic(Severity severity, Status status, const char* operation) const {
+    return emit(Event{
+        EventKind::Diagnostic,
+        severity,
+        status,
+        "Queue",
+        operation,
+    });
+}
+
+Status Queue::ensureLoaded() {
+    if (loaded_) {
+        return Status::success();
+    }
+    Status st = store_.readIndex(index_);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "ensureLoaded");
+    }
+    loaded_ = true;
+    return Status::success();
+}
+
+Status Queue::enqueue(const std::string& record) {
+    Status st = ensureLoaded();
+    if (!st.ok()) {
+        return st;
+    }
+    if (record.size() > config_.maxRecordBytes) {
+        return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "enqueue");
     }
     if (store_.freeBytes() <= config_.diskReserveBytes) {
         // TODO: make full-queue behavior configurable instead of always rejecting newest.
-        return false;
+        return diagnostic(Severity::Warning, Status::failure(StatusCode::QueueFull, "queue disk reserve reached"), "enqueue");
     }
 
     const std::uint32_t sequence = index_.tail;
-    if (!store_.writeRecord(sequence, record)) {
-        return false;
+    st = store_.writeRecord(sequence, record);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "enqueue");
     }
 
     FileStoreIndex next = index_;
     next.tail += 1;
     next.count += 1;
-    if (!store_.writeIndex(next)) {
-        return false;
+    st = store_.writeIndex(next);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "enqueue");
     }
 
     index_ = next;
-    return true;
+    return Status::success();
 }
 
-bool Queue::peek(std::string& out) {
-    if (!ensureLoaded() || index_.count == 0) {
-        return false;
+Status Queue::peek(std::string& out) {
+    Status st = ensureLoaded();
+    if (!st.ok()) {
+        return st;
+    }
+    if (index_.count == 0) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
     }
     return store_.readRecord(index_.head, out);
 }
 
-bool Queue::pop() {
-    if (!ensureLoaded() || index_.count == 0) {
-        return false;
+Status Queue::pop() {
+    Status st = ensureLoaded();
+    if (!st.ok()) {
+        return st;
+    }
+    if (index_.count == 0) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
     }
 
     const std::uint32_t oldHead = index_.head;
@@ -64,25 +95,33 @@ bool Queue::pop() {
     next.head += 1;
     next.count -= 1;
 
-    if (!store_.writeIndex(next)) {
-        return false;
+    st = store_.writeIndex(next);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "pop");
     }
 
     index_ = next;
     store_.removeRecord(oldHead);
-    return true;
+    return Status::success();
 }
 
-bool Queue::rewriteFront(const std::string& record) {
-    if (!ensureLoaded() || index_.count == 0 || record.size() > config_.maxRecordBytes) {
-        return false;
+Status Queue::rewriteFront(const std::string& record) {
+    Status st = ensureLoaded();
+    if (!st.ok()) {
+        return st;
+    }
+    if (index_.count == 0) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
+    }
+    if (record.size() > config_.maxRecordBytes) {
+        return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "rewriteFront");
     }
     return store_.writeRecord(index_.head, record);
 }
 
 Stats Queue::stats() {
     Stats out;
-    if (!ensureLoaded()) {
+    if (!ensureLoaded().ok()) {
         return out;
     }
     out.count = index_.count;

@@ -2,6 +2,7 @@
 
 #ifndef ARDUINO
 
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,52 +16,72 @@ namespace {
 
 class PosixFileSystem final : public FileSystem {
 public:
-    bool mount(const std::string& basePath) override {
+    Status mount(const std::string& basePath) override {
         basePath_ = basePath;
         std::error_code ec;
         std::filesystem::create_directories(basePath_, ec);
-        return !ec;
+        if (ec) {
+            return Status::failure(StatusCode::MountFailed, "failed to create storage directory", ec.value());
+        }
+        return Status::success();
     }
 
-    bool readFile(const std::string& name, std::string& out) override {
+    Status readFile(const std::string& name, std::string& out) override {
+        errno = 0;
         std::ifstream file(path(name), std::ios::binary);
         if (!file) {
-            return false;
+            return Status::failure(StatusCode::ReadFailed, "failed to open file for read", errno);
         }
         out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-        return file.good() || file.eof();
+        if (!file.good() && !file.eof()) {
+            return Status::failure(StatusCode::ReadFailed, "failed to read file", errno);
+        }
+        return Status::success();
     }
 
-    bool writeFile(const std::string& name, const std::string& data) override {
+    Status writeFile(const std::string& name, const std::string& data) override {
+        errno = 0;
         std::ofstream file(path(name), std::ios::binary | std::ios::trunc);
         if (!file) {
-            return false;
+            return Status::failure(StatusCode::WriteFailed, "failed to open file for write", errno);
         }
         file.write(data.data(), static_cast<std::streamsize>(data.size()));
-        return file.good();
+        if (!file.good()) {
+            return Status::failure(StatusCode::WriteFailed, "failed to write file", errno);
+        }
+        return Status::success();
     }
 
-    bool removeFile(const std::string& name) override {
+    Status removeFile(const std::string& name) override {
         std::error_code ec;
         std::filesystem::remove(path(name), ec);
-        return !ec;
+        if (ec) {
+            return Status::failure(StatusCode::RemoveFailed, "failed to remove file", ec.value());
+        }
+        return Status::success();
     }
 
-    bool renameFile(const std::string& fromName, const std::string& toName) override {
+    Status renameFile(const std::string& fromName, const std::string& toName) override {
         std::error_code ec;
         std::filesystem::rename(path(fromName), path(toName), ec);
-        return !ec;
+        if (ec) {
+            return Status::failure(StatusCode::RenameFailed, "failed to rename file", ec.value());
+        }
+        return Status::success();
     }
 
-    bool listFiles(std::vector<std::string>& out) override {
+    Status listFiles(std::vector<std::string>& out) override {
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(basePath_, ec)) {
             if (ec) {
-                return false;
+                return Status::failure(StatusCode::ListFailed, "failed to list storage directory", ec.value());
             }
             out.push_back(entry.path().filename().string());
         }
-        return !ec;
+        if (ec) {
+            return Status::failure(StatusCode::ListFailed, "failed to list storage directory", ec.value());
+        }
+        return Status::success();
     }
 
     std::uint64_t freeBytes() const override {

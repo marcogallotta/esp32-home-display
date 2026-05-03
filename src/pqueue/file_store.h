@@ -4,7 +4,9 @@
 #include <memory>
 #include <string>
 
+#include "events.h"
 #include "file_system.h"
+#include "status.h"
 
 namespace pqueue {
 
@@ -22,6 +24,7 @@ struct FileStoreConfig {
 #endif
     StorageBackend backend = StorageBackend::Default;
     std::shared_ptr<FileSystem> fileSystem;
+    EventOptions events;
 };
 
 struct FileStoreIndex {
@@ -30,25 +33,26 @@ struct FileStoreIndex {
     std::uint32_t count = 0;
 };
 
-// TODO: add optional storage error reporting/logging once the public logging model is decided.
 class FileStore {
 public:
     explicit FileStore(FileStoreConfig config = FileStoreConfig{});
     explicit FileStore(std::string basePath);
 
-    bool mount();
-    bool readIndex(FileStoreIndex& out);
-    bool writeIndex(const FileStoreIndex& index);
+    Status mount();
+    Status readIndex(FileStoreIndex& out);
+    Status writeIndex(const FileStoreIndex& index);
 
-    bool writeRecord(std::uint32_t sequence, const std::string& record);
-    bool readRecord(std::uint32_t sequence, std::string& out);
-    bool removeRecord(std::uint32_t sequence);
+    Status writeRecord(std::uint32_t sequence, const std::string& record);
+    Status readRecord(std::uint32_t sequence, std::string& out);
+    Status removeRecord(std::uint32_t sequence);
 
     std::uint64_t freeBytes() const;
 
 private:
     StorageBackend resolvedBackend() const;
     std::shared_ptr<FileSystem> fileSystem() const;
+    Status emit(Event event) const;
+    Status diagnostic(Severity severity, Status status, const char* operation, std::uint32_t sequence = kNoSequence, const char* path = "") const;
 
     FileStoreConfig config_;
     mutable std::shared_ptr<FileSystem> fileSystem_;

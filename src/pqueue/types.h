@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <string>
 
+#include "events.h"
 #include "file_store.h"
 
 namespace pqueue {
@@ -19,6 +20,7 @@ struct Config {
     StorageBackend storageBackend = StorageBackend::Default;
     std::uint32_t diskReserveBytes = 256 * 1024;
     std::size_t maxRecordBytes = 4096;
+    EventOptions events;
     // TODO: make full-queue behavior configurable instead of always rejecting newest.
 };
 
