@@ -2,7 +2,6 @@
 #include "storage_common.h"
 
 #include <algorithm>
-#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -14,10 +13,6 @@ using namespace storage_detail;
 constexpr const char* kIndexAName = "pqueue.meta_a";
 constexpr const char* kIndexBName = "pqueue.meta_b";
 constexpr const char* kSpoolName = "pqueue.spool";
-
-std::string bytesFromObject(const void* data, std::size_t size) {
-    return std::string(static_cast<const char*>(data), size);
-}
 
 bool fileExists(FileSystem& fs, const std::string& name) {
     std::uint64_t ignored = 0;
@@ -87,7 +82,7 @@ bool makeLayout(const FileStoreConfig& config, Layout& out) {
     if (config.recordSizeBytes > std::numeric_limits<std::uint32_t>::max()) {
         return false;
     }
-    const auto slotSize = sizeof(RecordHeader) + config.recordSizeBytes;
+    const auto slotSize = kRecordHeaderBytes + config.recordSizeBytes;
     if (slotSize > std::numeric_limits<std::uint32_t>::max()) {
         return false;
     }
@@ -121,10 +116,9 @@ ReadIndexResult readIndexAt(FileSystem& fs, const char* name, const Layout& layo
         return out;
     }
     out.exists = true;
-    if (bytes.size() != sizeof(out.record)) {
+    if (!parseIndexRecord(bytes, out.record)) {
         return out;
     }
-    std::memcpy(&out.record, bytes.data(), sizeof(out.record));
     if (!validIndexShape(out.record)) {
         return out;
     }
@@ -257,7 +251,7 @@ Status FileStore::mount() {
             return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
         }
         const IndexRecord empty = toRecord(FileStoreIndex{}, 1, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
-        st = writeFileAtomic(*fs, kIndexAName, bytesFromObject(&empty, sizeof(empty)));
+        st = writeFileAtomic(*fs, kIndexAName, serializeIndexRecord(empty));
         if (!st.ok()) {
             return diagnostic(Severity::Error, st, "mount", kNoSequence, kIndexAName);
         }
@@ -359,7 +353,7 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         const std::uint32_t slotIndex = sequence % layout.capacityRecords;
         std::string bytes;
         st = fs->readAt(kSpoolName, slotOffset(layout, sequence), layout.slotSizeBytes, bytes);
-        if (!st.ok() || bytes.size() != layout.slotSizeBytes || bytes.size() < sizeof(RecordHeader)) {
+        if (!st.ok() || bytes.size() != layout.slotSizeBytes || bytes.size() < kRecordHeaderBytes) {
             addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotReadFailed, "failed to read active pqueue spool slot", slotIndex, sequence));
             if (result.stoppedEarly) {
                 return result;
@@ -368,10 +362,16 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         }
 
         RecordHeader header;
-        std::memcpy(&header, bytes.data(), sizeof(header));
+        if (!parseRecordHeader(bytes, header)) {
+            addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotHeaderInvalid, "active pqueue spool slot header is truncated", slotIndex, sequence));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
         if (header.magic != kFileStoreRecordMagic ||
             header.version != kFormatVersion ||
-            header.headerBytes != sizeof(RecordHeader) ||
+            header.headerBytes != kRecordHeaderBytes ||
             header.sequence != sequence ||
             header.recordBytes > layout.recordSizeBytes) {
             auto issue = makeSlotIssue(ValidationIssueCode::SlotHeaderInvalid, "active pqueue spool slot header is invalid", slotIndex, sequence);
@@ -384,7 +384,7 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
             continue;
         }
 
-        const std::string record = bytes.substr(sizeof(RecordHeader), header.recordBytes);
+        const std::string record = bytes.substr(kRecordHeaderBytes, header.recordBytes);
         if (header.crc != recordCrc(header, record)) {
             addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotCrcMismatch, "active pqueue spool slot CRC mismatch", slotIndex, sequence));
             if (result.stoppedEarly) {
@@ -464,7 +464,7 @@ Status FileStore::writeIndex(const FileStoreIndex& index) {
     const std::uint32_t generation = std::max(hasA ? currentA.record.generation : 0, hasB ? currentB.record.generation : 0) + 1;
     const bool writeA = !hasA || (hasB && currentA.record.generation <= currentB.record.generation);
     const IndexRecord record = toRecord(index, generation, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
-    st = writeFileAtomic(*fs, writeA ? kIndexAName : kIndexBName, bytesFromObject(&record, sizeof(record)));
+    st = writeFileAtomic(*fs, writeA ? kIndexAName : kIndexBName, serializeIndexRecord(record));
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "writeIndex", kNoSequence, writeA ? kIndexAName : kIndexBName);
     }
@@ -489,7 +489,7 @@ Status FileStore::writeRecord(std::uint32_t sequence, const std::string& record)
     header.recordBytes = static_cast<std::uint32_t>(record.size());
     header.crc = recordCrc(header, record);
 
-    std::string bytes = bytesFromObject(&header, sizeof(header));
+    std::string bytes = serializeRecordHeader(header);
     bytes.append(record);
     bytes.resize(layout.slotSizeBytes, '\0');
 
@@ -515,22 +515,24 @@ Status FileStore::readRecord(std::uint32_t sequence, std::string& out) {
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "readRecord", sequence, kSpoolName);
     }
-    if (bytes.size() != layout.slotSizeBytes || bytes.size() < sizeof(RecordHeader)) {
+    if (bytes.size() != layout.slotSizeBytes || bytes.size() < kRecordHeaderBytes) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot is truncated"), "readRecord", sequence, kSpoolName);
     }
 
     RecordHeader header;
-    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (!parseRecordHeader(bytes, header)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot header is truncated"), "readRecord", sequence, kSpoolName);
+    }
     if (header.magic != kFileStoreRecordMagic ||
         header.version != kFormatVersion ||
-        header.headerBytes != sizeof(RecordHeader) ||
+        header.headerBytes != kRecordHeaderBytes ||
         header.sequence != sequence ||
         header.recordBytes > layout.recordSizeBytes) {
         // TODO: expose an fsck/recovery path that can log and repair/drop corrupt front records.
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot header is invalid"), "readRecord", sequence, kSpoolName);
     }
 
-    std::string record = bytes.substr(sizeof(RecordHeader), header.recordBytes);
+    std::string record = bytes.substr(kRecordHeaderBytes, header.recordBytes);
     if (header.crc != recordCrc(header, record)) {
         // TODO: expose an fsck/recovery path that can log and repair/drop corrupt front records.
         return diagnostic(Severity::Error, Status::failure(StatusCode::CrcMismatch, "spool slot CRC mismatch"), "readRecord", sequence, kSpoolName);
