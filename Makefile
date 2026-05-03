@@ -85,9 +85,11 @@ TEST_SRC := \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
+	tests/switchbot_ble.cpp \
 	tests/switchbot_protocol.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
+	tests/xiaomi_ble.cpp \
 	tests/xiaomi_protocol.cpp \
 	$(COMMON_SRC)
 
