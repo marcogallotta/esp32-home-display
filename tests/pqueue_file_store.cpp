@@ -425,4 +425,72 @@ TEST_CASE("FileStore fails loudly when spool size does not match layout") {
 
 
 
+TEST_CASE("FileStore fails loudly when all checkpoint slots are corrupt") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 1);
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+        REQUIRE(store.writeIndex({0, 2, 2}).ok());
+        REQUIRE(store.writeIndex({0, 3, 3}).ok());
+    }
+
+    REQUIRE(fileSystem->exists("pqueue.spool"));
+    for (std::uint32_t slot = 0; slot < pqueue::storage_detail::kCheckpointSlots; ++slot) {
+        const auto offset = slot * pqueue::storage_detail::kCheckpointRecordBytes;
+        fileSystem->files["pqueue.spool"][offset] ^= static_cast<char>(0xff);
+    }
+
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 1);
+    pqueue::FileStoreIndex out;
+    const auto status = reopened.readIndex(out);
+
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::InvalidIndex);
+}
+
+TEST_CASE("FileStore rejects index transition when checkpoint write fails") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem, {}, 160, 32, 1);
+
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    pqueue::FileStoreIndex before;
+    REQUIRE(store.readIndex(before).ok());
+    CHECK_EQ(before.count, 1U);
+
+    fileSystem->failNextWrite();
+    const auto status = store.writeIndex({0, 2, 2});
+
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::WriteFailed);
+
+    pqueue::FileStoreIndex after;
+    REQUIRE(store.readIndex(after).ok());
+    CHECK_EQ(after.head, before.head);
+    CHECK_EQ(after.tail, before.tail);
+    CHECK_EQ(after.count, before.count);
+}
+
+TEST_CASE("FileStore rejects index transition when journal append fails") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem, {}, 160, 32, 64);
+
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    pqueue::FileStoreIndex before;
+    REQUIRE(store.readIndex(before).ok());
+    CHECK_EQ(before.count, 1U);
+
+    fileSystem->failNextWrite();
+    const auto status = store.writeIndex({0, 2, 2});
+
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::WriteFailed);
+
+    pqueue::FileStoreIndex after;
+    REQUIRE(store.readIndex(after).ok());
+    CHECK_EQ(after.head, before.head);
+    CHECK_EQ(after.tail, before.tail);
+    CHECK_EQ(after.count, before.count);
+}
+
+
 #endif // !ARDUINO

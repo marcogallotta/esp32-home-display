@@ -538,3 +538,23 @@ TEST_CASE("pqueue http outbox validate rejects malformed request envelopes") {
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::HttpRequestEnvelopeInvalid);
 #endif
 }
+
+
+TEST_CASE("pqueue http default classifier covers retryable and permanent statuses") {
+#ifndef ARDUINO
+    const int retryableStatuses[] = {408, 429, 500, 502, 503, 504, 599};
+    for (const int status : retryableStatuses) {
+        CHECK(pqueue::http::defaultClassifyResponse({status, pqueue::http::TransportError::None}) == pqueue::SendDecision::RetryLater);
+    }
+
+    const int permanentStatuses[] = {300, 301, 400, 401, 404, 409, 413, 422, 499};
+    for (const int status : permanentStatuses) {
+        CHECK(pqueue::http::defaultClassifyResponse({status, pqueue::http::TransportError::None}) == pqueue::SendDecision::Drop);
+    }
+
+    CHECK(pqueue::http::defaultClassifyResponse({200, pqueue::http::TransportError::None}) == pqueue::SendDecision::Sent);
+    CHECK(pqueue::http::defaultClassifyResponse({204, pqueue::http::TransportError::None}) == pqueue::SendDecision::Sent);
+    CHECK(pqueue::http::defaultClassifyResponse({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network}) == pqueue::SendDecision::RetryLater);
+    CHECK(pqueue::http::defaultClassifyResponse({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Tls}) == pqueue::SendDecision::RetryLater);
+#endif
+}
