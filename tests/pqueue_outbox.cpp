@@ -360,3 +360,69 @@ TEST_CASE("pqueue outbox validate rejects malformed outbox envelopes") {
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::OutboxEnvelopeInvalid);
 #endif
 }
+
+TEST_CASE("pqueue outbox drops fresh request immediately when send policy drops") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::Drop);
+    FakeClock clock;
+
+    auto outbox = makeOutbox(sender, clock);
+    const auto result = outbox.submit("fresh");
+
+    CHECK(result.status == pqueue::SubmitStatus::Dropped);
+    CHECK_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "fresh");
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("pqueue outbox drops queued request when send policy drops during drain") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+
+    auto outbox = makeOutbox(sender, clock, config);
+    REQUIRE(outbox.submit("queued").status == pqueue::SubmitStatus::Queued);
+
+    sender.decisions.push_back(pqueue::SendDecision::Drop);
+    const auto drain = outbox.drain();
+
+    CHECK_EQ(drain.dropped, 1U);
+    CHECK_EQ(drain.sent, 0U);
+    CHECK_EQ(outbox.stats().count, 0U);
+    REQUIRE_GE(sender.payloads.size(), 2U);
+    CHECK_EQ(sender.payloads[1], "queued");
+#endif
+}
+
+TEST_CASE("pqueue outbox burst drain stops when front request asks to retry") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 1;
+
+    auto outbox = makeOutbox(sender, clock, config);
+    REQUIRE(outbox.submit("one").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("two").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("three").status == pqueue::SubmitStatus::Queued);
+
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    const auto drain = outbox.drainBurst(3);
+
+    CHECK_EQ(drain.attempts, 1U);
+    CHECK_EQ(drain.sent, 0U);
+    CHECK_EQ(outbox.stats().count, 3U);
+    REQUIRE_EQ(sender.payloads.size(), 2U);
+    CHECK_EQ(sender.payloads[1], "one");
+#endif
+}
