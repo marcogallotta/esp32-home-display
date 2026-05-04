@@ -24,6 +24,16 @@ std::uint64_t testRecordRegionOffset(const pqueue::Config& config) {
            config.journalBytes;
 }
 
+std::uint64_t testCheckpointOffset(std::uint32_t slot) {
+    return static_cast<std::uint64_t>(slot) * pqueue::storage_detail::kCheckpointRecordBytes;
+}
+
+std::uint64_t testJournalOffset(std::uint32_t entryIndex) {
+    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
+           pqueue::storage_detail::kCheckpointRecordBytes +
+           static_cast<std::uint64_t>(entryIndex) * pqueue::storage_detail::kJournalEntryBytes;
+}
+
 std::uint64_t testSlotOffset(const pqueue::Config& config, std::uint32_t sequence) {
     const auto slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
     const auto capacity = config.reservedBytes / slotSize;
@@ -338,5 +348,65 @@ TEST_CASE("pqueue validate fails when another queue owns the lock") {
     REQUIRE_FALSE(result.ok);
     REQUIRE_FALSE(result.errors.empty());
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::QueueLoadFailed);
+#endif
+}
+
+
+TEST_CASE("pqueue validate reports corrupt checkpoint slots even when fallback checkpoint exists") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 1;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(static_cast<std::streamoff>(testCheckpointOffset(3)));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue queue(config);
+    const auto result = queue.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::MetadataCorrupt);
+#endif
+}
+
+TEST_CASE("pqueue validate reports corrupt journal entry before later journal data") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+        REQUIRE(queue.enqueue("three").ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(static_cast<std::streamoff>(testJournalOffset(1)));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue queue(config);
+    const auto result = queue.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::JournalCorrupt);
 #endif
 }

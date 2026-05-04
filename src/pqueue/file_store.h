@@ -42,6 +42,7 @@ enum class ValidationIssueCode {
     InvalidConfig,
     MetadataMissing,
     MetadataCorrupt,
+    JournalCorrupt,
     ConfigMismatch,
     SpoolMissing,
     SpoolSizeMismatch,

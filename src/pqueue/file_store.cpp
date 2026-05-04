@@ -83,6 +83,28 @@ bool ringStateMatches(const CheckpointRecord& record) {
            record.count == record.tail - record.head;
 }
 
+bool bytesAllZero(const std::string& bytes) {
+    for (char c : bytes) {
+        if (c != '\0') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool regionHasNonZero(FileSystem& fs, const Layout& layout, std::uint32_t startOffset) {
+    for (std::uint32_t offset = startOffset; offset + kJournalEntryBytes <= layout.journalBytes; offset += kJournalEntryBytes) {
+        std::string bytes;
+        if (!fs.readAt(kSpoolName, journalOffset(layout, offset), kJournalEntryBytes, bytes).ok()) {
+            return true;
+        }
+        if (!bytesAllZero(bytes)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void addValidationError(ValidationResult& result, const ValidationOptions& options, ValidationIssue issue) {
     result.ok = false;
     if (result.errors.size() < options.maxErrors) {
@@ -387,27 +409,113 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         return result;
     }
 
-    const StoredState state = loadStoredState(*fs, layout);
-    if (state.configMismatch) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue checkpoint config does not match current storage config"));
+    bool foundCheckpoint = false;
+    bool configMismatch = false;
+    CheckpointRecord checkpoint;
+
+    for (std::uint32_t slot = 0; slot < kCheckpointSlots; ++slot) {
+        std::string bytes;
+        st = fs->readAt(kSpoolName, checkpointOffset(slot), kCheckpointRecordBytes, bytes);
+        if (!st.ok() || bytes.size() != kCheckpointRecordBytes) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "failed to read pqueue checkpoint slot"));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+        if (bytesAllZero(bytes)) {
+            continue;
+        }
+
+        CheckpointRecord candidate;
+        if (!parseCheckpointRecord(bytes, candidate) || candidate.magic != kFileStoreCheckpointMagic) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue checkpoint slot is not a valid checkpoint record"));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+        if (!validCheckpointShape(candidate)) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue checkpoint slot is corrupt or has unsupported format"));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+        if (!validCheckpointForConfig(candidate, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes, layout.journalBytes)) {
+            configMismatch = true;
+            addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue checkpoint config does not match current storage config"));
+            if (result.stoppedEarly) {
+                return result;
+            }
+            continue;
+        }
+        if (!foundCheckpoint || candidate.generation > checkpoint.generation) {
+            foundCheckpoint = true;
+            checkpoint = candidate;
+        }
+    }
+
+    if (configMismatch && !foundCheckpoint) {
         return result;
     }
-    if (!state.foundCheckpoint) {
+    if (!foundCheckpoint) {
         addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "no usable pqueue checkpoint found"));
         return result;
     }
 
-    CheckpointRecord active = state.checkpoint;
-    active.head = state.index.head;
-    active.tail = state.index.tail;
-    active.count = state.index.count;
-    active.journalUsedBytes = state.journalUsedBytes;
+    FileStoreIndex replayed = fromCheckpointRecord(checkpoint);
+    std::uint32_t journalUsedBytes = 0;
+    std::uint32_t nextGeneration = checkpoint.generation + 1;
+    for (std::uint32_t offset = 0; offset + kJournalEntryBytes <= layout.journalBytes; offset += kJournalEntryBytes) {
+        std::string bytes;
+        st = fs->readAt(kSpoolName, journalOffset(layout, offset), kJournalEntryBytes, bytes);
+        if (!st.ok() || bytes.size() != kJournalEntryBytes) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::JournalCorrupt, "failed to read pqueue journal entry"));
+            return result;
+        }
+        if (bytesAllZero(bytes)) {
+            break;
+        }
+
+        JournalEntry entry;
+        if (!parseJournalEntry(bytes, entry) || !validJournalEntryShape(entry)) {
+            if (regionHasNonZero(*fs, layout, offset + kJournalEntryBytes)) {
+                addValidationError(result, options, makeIssue(ValidationIssueCode::JournalCorrupt, "pqueue journal has corrupt entry before non-empty trailing data"));
+            }
+            break;
+        }
+
+        if (entry.generation <= checkpoint.generation) {
+            break;
+        }
+        if (entry.generation != nextGeneration) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::JournalCorrupt, "pqueue journal generation is not contiguous after checkpoint"));
+            break;
+        }
+        if (!applyJournalEntry(entry, replayed)) {
+            addValidationError(result, options, makeIssue(ValidationIssueCode::JournalCorrupt, "pqueue journal entry cannot be applied to checkpoint state"));
+            break;
+        }
+        journalUsedBytes = offset + kJournalEntryBytes;
+        ++nextGeneration;
+    }
+
+    CheckpointRecord active = checkpoint;
+    active.head = replayed.head;
+    active.tail = replayed.tail;
+    active.count = replayed.count;
+    active.journalUsedBytes = journalUsedBytes;
     if (!ringStateMatches(active)) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidRingState, "pqueue metadata ring state is invalid"));
+        addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidRingState, "pqueue metadata ring state is invalid after journal replay"));
         return result;
     }
 
-    for (std::uint32_t sequence = state.index.head; sequence < state.index.tail; ++sequence) {
+    if (!result.ok) {
+        return result;
+    }
+
+    for (std::uint32_t sequence = replayed.head; sequence < replayed.tail; ++sequence) {
         const std::uint32_t slotIndex = sequence % layout.capacityRecords;
         std::string bytes;
         st = fs->readAt(kSpoolName, slotOffset(layout, sequence), layout.slotSizeBytes, bytes);
