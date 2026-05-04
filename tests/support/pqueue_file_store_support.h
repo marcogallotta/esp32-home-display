@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pqueue/file_store.h"
+#include "pqueue/queue.h"
 #include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
@@ -48,7 +49,16 @@ public:
         if (usedBytes() - existingSize + data.size() > capacityBytes) {
             return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake capacity exceeded");
         }
+        if (partialWriteFileOnce.armed) {
+            const auto bytes = std::min(partialWriteFileOnce.bytes, data.size());
+            files[name] = data.substr(0, bytes);
+            partialWriteFileOnce.clear();
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake partial write failed");
+        }
         files[name] = data;
+        if (writeFileThenFailOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake write reported failure after writing");
+        }
         return pqueue::Status::success();
     }
 
@@ -72,7 +82,16 @@ public:
         if (it == files.end() || offset + data.size() > it->second.size()) {
             return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake writeAt range missing");
         }
+        if (partialWriteAtOnce.armed) {
+            const auto bytes = std::min(partialWriteAtOnce.bytes, data.size());
+            it->second.replace(static_cast<std::size_t>(offset), bytes, data.substr(0, bytes));
+            partialWriteAtOnce.clear();
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake partial writeAt failed");
+        }
         it->second.replace(static_cast<std::size_t>(offset), data.size(), data);
+        if (writeAtThenFailOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake writeAt reported failure after writing");
+        }
         return pqueue::Status::success();
     }
 
@@ -156,6 +175,10 @@ public:
     void failNextWrite() { failWriteOnce.arm(); }
     void failNextRemove() { failRemoveOnce.arm(); }
     void failNextRename() { failRenameOnce.arm(); }
+    void partialNextWriteFile(std::size_t bytes) { partialWriteFileOnce.arm(bytes); }
+    void partialNextWriteAt(std::size_t bytes) { partialWriteAtOnce.arm(bytes); }
+    void writeFileThenFail() { writeFileThenFailOnce.arm(); }
+    void writeAtThenFail() { writeAtThenFailOnce.arm(); }
 
     void setCapacityBytes(std::size_t bytes) { capacityBytes = bytes; }
 
@@ -201,6 +224,19 @@ private:
         bool armed = false;
     };
 
+    struct OneShotPartialWrite {
+        void arm(std::size_t prefixBytes) {
+            armed = true;
+            bytes = prefixBytes;
+        }
+        void clear() {
+            armed = false;
+            bytes = 0;
+        }
+        bool armed = false;
+        std::size_t bytes = 0;
+    };
+
     std::size_t usedBytes() const {
         std::size_t out = 0;
         for (const auto& entry : files) {
@@ -214,6 +250,10 @@ private:
     OneShotFailure failWriteOnce;
     OneShotFailure failRemoveOnce;
     OneShotFailure failRenameOnce;
+    OneShotFailure writeFileThenFailOnce;
+    OneShotFailure writeAtThenFailOnce;
+    OneShotPartialWrite partialWriteFileOnce;
+    OneShotPartialWrite partialWriteAtOnce;
     std::size_t capacityBytes = std::numeric_limits<std::size_t>::max();
 };
 
@@ -245,6 +285,19 @@ inline pqueue::FileStore makeStore(
     config.reservedBytes = reservedBytes;
     config.recordSizeBytes = recordSizeBytes;
     return pqueue::FileStore(config);
+}
+
+inline pqueue::Config makeQueueConfig(
+    const std::shared_ptr<FakeFileSystem>& fileSystem,
+    std::uint32_t reservedBytes = 160,
+    std::size_t recordSizeBytes = 32
+) {
+    pqueue::Config config;
+    config.basePath = "/fake-pqueue";
+    config.fileSystem = fileSystem;
+    config.reservedBytes = reservedBytes;
+    config.recordSizeBytes = recordSizeBytes;
+    return config;
 }
 
 inline std::size_t slotSize(std::size_t recordSizeBytes = 32) {

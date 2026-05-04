@@ -7,6 +7,7 @@
 using pqueue_test::CapturedEvent;
 using pqueue_test::captureEvent;
 using pqueue_test::makeFakeFileSystem;
+using pqueue_test::makeQueueConfig;
 using pqueue_test::makeStore;
 using pqueue_test::slotSize;
 
@@ -177,5 +178,73 @@ TEST_CASE("FileStore fails loudly when spool size does not match layout") {
 }
 
 
+
+TEST_CASE("FileStore keeps older metadata when new metadata write is partial") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    pqueue::FileStoreIndex before;
+    REQUIRE(store.readIndex(before).ok());
+    CHECK_EQ(before.count, 1U);
+
+    fileSystem->partialNextWriteFile(8);
+    const auto status = store.writeIndex({0, 2, 2});
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::WriteFailed);
+
+    auto reopened = makeStore(fileSystem);
+    pqueue::FileStoreIndex after;
+    REQUIRE(reopened.readIndex(after).ok());
+    CHECK_EQ(after.head, before.head);
+    CHECK_EQ(after.tail, before.tail);
+    CHECK_EQ(after.count, before.count);
+}
+
+TEST_CASE("Queue stays empty after partial record slot write during enqueue") {
+    auto fileSystem = makeFakeFileSystem();
+    const auto config = makeQueueConfig(fileSystem);
+
+    {
+        pqueue::Queue queue(config);
+        fileSystem->partialNextWriteAt(6);
+        const auto status = queue.enqueue("payload");
+        REQUIRE_FALSE(status.ok());
+        CHECK(status.code == pqueue::StatusCode::WriteFailed);
+        CHECK_EQ(queue.stats().count, 0U);
+    }
+
+    {
+        pqueue::Queue reopened(config);
+        CHECK_EQ(reopened.stats().count, 0U);
+        REQUIRE(reopened.enqueue("payload").ok());
+        std::string out;
+        REQUIRE(reopened.peek(out).ok());
+        CHECK_EQ(out, "payload");
+    }
+}
+
+TEST_CASE("Queue stays empty when record slot write succeeds but reports failure") {
+    auto fileSystem = makeFakeFileSystem();
+    const auto config = makeQueueConfig(fileSystem);
+
+    {
+        pqueue::Queue queue(config);
+        fileSystem->writeAtThenFail();
+        const auto status = queue.enqueue("payload");
+        REQUIRE_FALSE(status.ok());
+        CHECK(status.code == pqueue::StatusCode::WriteFailed);
+        CHECK_EQ(queue.stats().count, 0U);
+    }
+
+    {
+        pqueue::Queue reopened(config);
+        CHECK_EQ(reopened.stats().count, 0U);
+        REQUIRE(reopened.enqueue("payload").ok());
+        std::string out;
+        REQUIRE(reopened.peek(out).ok());
+        CHECK_EQ(out, "payload");
+    }
+}
 
 #endif // !ARDUINO
