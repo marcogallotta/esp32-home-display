@@ -171,14 +171,15 @@ public:
     void corruptSlotHeader(std::uint32_t slot, std::size_t slotSize) {
         auto it = files.find("pqueue.spool");
         REQUIRE(it != files.end());
-        REQUIRE(it->second.size() >= slot * slotSize + 1);
-        it->second[slot * slotSize] ^= static_cast<char>(0xff);
+        const auto offset = pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes + 4096 + slot * slotSize;
+        REQUIRE(it->second.size() >= offset + 1);
+        it->second[offset] ^= static_cast<char>(0xff);
     }
 
     void corruptSlotPayload(std::uint32_t slot, std::size_t slotSize) {
         auto it = files.find("pqueue.spool");
         REQUIRE(it != files.end());
-        const auto offset = slot * slotSize + sizeof(pqueue::storage_detail::RecordHeader);
+        const auto offset = pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes + 4096 + slot * slotSize + pqueue::storage_detail::kRecordHeaderBytes;
         REQUIRE(it->second.size() > offset);
         it->second[offset] ^= static_cast<char>(0xff);
     }
@@ -230,18 +231,26 @@ std::shared_ptr<FakeFileSystem> makeFakeFileSystem() {
     return std::make_shared<FakeFileSystem>();
 }
 
-pqueue::FileStore makeStore(const std::shared_ptr<FakeFileSystem>& fileSystem, pqueue::EventOptions events = {}, std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32) {
+pqueue::FileStore makeStore(const std::shared_ptr<FakeFileSystem>& fileSystem, pqueue::EventOptions events = {}, std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t checkpointEveryOps = 64) {
     pqueue::FileStoreConfig config;
     config.basePath = "/fake-pqueue";
     config.fileSystem = fileSystem;
     config.events = events;
     config.reservedBytes = reservedBytes;
     config.recordSizeBytes = recordSizeBytes;
+    config.checkpointEveryOps = checkpointEveryOps;
     return pqueue::FileStore(config);
 }
 
 std::size_t slotSize(std::size_t recordSizeBytes = 32) {
-    return sizeof(pqueue::storage_detail::RecordHeader) + recordSizeBytes;
+    return pqueue::storage_detail::kRecordHeaderBytes + recordSizeBytes;
+}
+
+std::size_t spoolSize(std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t journalBytes = 4096) {
+    const auto slots = reservedBytes / slotSize(recordSizeBytes);
+    return pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes +
+           journalBytes +
+           slots * slotSize(recordSizeBytes);
 }
 
 } // namespace
@@ -253,7 +262,7 @@ TEST_CASE("FileStore mounts and preallocates one spool file") {
     REQUIRE(store.mount().ok());
     CHECK_EQ(fileSystem->mountedBasePath, "/fake-pqueue");
     REQUIRE(fileSystem->exists("pqueue.spool"));
-    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), 3U * slotSize());
+    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), spoolSize());
 }
 
 TEST_CASE("FileStore write/read uses fixed ring slots") {
@@ -303,16 +312,16 @@ TEST_CASE("FileStore rejects corrupt spool slot") {
     CHECK_FALSE(store.readRecord(0, out).ok());
 }
 
-TEST_CASE("FileStore keeps the older valid metadata copy when the latest is corrupt") {
+TEST_CASE("FileStore keeps the older valid checkpoint when the latest is corrupt") {
     auto fileSystem = makeFakeFileSystem();
-    auto store = makeStore(fileSystem);
+    auto store = makeStore(fileSystem, {}, 160, 32, 1);
 
     REQUIRE(store.writeIndex({0, 1, 1}).ok());
     REQUIRE(store.writeIndex({0, 2, 2}).ok());
-    REQUIRE(fileSystem->exists("pqueue.meta_a"));
-    REQUIRE(fileSystem->exists("pqueue.meta_b"));
+    REQUIRE(fileSystem->exists("pqueue.spool"));
 
-    fileSystem->corruptFile("pqueue.meta_a");
+    const auto latestCheckpointOffset = 3U * pqueue::storage_detail::kCheckpointRecordBytes;
+    fileSystem->files["pqueue.spool"][latestCheckpointOffset] ^= static_cast<char>(0xff);
 
     pqueue::FileStoreIndex out;
     REQUIRE(store.readIndex(out).ok());
@@ -351,7 +360,7 @@ TEST_CASE("FileStore rounds reserved bytes down to whole slots") {
     auto store = makeStore(fileSystem, {}, static_cast<std::uint32_t>(slotSize() * 2 + 7), 32);
 
     REQUIRE(store.mount().ok());
-    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), 2U * slotSize());
+    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), spoolSize(static_cast<std::uint32_t>(slotSize() * 2 + 7), 32));
 }
 
 TEST_CASE("FileStore rejects configs that cannot fit one slot") {
@@ -375,7 +384,7 @@ TEST_CASE("FileStore removeRecord invalidates the slot") {
 
 TEST_CASE("FileStore fails loudly when spool exists without metadata") {
     auto fileSystem = makeFakeFileSystem();
-    fileSystem->files["pqueue.spool"] = std::string(slotSize() * 2, '\0');
+    fileSystem->files["pqueue.spool"] = std::string(spoolSize(), '\0');
     auto store = makeStore(fileSystem);
 
     const auto status = store.mount();
@@ -383,7 +392,7 @@ TEST_CASE("FileStore fails loudly when spool exists without metadata") {
     CHECK(status.code == pqueue::StatusCode::InvalidIndex);
 }
 
-TEST_CASE("FileStore fails loudly when metadata exists but spool is missing") {
+TEST_CASE("FileStore recreates fresh storage when the single spool file is missing") {
     auto fileSystem = makeFakeFileSystem();
     {
         auto store = makeStore(fileSystem);
@@ -393,9 +402,10 @@ TEST_CASE("FileStore fails loudly when metadata exists but spool is missing") {
     fileSystem->files.erase("pqueue.spool");
 
     auto reopened = makeStore(fileSystem);
-    const auto status = reopened.mount();
-    REQUIRE_FALSE(status.ok());
-    CHECK(status.code == pqueue::StatusCode::ReadFailed);
+    REQUIRE(reopened.mount().ok());
+    pqueue::FileStoreIndex out;
+    REQUIRE(reopened.readIndex(out).ok());
+    CHECK_EQ(out.count, 0U);
 }
 
 TEST_CASE("FileStore fails loudly when spool size does not match layout") {

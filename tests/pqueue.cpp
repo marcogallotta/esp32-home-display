@@ -17,6 +17,18 @@ void cleanSpool() {
     std::error_code ec;
     std::filesystem::remove_all(kSpoolDir, ec);
 }
+
+std::uint64_t testRecordRegionOffset(const pqueue::Config& config) {
+    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
+           pqueue::storage_detail::kCheckpointRecordBytes +
+           config.journalBytes;
+}
+
+std::uint64_t testSlotOffset(const pqueue::Config& config, std::uint32_t sequence) {
+    const auto slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
+    const auto capacity = config.reservedBytes / slotSize;
+    return testRecordRegionOffset(config) + static_cast<std::uint64_t>(sequence % capacity) * slotSize;
+}
 #endif
 
 } // namespace
@@ -114,7 +126,7 @@ TEST_CASE("pqueue rejects newest record when the fixed ring is full") {
     pqueue::Config config;
     config.basePath = kSpoolDir.string();
     config.recordSizeBytes = 8;
-    config.reservedBytes = static_cast<std::uint32_t>((sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes) * 2);
+    config.reservedBytes = static_cast<std::uint32_t>((pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes) * 2);
     pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("one").ok());
@@ -233,14 +245,12 @@ TEST_CASE("pqueue validate detects corrupt active slot payload") {
         REQUIRE(queue.enqueue("payload").ok());
     }
 
-    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
-    spool.seekp(static_cast<std::streamoff>(sizeof(pqueue::storage_detail::RecordHeader)));
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0) + pqueue::storage_detail::kRecordHeaderBytes));
     char c = 'X';
     spool.write(&c, 1);
     spool.close();
-    (void)slotSize;
 
     pqueue::Queue queue(config);
     const auto result = queue.validate();
@@ -268,7 +278,7 @@ TEST_CASE("pqueue validate ignores inactive corrupt slots") {
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
     char c = 'X';
-    spool.seekp(0);
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0)));
     spool.write(&c, 1);
     spool.close();
 
@@ -293,13 +303,12 @@ TEST_CASE("pqueue validate caps reported errors") {
         REQUIRE(queue.enqueue("second").ok());
     }
 
-    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
     char c = 'X';
-    spool.seekp(0);
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0)));
     spool.write(&c, 1);
-    spool.seekp(static_cast<std::streamoff>(slotSize));
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 1)));
     spool.write(&c, 1);
     spool.close();
 

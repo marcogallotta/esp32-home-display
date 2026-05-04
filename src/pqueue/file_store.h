@@ -27,6 +27,8 @@ struct FileStoreConfig {
     std::shared_ptr<FileSystem> fileSystem;
     std::uint32_t reservedBytes = 128 * 1024;
     std::size_t recordSizeBytes = 4096;
+    std::uint32_t journalBytes = 4096;
+    std::uint32_t checkpointEveryOps = 64;
     EventOptions events;
 };
 
@@ -87,6 +89,7 @@ public:
     Status writeIndex(const FileStoreIndex& index);
 
     Status writeRecord(std::uint32_t sequence, const std::string& record);
+    Status rewriteRecord(std::uint32_t sequence, const std::string& record);
     Status readRecord(std::uint32_t sequence, std::string& out);
     Status removeRecord(std::uint32_t sequence);
 

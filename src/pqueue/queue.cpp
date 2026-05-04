@@ -76,6 +76,8 @@ Queue::Queue(Config config)
           storeConfig.fileSystem = config.fileSystem;
           storeConfig.reservedBytes = config.reservedBytes;
           storeConfig.recordSizeBytes = config.recordSizeBytes;
+          storeConfig.journalBytes = config.journalBytes;
+          storeConfig.checkpointEveryOps = config.checkpointEveryOps;
           return storeConfig;
       }()) {}
 
@@ -156,7 +158,7 @@ Status Queue::enqueue(const std::string& record) {
     if (record.size() > config_.recordSizeBytes) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "enqueue");
     }
-    const std::uint32_t slotSizeBytes = static_cast<std::uint32_t>(sizeof(storage_detail::RecordHeader) + config_.recordSizeBytes);
+    const std::uint32_t slotSizeBytes = static_cast<std::uint32_t>(storage_detail::kRecordHeaderBytes + config_.recordSizeBytes);
     const std::uint32_t capacityRecords = slotSizeBytes == 0 ? 0 : config_.reservedBytes / slotSizeBytes;
     if (capacityRecords == 0) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "enqueue");
@@ -230,7 +232,7 @@ Status Queue::rewriteFront(const std::string& record) {
     if (record.size() > config_.recordSizeBytes) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "rewriteFront");
     }
-    return store_.writeRecord(index_.head, record);
+    return store_.rewriteRecord(index_.head, record);
 }
 
 

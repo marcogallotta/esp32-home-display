@@ -2,7 +2,6 @@
 #include "storage_common.h"
 
 #include <algorithm>
-#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -11,83 +10,34 @@ namespace {
 
 using namespace storage_detail;
 
-constexpr const char* kIndexAName = "pqueue.meta_a";
-constexpr const char* kIndexBName = "pqueue.meta_b";
 constexpr const char* kSpoolName = "pqueue.spool";
-
-std::string bytesFromObject(const void* data, std::size_t size) {
-    return std::string(static_cast<const char*>(data), size);
-}
+constexpr std::uint32_t kJournalFullPercent = 75;
 
 bool fileExists(FileSystem& fs, const std::string& name) {
     std::uint64_t ignored = 0;
     return fs.fileSize(name, ignored).ok();
 }
 
-Status requireFileSize(FileSystem& fs, const std::string& name, std::uint64_t expected) {
-    std::uint64_t actual = 0;
-    Status st = fs.fileSize(name, actual);
-    if (!st.ok()) {
-        return Status::failure(StatusCode::ReadFailed, "pqueue storage file is missing");
-    }
-    if (actual != expected) {
-        return Status::failure(StatusCode::InvalidIndex, "pqueue spool size does not match configured storage layout");
-    }
-    return Status::success();
-}
-
-Status writeFileAtomic(FileSystem& fs, const std::string& name, const std::string& bytes) {
-    const std::string tempName = name + ".tmp";
-    const std::string backupName = name + ".bak";
-
-    Status st = fs.writeFile(tempName, bytes);
-    if (!st.ok()) {
-        return st;
-    }
-
-    if (!fileExists(fs, name)) {
-        st = fs.renameFile(tempName, name);
-        if (st.ok()) {
-            return Status::success();
-        }
-        fs.removeFile(tempName);
-        return st;
-    }
-
-    fs.removeFile(backupName);
-    st = fs.renameFile(name, backupName);
-    if (!st.ok()) {
-        fs.removeFile(tempName);
-        return st;
-    }
-
-    st = fs.renameFile(tempName, name);
-    if (st.ok()) {
-        fs.removeFile(backupName);
-        return Status::success();
-    }
-
-    fs.renameFile(backupName, name);
-    fs.removeFile(tempName);
-    return st;
-}
-
 struct Layout {
     std::uint32_t capacityRecords = 0;
     std::uint32_t recordSizeBytes = 0;
     std::uint32_t reservedBytes = 0;
+    std::uint32_t journalBytes = 0;
+    std::uint32_t checkpointEveryOps = 0;
     std::uint32_t slotSizeBytes = 0;
+    std::uint32_t checkpointBytes = 0;
+    std::uint32_t recordRegionOffset = 0;
     std::uint32_t spoolBytes = 0;
 };
 
 bool makeLayout(const FileStoreConfig& config, Layout& out) {
-    if (config.recordSizeBytes == 0 || config.reservedBytes == 0) {
+    if (config.recordSizeBytes == 0 || config.reservedBytes == 0 || config.journalBytes < kJournalEntryBytes || config.checkpointEveryOps == 0) {
         return false;
     }
     if (config.recordSizeBytes > std::numeric_limits<std::uint32_t>::max()) {
         return false;
     }
-    const auto slotSize = sizeof(RecordHeader) + config.recordSizeBytes;
+    const auto slotSize = static_cast<std::uint64_t>(kRecordHeaderBytes) + config.recordSizeBytes;
     if (slotSize > std::numeric_limits<std::uint32_t>::max()) {
         return false;
     }
@@ -95,49 +45,39 @@ bool makeLayout(const FileStoreConfig& config, Layout& out) {
     if (capacity == 0 || capacity > std::numeric_limits<std::uint32_t>::max()) {
         return false;
     }
+    const auto checkpointBytes = static_cast<std::uint64_t>(kCheckpointSlots) * kCheckpointRecordBytes;
+    const auto recordRegionOffset = checkpointBytes + config.journalBytes;
+    const auto spoolBytes = recordRegionOffset + capacity * slotSize;
+    if (spoolBytes > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+
     out.capacityRecords = static_cast<std::uint32_t>(capacity);
     out.recordSizeBytes = static_cast<std::uint32_t>(config.recordSizeBytes);
     out.reservedBytes = config.reservedBytes;
+    out.journalBytes = config.journalBytes;
+    out.checkpointEveryOps = config.checkpointEveryOps;
     out.slotSizeBytes = static_cast<std::uint32_t>(slotSize);
-    out.spoolBytes = out.capacityRecords * out.slotSizeBytes;
+    out.checkpointBytes = static_cast<std::uint32_t>(checkpointBytes);
+    out.recordRegionOffset = static_cast<std::uint32_t>(recordRegionOffset);
+    out.spoolBytes = static_cast<std::uint32_t>(spoolBytes);
     return true;
 }
 
+std::uint64_t checkpointOffset(std::uint32_t slot) {
+    return static_cast<std::uint64_t>(slot) * kCheckpointRecordBytes;
+}
+
+std::uint64_t journalOffset(const Layout& layout, std::uint32_t usedBytes) {
+    return static_cast<std::uint64_t>(layout.checkpointBytes) + usedBytes;
+}
+
 std::uint64_t slotOffset(const Layout& layout, std::uint32_t sequence) {
-    return static_cast<std::uint64_t>(sequence % layout.capacityRecords) * layout.slotSizeBytes;
+    return static_cast<std::uint64_t>(layout.recordRegionOffset) +
+           static_cast<std::uint64_t>(sequence % layout.capacityRecords) * layout.slotSizeBytes;
 }
 
-struct ReadIndexResult {
-    bool exists = false;
-    bool configMismatch = false;
-    IndexRecord record;
-};
-
-ReadIndexResult readIndexAt(FileSystem& fs, const char* name, const Layout& layout) {
-    ReadIndexResult out;
-    std::string bytes;
-    const Status read = fs.readFile(name, bytes);
-    if (!read.ok()) {
-        return out;
-    }
-    out.exists = true;
-    if (bytes.size() != sizeof(out.record)) {
-        return out;
-    }
-    std::memcpy(&out.record, bytes.data(), sizeof(out.record));
-    if (!validIndexShape(out.record)) {
-        return out;
-    }
-    out.configMismatch = !validIndexForConfig(out.record, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
-    return out;
-}
-
-bool usableIndex(const ReadIndexResult& result) {
-    return result.exists && validIndexShape(result.record) && !result.configMismatch;
-}
-
-
-bool ringStateMatches(const IndexRecord& record) {
+bool ringStateMatches(const CheckpointRecord& record) {
     return record.count <= record.capacityRecords &&
            record.tail >= record.head &&
            record.count == record.tail - record.head;
@@ -166,6 +106,140 @@ ValidationIssue makeSlotIssue(ValidationIssueCode code, std::string message, std
     issue.hasSlotIndex = true;
     issue.hasExpectedSequence = true;
     return issue;
+}
+
+struct StoredState {
+    bool foundCheckpoint = false;
+    bool configMismatch = false;
+    CheckpointRecord checkpoint;
+    FileStoreIndex index;
+    std::uint32_t journalUsedBytes = 0;
+    std::uint32_t journalOps = 0;
+};
+
+bool applyJournalEntry(const JournalEntry& entry, FileStoreIndex& index) {
+    switch (entry.op) {
+    case JournalOp::Enqueue:
+        if (entry.sequence != index.tail) {
+            return false;
+        }
+        ++index.tail;
+        ++index.count;
+        return true;
+    case JournalOp::Pop:
+        if (index.count == 0 || entry.sequence != index.head) {
+            return false;
+        }
+        ++index.head;
+        --index.count;
+        return true;
+    case JournalOp::RewriteFront:
+        return index.count > 0 && entry.sequence >= index.head && entry.sequence < index.tail;
+    }
+    return false;
+}
+
+StoredState loadStoredState(FileSystem& fs, const Layout& layout) {
+    StoredState out;
+    for (std::uint32_t slot = 0; slot < kCheckpointSlots; ++slot) {
+        std::string bytes;
+        if (!fs.readAt(kSpoolName, checkpointOffset(slot), kCheckpointRecordBytes, bytes).ok()) {
+            continue;
+        }
+        CheckpointRecord candidate;
+        if (!parseCheckpointRecord(bytes, candidate) || !validCheckpointShape(candidate)) {
+            continue;
+        }
+        if (!validCheckpointForConfig(candidate, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes, layout.journalBytes)) {
+            out.configMismatch = true;
+            continue;
+        }
+        if (!out.foundCheckpoint || candidate.generation > out.checkpoint.generation) {
+            out.foundCheckpoint = true;
+            out.checkpoint = candidate;
+        }
+    }
+
+    if (!out.foundCheckpoint) {
+        return out;
+    }
+
+    out.index = fromCheckpointRecord(out.checkpoint);
+    out.journalUsedBytes = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t nextGeneration = out.checkpoint.generation + 1;
+    while (offset + kJournalEntryBytes <= layout.journalBytes) {
+        std::string bytes;
+        if (!fs.readAt(kSpoolName, journalOffset(layout, offset), kJournalEntryBytes, bytes).ok()) {
+            break;
+        }
+        JournalEntry entry;
+        if (!parseJournalEntry(bytes, entry) || !validJournalEntryShape(entry) || entry.generation != nextGeneration) {
+            break;
+        }
+        if (!applyJournalEntry(entry, out.index)) {
+            break;
+        }
+        offset += kJournalEntryBytes;
+        ++nextGeneration;
+        ++out.journalOps;
+    }
+    out.journalUsedBytes = offset;
+    return out;
+}
+
+Status writeCheckpoint(FileSystem& fs, const Layout& layout, const FileStoreIndex& index, std::uint32_t generation) {
+    const CheckpointRecord record = toCheckpointRecord(index, generation, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes, layout.journalBytes, 0);
+    const std::uint32_t slot = generation % kCheckpointSlots;
+    return fs.writeAt(kSpoolName, checkpointOffset(slot), serializeCheckpointRecord(record));
+}
+
+bool shouldCheckpoint(const Layout& layout, const StoredState& state) {
+    const std::uint32_t nextUsed = state.journalUsedBytes + kJournalEntryBytes;
+    if (nextUsed > layout.journalBytes) {
+        return true;
+    }
+    if (state.journalOps + 1 >= layout.checkpointEveryOps) {
+        return true;
+    }
+    return nextUsed * 100U >= layout.journalBytes * kJournalFullPercent;
+}
+
+Status commitIndexTransition(FileSystem& fs, const Layout& layout, const StoredState& state, const FileStoreIndex& next) {
+    JournalEntry entry;
+    bool knownTransition = true;
+
+    if (next.head == state.index.head && next.tail == state.index.tail + 1 && next.count == state.index.count + 1) {
+        entry.op = JournalOp::Enqueue;
+        entry.sequence = state.index.tail;
+    } else if (next.head == state.index.head + 1 && next.tail == state.index.tail && next.count + 1 == state.index.count) {
+        entry.op = JournalOp::Pop;
+        entry.sequence = state.index.head;
+    } else if (next.head == state.index.head && next.tail == state.index.tail && next.count == state.index.count) {
+        return Status::success();
+    } else {
+        knownTransition = false;
+    }
+
+    if (!knownTransition || shouldCheckpoint(layout, state)) {
+        return writeCheckpoint(fs, layout, next, state.checkpoint.generation + state.journalOps + 1);
+    }
+
+    entry.generation = state.checkpoint.generation + state.journalOps + 1;
+    entry.crc = journalCrc(entry);
+    return fs.writeAt(kSpoolName, journalOffset(layout, state.journalUsedBytes), serializeJournalEntry(entry));
+}
+
+Status commitRewrite(FileSystem& fs, const Layout& layout, const StoredState& state, std::uint32_t sequence) {
+    if (shouldCheckpoint(layout, state)) {
+        return writeCheckpoint(fs, layout, state.index, state.checkpoint.generation + state.journalOps + 1);
+    }
+    JournalEntry entry;
+    entry.op = JournalOp::RewriteFront;
+    entry.sequence = sequence;
+    entry.generation = state.checkpoint.generation + state.journalOps + 1;
+    entry.crc = journalCrc(entry);
+    return fs.writeAt(kSpoolName, journalOffset(layout, state.journalUsedBytes), serializeJournalEntry(entry));
 }
 
 } // namespace
@@ -235,47 +309,46 @@ Status FileStore::mount() {
     }
     Layout layout;
     if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config: reservedBytes must fit at least one recordSizeBytes slot"), "mount");
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config: reservedBytes must fit at least one recordSizeBytes slot and journalBytes must fit at least one entry"), "mount");
     }
 
-    const auto a = readIndexAt(*fs, kIndexAName, layout);
-    const auto b = readIndexAt(*fs, kIndexBName, layout);
-    if (a.configMismatch || b.configMismatch) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "mount");
-    }
-
-    const bool hasAnyMetadata = a.exists || b.exists;
-    const bool hasUsableMetadata = usableIndex(a) || usableIndex(b);
     const bool hasSpool = fileExists(*fs, kSpoolName);
-
-    if (!hasAnyMetadata) {
-        if (hasSpool) {
-            return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue spool exists but metadata is missing; delete or reformat queue files to continue"), "mount", kNoSequence, kSpoolName);
-        }
+    if (!hasSpool) {
         st = fs->resizeFile(kSpoolName, layout.spoolBytes);
         if (!st.ok()) {
             return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
         }
-        const IndexRecord empty = toRecord(FileStoreIndex{}, 1, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
-        st = writeFileAtomic(*fs, kIndexAName, bytesFromObject(&empty, sizeof(empty)));
+        st = writeCheckpoint(*fs, layout, FileStoreIndex{}, 1);
         if (!st.ok()) {
-            return diagnostic(Severity::Error, st, "mount", kNoSequence, kIndexAName);
+            return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
         }
         return Status::success();
     }
 
-    if (!hasUsableMetadata) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue metadata is corrupt or invalid; delete or repair queue files to continue"), "mount");
-    }
-
-    st = requireFileSize(*fs, kSpoolName, layout.spoolBytes);
+    st = [&] {
+        std::uint64_t actual = 0;
+        Status sizeStatus = fs->fileSize(kSpoolName, actual);
+        if (!sizeStatus.ok()) {
+            return Status::failure(StatusCode::ReadFailed, "pqueue spool file is missing");
+        }
+        if (actual != layout.spoolBytes) {
+            return Status::failure(StatusCode::InvalidIndex, "pqueue spool size does not match configured storage layout");
+        }
+        return Status::success();
+    }();
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
     }
 
+    const StoredState state = loadStoredState(*fs, layout);
+    if (state.configMismatch) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "mount");
+    }
+    if (!state.foundCheckpoint) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing; delete or repair queue files to continue"), "mount");
+    }
     return Status::success();
 }
-
 
 ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
     ValidationResult result;
@@ -298,40 +371,8 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         return result;
     }
 
-    const auto a = readIndexAt(*fs, kIndexAName, layout);
-    const auto b = readIndexAt(*fs, kIndexBName, layout);
-    const bool hasAnyMetadata = a.exists || b.exists;
-    const bool hasSpool = fileExists(*fs, kSpoolName);
-
-    if (!hasAnyMetadata) {
-        if (hasSpool) {
-            addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataMissing, "pqueue spool exists but metadata is missing"));
-        }
-        return result;
-    }
-
-    if (!hasSpool) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::SpoolMissing, "pqueue metadata exists but spool file is missing"));
-        return result;
-    }
-
-    if (a.exists && !validIndexShape(a.record)) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue meta_a is corrupt or invalid"));
-    }
-    if (b.exists && !validIndexShape(b.record)) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "pqueue meta_b is corrupt or invalid"));
-    }
-    if (a.configMismatch) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue meta_a config does not match current storage config"));
-    }
-    if (b.configMismatch) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue meta_b config does not match current storage config"));
-    }
-
-    const bool hasA = usableIndex(a);
-    const bool hasB = usableIndex(b);
-    if (!hasA && !hasB) {
-        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "no usable pqueue metadata copy found"));
+    if (!fileExists(*fs, kSpoolName)) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::SpoolMissing, "pqueue spool file is missing"));
         return result;
     }
 
@@ -346,20 +387,31 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         return result;
     }
 
-    const IndexRecord& active = hasA && hasB
-        ? (a.record.generation >= b.record.generation ? a.record : b.record)
-        : (hasA ? a.record : b.record);
+    const StoredState state = loadStoredState(*fs, layout);
+    if (state.configMismatch) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::ConfigMismatch, "pqueue checkpoint config does not match current storage config"));
+        return result;
+    }
+    if (!state.foundCheckpoint) {
+        addValidationError(result, options, makeIssue(ValidationIssueCode::MetadataCorrupt, "no usable pqueue checkpoint found"));
+        return result;
+    }
 
+    CheckpointRecord active = state.checkpoint;
+    active.head = state.index.head;
+    active.tail = state.index.tail;
+    active.count = state.index.count;
+    active.journalUsedBytes = state.journalUsedBytes;
     if (!ringStateMatches(active)) {
         addValidationError(result, options, makeIssue(ValidationIssueCode::InvalidRingState, "pqueue metadata ring state is invalid"));
         return result;
     }
 
-    for (std::uint32_t sequence = active.head; sequence < active.tail; ++sequence) {
+    for (std::uint32_t sequence = state.index.head; sequence < state.index.tail; ++sequence) {
         const std::uint32_t slotIndex = sequence % layout.capacityRecords;
         std::string bytes;
         st = fs->readAt(kSpoolName, slotOffset(layout, sequence), layout.slotSizeBytes, bytes);
-        if (!st.ok() || bytes.size() != layout.slotSizeBytes || bytes.size() < sizeof(RecordHeader)) {
+        if (!st.ok() || bytes.size() != layout.slotSizeBytes || bytes.size() < kRecordHeaderBytes) {
             addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotReadFailed, "failed to read active pqueue spool slot", slotIndex, sequence));
             if (result.stoppedEarly) {
                 return result;
@@ -368,10 +420,10 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
         }
 
         RecordHeader header;
-        std::memcpy(&header, bytes.data(), sizeof(header));
-        if (header.magic != kFileStoreRecordMagic ||
+        if (!parseRecordHeader(bytes, header) ||
+            header.magic != kFileStoreRecordMagic ||
             header.version != kFormatVersion ||
-            header.headerBytes != sizeof(RecordHeader) ||
+            header.headerBytes != kRecordHeaderBytes ||
             header.sequence != sequence ||
             header.recordBytes > layout.recordSizeBytes) {
             auto issue = makeSlotIssue(ValidationIssueCode::SlotHeaderInvalid, "active pqueue spool slot header is invalid", slotIndex, sequence);
@@ -384,7 +436,7 @@ ValidationResult FileStore::validateUnlocked(const ValidationOptions& options) {
             continue;
         }
 
-        const std::string record = bytes.substr(sizeof(RecordHeader), header.recordBytes);
+        const std::string record = bytes.substr(kRecordHeaderBytes, header.recordBytes);
         if (header.crc != recordCrc(header, record)) {
             addValidationError(result, options, makeSlotIssue(ValidationIssueCode::SlotCrcMismatch, "active pqueue spool slot CRC mismatch", slotIndex, sequence));
             if (result.stoppedEarly) {
@@ -408,35 +460,14 @@ Status FileStore::readIndex(FileStoreIndex& out) {
     if (!makeLayout(config_, layout)) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "readIndex");
     }
-    const auto fs = fileSystem();
-
-    const auto a = readIndexAt(*fs, kIndexAName, layout);
-    const auto b = readIndexAt(*fs, kIndexBName, layout);
-
-    if (a.configMismatch || b.configMismatch) {
+    const StoredState state = loadStoredState(*fileSystem(), layout);
+    if (state.configMismatch) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "readIndex");
     }
-
-    const bool hasA = usableIndex(a);
-    const bool hasB = usableIndex(b);
-    if (hasA && hasB) {
-        out = fromRecord(a.record.generation >= b.record.generation ? a.record : b.record);
-        return Status::success();
+    if (!state.foundCheckpoint) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing"), "readIndex");
     }
-    if (hasA) {
-        out = fromRecord(a.record);
-        return Status::success();
-    }
-    if (hasB) {
-        out = fromRecord(b.record);
-        return Status::success();
-    }
-
-    out = FileStoreIndex{};
-    st = writeIndex(out);
-    if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "readIndex");
-    }
+    out = state.index;
     return Status::success();
 }
 
@@ -453,20 +484,16 @@ Status FileStore::writeIndex(const FileStoreIndex& index) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "invalid queue index"), "writeIndex");
     }
     const auto fs = fileSystem();
-
-    const auto currentA = readIndexAt(*fs, kIndexAName, layout);
-    const auto currentB = readIndexAt(*fs, kIndexBName, layout);
-    if (currentA.configMismatch || currentB.configMismatch) {
+    const StoredState state = loadStoredState(*fs, layout);
+    if (state.configMismatch) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "writeIndex");
     }
-    const bool hasA = usableIndex(currentA);
-    const bool hasB = usableIndex(currentB);
-    const std::uint32_t generation = std::max(hasA ? currentA.record.generation : 0, hasB ? currentB.record.generation : 0) + 1;
-    const bool writeA = !hasA || (hasB && currentA.record.generation <= currentB.record.generation);
-    const IndexRecord record = toRecord(index, generation, layout.capacityRecords, layout.recordSizeBytes, layout.reservedBytes);
-    st = writeFileAtomic(*fs, writeA ? kIndexAName : kIndexBName, bytesFromObject(&record, sizeof(record)));
+    if (!state.foundCheckpoint) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing"), "writeIndex");
+    }
+    st = commitIndexTransition(*fs, layout, state, index);
     if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "writeIndex", kNoSequence, writeA ? kIndexAName : kIndexBName);
+        return diagnostic(Severity::Error, st, "writeIndex", kNoSequence, kSpoolName);
     }
     return Status::success();
 }
@@ -489,13 +516,34 @@ Status FileStore::writeRecord(std::uint32_t sequence, const std::string& record)
     header.recordBytes = static_cast<std::uint32_t>(record.size());
     header.crc = recordCrc(header, record);
 
-    std::string bytes = bytesFromObject(&header, sizeof(header));
+    std::string bytes = serializeRecordHeader(header);
     bytes.append(record);
     bytes.resize(layout.slotSizeBytes, '\0');
 
     st = fileSystem()->writeAt(kSpoolName, slotOffset(layout, sequence), bytes);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "writeRecord", sequence, kSpoolName);
+    }
+    return Status::success();
+}
+
+Status FileStore::rewriteRecord(std::uint32_t sequence, const std::string& record) {
+    Status st = writeRecord(sequence, record);
+    if (!st.ok()) {
+        return st;
+    }
+    Layout layout;
+    if (!makeLayout(config_, layout)) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "rewriteRecord", sequence);
+    }
+    const auto fs = fileSystem();
+    const StoredState state = loadStoredState(*fs, layout);
+    if (!state.foundCheckpoint || state.configMismatch) {
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt, missing, or mismatched"), "rewriteRecord", sequence);
+    }
+    st = commitRewrite(*fs, layout, state, sequence);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "rewriteRecord", sequence, kSpoolName);
     }
     return Status::success();
 }
@@ -515,22 +563,22 @@ Status FileStore::readRecord(std::uint32_t sequence, std::string& out) {
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "readRecord", sequence, kSpoolName);
     }
-    if (bytes.size() != layout.slotSizeBytes || bytes.size() < sizeof(RecordHeader)) {
+    if (bytes.size() != layout.slotSizeBytes || bytes.size() < kRecordHeaderBytes) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot is truncated"), "readRecord", sequence, kSpoolName);
     }
 
     RecordHeader header;
-    std::memcpy(&header, bytes.data(), sizeof(header));
-    if (header.magic != kFileStoreRecordMagic ||
+    if (!parseRecordHeader(bytes, header) ||
+        header.magic != kFileStoreRecordMagic ||
         header.version != kFormatVersion ||
-        header.headerBytes != sizeof(RecordHeader) ||
+        header.headerBytes != kRecordHeaderBytes ||
         header.sequence != sequence ||
         header.recordBytes > layout.recordSizeBytes) {
         // TODO: expose an fsck/recovery path that can log and repair/drop corrupt front records.
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidRecord, "spool slot header is invalid"), "readRecord", sequence, kSpoolName);
     }
 
-    std::string record = bytes.substr(sizeof(RecordHeader), header.recordBytes);
+    std::string record = bytes.substr(kRecordHeaderBytes, header.recordBytes);
     if (header.crc != recordCrc(header, record)) {
         // TODO: expose an fsck/recovery path that can log and repair/drop corrupt front records.
         return diagnostic(Severity::Error, Status::failure(StatusCode::CrcMismatch, "spool slot CRC mismatch"), "readRecord", sequence, kSpoolName);
