@@ -6,6 +6,7 @@
 #ifndef ARDUINO
 #include <filesystem>
 #include <fstream>
+#include <vector>
 #endif
 
 namespace {
@@ -16,6 +17,11 @@ const std::filesystem::path kSpoolDir = "pqueue_test_spool";
 void cleanSpool() {
     std::error_code ec;
     std::filesystem::remove_all(kSpoolDir, ec);
+}
+
+void capturePqueueEvent(const pqueue::Event& event, void* user) {
+    auto* events = static_cast<std::vector<pqueue::Event>*>(user);
+    events->push_back(event);
 }
 #endif
 
@@ -151,6 +157,39 @@ TEST_CASE("pqueue lock prevents two active queues using the same spool") {
     std::string out;
     REQUIRE(first.peek(out).ok());
     CHECK_EQ(out, "held");
+#endif
+}
+
+TEST_CASE("pqueue lock timeout emits a clear diagnostic event") {
+#ifndef ARDUINO
+    cleanSpool();
+
+    std::vector<pqueue::Event> events;
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 160;
+    config.events = {capturePqueueEvent, &events};
+
+    pqueue::Queue first(config);
+    REQUIRE(first.enqueue("held").ok());
+
+    pqueue::Queue second(config);
+    const auto status = second.enqueue("blocked");
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::LockTimeout);
+
+    bool sawLockTimeout = false;
+    for (const auto& event : events) {
+        if (event.status.code == pqueue::StatusCode::LockTimeout &&
+            std::string(event.component) == "Queue" &&
+            std::string(event.operation) == "acquireLock") {
+            sawLockTimeout = true;
+            CHECK(event.kind == pqueue::EventKind::Diagnostic);
+            CHECK(event.severity == pqueue::Severity::Error);
+        }
+    }
+    CHECK(sawLockTimeout);
 #endif
 }
 
@@ -329,5 +368,6 @@ TEST_CASE("pqueue validate fails when another queue owns the lock") {
     REQUIRE_FALSE(result.ok);
     REQUIRE_FALSE(result.errors.empty());
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::QueueLoadFailed);
+    CHECK(result.errors[0].message.find("queue lock timeout") != std::string::npos);
 #endif
 }
