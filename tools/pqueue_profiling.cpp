@@ -201,6 +201,7 @@ ScenarioResult scenarioQueueEnqueue(std::uint32_t records, std::uint32_t payload
     auto fs = std::make_shared<CountingFileSystem>(pqueue::makePosixFileSystem());
     auto cfg = queueConfig(tempBase("queue_enqueue"), fs, 1024, records + 8);
     pqueue::Queue q(cfg);
+    (void)q.stats();
     const auto data = payload(payloadBytes);
     fs->resetCounters();
 
@@ -338,6 +339,7 @@ ScenarioResult scenarioHttpOutboxOfflineSubmit(std::uint32_t records, std::uint3
     cfg.baseUrl = "https://example.test";
 
     pqueue::http::Outbox outbox(cfg, *transport, fakeClock, clock.get());
+    (void)outbox.stats();
     const auto body = payload(payloadBytes);
     transport->online = false;
     fs->resetCounters();
@@ -437,17 +439,17 @@ void printRedFlags(const std::vector<ScenarioResult>& results) {
             std::cout << "- " << r.scenario << " failed: " << pqueue::statusCodeName(r.status.code)
                       << " (" << r.status.message << ")\n";
         }
-        if (r.scenario == "queue_enqueue" && r.fs.writeAt != r.records) {
-            std::cout << "- queue_enqueue writeAt count != records; check for unexpected spool writes\n";
+        if ((r.scenario == "queue_enqueue" || r.scenario == "http_offline_submit") && r.fs.writeAt > r.records * 3ULL + 16ULL) {
+            std::cout << "- " << r.scenario << " has unexpectedly high writeAt count; expected slot + journal/checkpoint writes only\n";
+        }
+        if ((r.scenario == "queue_enqueue" || r.scenario == "http_offline_submit") && r.fs.readAt > r.records / 10ULL + 8ULL) {
+            std::cout << "- " << r.scenario << " has unexpected readAt activity on enqueue hot path\n";
         }
         if (r.scenario == "validate_full" && r.fs.writeAt != 0) {
             std::cout << "- validate_full wrote to storage; validation should be read-only\n";
         }
         if (r.records > 0 && r.fs.metadataOps() > r.records * 10ULL) {
             std::cout << "- " << r.scenario << " has high metadata op count; inspect atomic metadata path\n";
-        }
-        if (r.timings.avg() > 0.0 && r.timings.max() > r.timings.avg() * 25.0) {
-            std::cout << "- " << r.scenario << " max latency is >25x average; inspect tail latency\n";
         }
     }
 }

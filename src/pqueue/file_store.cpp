@@ -139,6 +139,57 @@ struct StoredState {
     std::uint32_t journalOps = 0;
 };
 
+
+Layout layoutFromRuntime(const FileStoreRuntimeState& runtime) {
+    Layout layout;
+    layout.capacityRecords = runtime.capacityRecords;
+    layout.recordSizeBytes = runtime.recordSizeBytes;
+    layout.reservedBytes = runtime.reservedBytes;
+    layout.journalBytes = runtime.journalBytes;
+    layout.checkpointEveryOps = runtime.checkpointEveryOps;
+    layout.slotSizeBytes = runtime.slotSizeBytes;
+    layout.checkpointBytes = runtime.checkpointBytes;
+    layout.recordRegionOffset = runtime.recordRegionOffset;
+    layout.spoolBytes = runtime.spoolBytes;
+    return layout;
+}
+
+StoredState storedStateFromRuntime(const FileStoreRuntimeState& runtime) {
+    StoredState state;
+    state.foundCheckpoint = runtime.loaded;
+    state.index = runtime.index;
+    state.journalUsedBytes = runtime.journalUsedBytes;
+    state.journalOps = runtime.journalOps;
+    state.checkpoint.generation = runtime.checkpointGeneration;
+    return state;
+}
+
+void setRuntime(FileStoreRuntimeState& runtime, const Layout& layout, const StoredState& state) {
+    runtime.mounted = true;
+    runtime.loaded = state.foundCheckpoint;
+    runtime.index = state.index;
+    runtime.checkpointGeneration = state.checkpoint.generation;
+    runtime.journalUsedBytes = state.journalUsedBytes;
+    runtime.journalOps = state.journalOps;
+    runtime.capacityRecords = layout.capacityRecords;
+    runtime.recordSizeBytes = layout.recordSizeBytes;
+    runtime.reservedBytes = layout.reservedBytes;
+    runtime.journalBytes = layout.journalBytes;
+    runtime.checkpointEveryOps = layout.checkpointEveryOps;
+    runtime.slotSizeBytes = layout.slotSizeBytes;
+    runtime.checkpointBytes = layout.checkpointBytes;
+    runtime.recordRegionOffset = layout.recordRegionOffset;
+    runtime.spoolBytes = layout.spoolBytes;
+}
+
+void setRuntimeFresh(FileStoreRuntimeState& runtime, const Layout& layout, std::uint32_t checkpointGeneration) {
+    StoredState state;
+    state.foundCheckpoint = true;
+    state.checkpoint.generation = checkpointGeneration;
+    state.index = FileStoreIndex{};
+    setRuntime(runtime, layout, state);
+}
+
 bool applyJournalEntry(const JournalEntry& entry, FileStoreIndex& index) {
     switch (entry.op) {
     case JournalOp::Enqueue:
@@ -227,7 +278,8 @@ bool shouldCheckpoint(const Layout& layout, const StoredState& state) {
     return nextUsed * 100U >= layout.journalBytes * kJournalFullPercent;
 }
 
-Status commitIndexTransition(FileSystem& fs, const Layout& layout, const StoredState& state, const FileStoreIndex& next) {
+Status commitIndexTransition(FileSystem& fs, const Layout& layout, FileStoreRuntimeState& runtime, const FileStoreIndex& next) {
+    StoredState state = storedStateFromRuntime(runtime);
     JournalEntry entry;
     bool knownTransition = true;
 
@@ -243,25 +295,52 @@ Status commitIndexTransition(FileSystem& fs, const Layout& layout, const StoredS
         knownTransition = false;
     }
 
+    const std::uint32_t nextGeneration = state.checkpoint.generation + state.journalOps + 1;
     if (!knownTransition || shouldCheckpoint(layout, state)) {
-        return writeCheckpoint(fs, layout, next, state.checkpoint.generation + state.journalOps + 1);
+        Status st = writeCheckpoint(fs, layout, next, nextGeneration);
+        if (st.ok()) {
+            runtime.index = next;
+            runtime.checkpointGeneration = nextGeneration;
+            runtime.journalUsedBytes = 0;
+            runtime.journalOps = 0;
+        }
+        return st;
     }
 
-    entry.generation = state.checkpoint.generation + state.journalOps + 1;
+    entry.generation = nextGeneration;
     entry.crc = journalCrc(entry);
-    return fs.writeAt(kSpoolName, journalOffset(layout, state.journalUsedBytes), serializeJournalEntry(entry));
+    Status st = fs.writeAt(kSpoolName, journalOffset(layout, state.journalUsedBytes), serializeJournalEntry(entry));
+    if (st.ok()) {
+        runtime.index = next;
+        runtime.journalUsedBytes += kJournalEntryBytes;
+        runtime.journalOps += 1;
+    }
+    return st;
 }
 
-Status commitRewrite(FileSystem& fs, const Layout& layout, const StoredState& state, std::uint32_t sequence) {
+Status commitRewrite(FileSystem& fs, const Layout& layout, FileStoreRuntimeState& runtime, std::uint32_t sequence) {
+    StoredState state = storedStateFromRuntime(runtime);
+    const std::uint32_t nextGeneration = state.checkpoint.generation + state.journalOps + 1;
     if (shouldCheckpoint(layout, state)) {
-        return writeCheckpoint(fs, layout, state.index, state.checkpoint.generation + state.journalOps + 1);
+        Status st = writeCheckpoint(fs, layout, state.index, nextGeneration);
+        if (st.ok()) {
+            runtime.checkpointGeneration = nextGeneration;
+            runtime.journalUsedBytes = 0;
+            runtime.journalOps = 0;
+        }
+        return st;
     }
     JournalEntry entry;
     entry.op = JournalOp::RewriteFront;
     entry.sequence = sequence;
-    entry.generation = state.checkpoint.generation + state.journalOps + 1;
+    entry.generation = nextGeneration;
     entry.crc = journalCrc(entry);
-    return fs.writeAt(kSpoolName, journalOffset(layout, state.journalUsedBytes), serializeJournalEntry(entry));
+    Status st = fs.writeAt(kSpoolName, journalOffset(layout, state.journalUsedBytes), serializeJournalEntry(entry));
+    if (st.ok()) {
+        runtime.journalUsedBytes += kJournalEntryBytes;
+        runtime.journalOps += 1;
+    }
+    return st;
 }
 
 } // namespace
@@ -321,6 +400,10 @@ Status FileStore::diagnostic(Severity severity, Status status, const char* opera
 }
 
 Status FileStore::mount() {
+    if (runtime_.mounted && runtime_.loaded) {
+        return Status::success();
+    }
+
     const auto fs = fileSystem();
     if (!fs) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::BackendUnavailable, "file system backend unavailable"), "mount");
@@ -340,10 +423,12 @@ Status FileStore::mount() {
         if (!st.ok()) {
             return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
         }
-        st = writeCheckpoint(*fs, layout, FileStoreIndex{}, 1);
+        constexpr std::uint32_t kInitialGeneration = 1;
+        st = writeCheckpoint(*fs, layout, FileStoreIndex{}, kInitialGeneration);
         if (!st.ok()) {
             return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
         }
+        setRuntimeFresh(runtime_, layout, kInitialGeneration);
         return Status::success();
     }
 
@@ -369,6 +454,7 @@ Status FileStore::mount() {
     if (!state.foundCheckpoint) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing; delete or repair queue files to continue"), "mount");
     }
+    setRuntime(runtime_, layout, state);
     return Status::success();
 }
 
@@ -564,16 +650,22 @@ Status FileStore::readIndex(FileStoreIndex& out) {
     if (!st.ok()) {
         return st;
     }
-    Layout layout;
-    if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "readIndex");
+    out = runtime_.index;
+    return Status::success();
+}
+
+Status FileStore::readIndexFromDisk(FileStoreIndex& out) {
+    Status st = mount();
+    if (!st.ok()) {
+        return st;
     }
+    const Layout layout = layoutFromRuntime(runtime_);
     const StoredState state = loadStoredState(*fileSystem(), layout);
     if (state.configMismatch) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "readIndex");
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "readIndexFromDisk");
     }
     if (!state.foundCheckpoint) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing"), "readIndex");
+        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing"), "readIndexFromDisk");
     }
     out = state.index;
     return Status::success();
@@ -584,22 +676,12 @@ Status FileStore::writeIndex(const FileStoreIndex& index) {
     if (!st.ok()) {
         return st;
     }
-    Layout layout;
-    if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "writeIndex");
-    }
+    const Layout layout = layoutFromRuntime(runtime_);
     if (index.tail < index.head || index.count != index.tail - index.head || index.count > layout.capacityRecords) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "invalid queue index"), "writeIndex");
     }
     const auto fs = fileSystem();
-    const StoredState state = loadStoredState(*fs, layout);
-    if (state.configMismatch) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "writeIndex");
-    }
-    if (!state.foundCheckpoint) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing"), "writeIndex");
-    }
-    st = commitIndexTransition(*fs, layout, state, index);
+    st = commitIndexTransition(*fs, layout, runtime_, index);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "writeIndex", kNoSequence, kSpoolName);
     }
@@ -611,10 +693,7 @@ Status FileStore::writeRecord(std::uint32_t sequence, const std::string& record)
     if (!st.ok()) {
         return st;
     }
-    Layout layout;
-    if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "writeRecord", sequence);
-    }
+    const Layout layout = layoutFromRuntime(runtime_);
     if (record.size() > layout.recordSizeBytes) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured pqueue slot size"), "writeRecord", sequence);
     }
@@ -640,16 +719,9 @@ Status FileStore::rewriteRecord(std::uint32_t sequence, const std::string& recor
     if (!st.ok()) {
         return st;
     }
-    Layout layout;
-    if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "rewriteRecord", sequence);
-    }
+    const Layout layout = layoutFromRuntime(runtime_);
     const auto fs = fileSystem();
-    const StoredState state = loadStoredState(*fs, layout);
-    if (!state.foundCheckpoint || state.configMismatch) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt, missing, or mismatched"), "rewriteRecord", sequence);
-    }
-    st = commitRewrite(*fs, layout, state, sequence);
+    st = commitRewrite(*fs, layout, runtime_, sequence);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "rewriteRecord", sequence, kSpoolName);
     }
@@ -661,10 +733,7 @@ Status FileStore::readRecord(std::uint32_t sequence, std::string& out) {
     if (!st.ok()) {
         return st;
     }
-    Layout layout;
-    if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "readRecord", sequence);
-    }
+    const Layout layout = layoutFromRuntime(runtime_);
 
     std::string bytes;
     st = fileSystem()->readAt(kSpoolName, slotOffset(layout, sequence), layout.slotSizeBytes, bytes);
@@ -701,10 +770,7 @@ Status FileStore::removeRecord(std::uint32_t sequence) {
     if (!st.ok()) {
         return st;
     }
-    Layout layout;
-    if (!makeLayout(config_, layout)) {
-        return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidArgument, "invalid pqueue storage config"), "removeRecord", sequence);
-    }
+    const Layout layout = layoutFromRuntime(runtime_);
     const std::string empty(layout.slotSizeBytes, '\0');
     st = fileSystem()->writeAt(kSpoolName, slotOffset(layout, sequence), empty);
     if (!st.ok()) {

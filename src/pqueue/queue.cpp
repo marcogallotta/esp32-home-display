@@ -275,7 +275,7 @@ ValidationResult Queue::validate(const ValidationOptions& options) {
     }
 
     FileStoreIndex diskIndex;
-    st = store_.readIndex(diskIndex);
+    st = store_.readIndexFromDisk(diskIndex);
     if (!st.ok()) {
         addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message));
         return result;

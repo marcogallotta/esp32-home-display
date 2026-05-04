@@ -323,8 +323,9 @@ TEST_CASE("FileStore keeps the older valid checkpoint when the latest is corrupt
     const auto latestCheckpointOffset = 3U * pqueue::storage_detail::kCheckpointRecordBytes;
     fileSystem->files["pqueue.spool"][latestCheckpointOffset] ^= static_cast<char>(0xff);
 
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 1);
     pqueue::FileStoreIndex out;
-    REQUIRE(store.readIndex(out).ok());
+    REQUIRE(reopened.readIndex(out).ok());
     CHECK_EQ(out.head, 0U);
     CHECK_EQ(out.tail, 1U);
     CHECK_EQ(out.count, 1U);

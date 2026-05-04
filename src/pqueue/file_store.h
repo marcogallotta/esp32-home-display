@@ -78,6 +78,24 @@ struct ValidationOptions {
     std::size_t maxErrors = 100;
 };
 
+struct FileStoreRuntimeState {
+    bool mounted = false;
+    bool loaded = false;
+    FileStoreIndex index;
+    std::uint32_t checkpointGeneration = 0;
+    std::uint32_t journalUsedBytes = 0;
+    std::uint32_t journalOps = 0;
+    std::uint32_t capacityRecords = 0;
+    std::uint32_t recordSizeBytes = 0;
+    std::uint32_t reservedBytes = 0;
+    std::uint32_t journalBytes = 0;
+    std::uint32_t checkpointEveryOps = 0;
+    std::uint32_t slotSizeBytes = 0;
+    std::uint32_t checkpointBytes = 0;
+    std::uint32_t recordRegionOffset = 0;
+    std::uint32_t spoolBytes = 0;
+};
+
 class FileStore {
     friend class Queue;
 
@@ -105,9 +123,11 @@ private:
     Status emit(Event event) const;
     Status diagnostic(Severity severity, Status status, const char* operation, std::uint32_t sequence = kNoSequence, const char* path = "") const;
     ValidationResult validateUnlocked(const ValidationOptions& options = ValidationOptions{});
+    Status readIndexFromDisk(FileStoreIndex& out);
 
     FileStoreConfig config_;
     mutable std::shared_ptr<FileSystem> fileSystem_;
+    FileStoreRuntimeState runtime_;
 };
 
 } // namespace pqueue
