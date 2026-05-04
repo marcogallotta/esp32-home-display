@@ -6,10 +6,19 @@
 
 #include "../config.h"
 #include "../sensor_readings.h"
+#include "pqueue/outbox.h"
 #include "backend_result.h"
 #include "types.h"
 
+namespace pqueue::http { class Transport; }
+
 namespace api {
+
+#ifndef ARDUINO
+namespace detail {
+std::string resolveDesktopPemPathForApiOutbox(const std::string& pemFile);
+}
+#endif
 
 enum class WriteStatus {
     Sent,
@@ -60,6 +69,16 @@ public:
 class OutboxClient : public ApiWriter {
 public:
     explicit OutboxClient(const ::Config& config);
+#ifndef ARDUINO
+    // Test seam: inject transport/clock/spool without using curl or global time.
+    OutboxClient(
+        const ::Config& config,
+        pqueue::http::Transport& transport,
+        std::string queueBasePath,
+        pqueue::ClockCallback clock,
+        void* clockContext
+    );
+#endif
     ~OutboxClient();
 
     WriteResult postSwitchbotReading(

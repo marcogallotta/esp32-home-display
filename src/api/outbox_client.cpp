@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -27,10 +28,9 @@
 #include "payloads.h"
 
 namespace api {
-namespace {
 
 #ifndef ARDUINO
-std::string resolveDesktopPemPath(const std::string& pemFile) {
+std::string detail::resolveDesktopPemPathForApiOutbox(const std::string& pemFile) {
     if (pemFile.empty()) {
         return {};
     }
@@ -43,6 +43,8 @@ std::string resolveDesktopPemPath(const std::string& pemFile) {
     return pemFile;
 }
 #endif
+
+namespace {
 
 std::string invalidTimestampReason(const std::optional<std::int64_t>& epochS) {
     if (!epochS.has_value()) {
@@ -309,20 +311,25 @@ void logDroppedQueueFullRequest(const ApiRequest& request) {
     );
 }
 
+std::string defaultQueueBasePath() {
+#ifdef ARDUINO
+    return "/pqueue_api_spool";
+#else
+    return "pqueue_api_spool";
+#endif
+}
+
 pqueue::http::Config makeHttpConfig(
     const ::Config& config,
     const std::array<pqueue::http::Header, 2>& headers,
     void* callbackContext,
     pqueue::http::ResponseCallback onResponse,
     pqueue::http::DropCallback onDrop,
-    pqueue::EventSink onEvent
+    pqueue::EventSink onEvent,
+    const std::string& queueBasePath
 ) {
     pqueue::http::Config httpConfig;
-#ifdef ARDUINO
-    httpConfig.queue.basePath = "/pqueue_api_spool";
-#else
-    httpConfig.queue.basePath = "pqueue_api_spool";
-#endif
+    httpConfig.queue.basePath = queueBasePath;
     httpConfig.queue.reservedBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
     httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
@@ -356,12 +363,33 @@ struct OutboxClientImpl {
               {"Content-Type", "application/json"},
               {"x-api-key", config.api.apiKey.c_str()},
           }},
-          transport(makeTransportConfig(config, {&OutboxClientImpl::onPqueueEvent, this})),
+          ownedTransport(std::make_unique<TransportType>(makeTransportConfig(config, {&OutboxClientImpl::onPqueueEvent, this}))),
+          transport(ownedTransport.get()),
           outbox(
-              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent),
-              transport,
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent, defaultQueueBasePath()),
+              *transport,
               &OutboxClientImpl::clockNow,
-              this
+              nullptr
+          ) {}
+
+    OutboxClientImpl(
+        const ::Config& config,
+        pqueue::http::Transport& injectedTransport,
+        std::string queueBasePath,
+        pqueue::ClockCallback clock,
+        void* clockContext
+    )
+        : config(config),
+          headers{{
+              {"Content-Type", "application/json"},
+              {"x-api-key", config.api.apiKey.c_str()},
+          }},
+          transport(&injectedTransport),
+          outbox(
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent, queueBasePath),
+              *transport,
+              clock,
+              clockContext
           ) {}
 
 #ifdef ARDUINO
@@ -384,12 +412,13 @@ struct OutboxClientImpl {
         transportConfig.common.userAgent = "my-app/1.0";
         transportConfig.common.timeoutMs = 15000;
         transportConfig.common.events = events;
-        transportConfig.caBundlePath = resolveDesktopPemPath(config.api.pemFile);
+        transportConfig.caBundlePath = detail::resolveDesktopPemPathForApiOutbox(config.api.pemFile);
         return transportConfig;
     }
 
     using TransportType = pqueue::http::PosixCurlTransport;
 #endif
+
 
     static std::uint64_t clockNow(void* context) {
         (void)context;
@@ -460,7 +489,8 @@ struct OutboxClientImpl {
 
     const ::Config& config;
     std::array<pqueue::http::Header, 2> headers;
-    TransportType transport;
+    std::unique_ptr<pqueue::http::Transport> ownedTransport;
+    pqueue::http::Transport* transport = nullptr;
     pqueue::http::Outbox outbox;
     std::optional<pqueue::http::Response> lastResponse;
 };
@@ -468,6 +498,18 @@ struct OutboxClientImpl {
 OutboxClient::OutboxClient(const ::Config& config)
     : config_(config),
       pqueue_(std::make_unique<OutboxClientImpl>(config_)) {}
+
+#ifndef ARDUINO
+OutboxClient::OutboxClient(
+    const ::Config& config,
+    pqueue::http::Transport& transport,
+    std::string queueBasePath,
+    pqueue::ClockCallback clock,
+    void* clockContext
+)
+    : config_(config),
+      pqueue_(std::make_unique<OutboxClientImpl>(config_, transport, std::move(queueBasePath), clock, clockContext)) {}
+#endif
 
 OutboxClient::~OutboxClient() = default;
 
