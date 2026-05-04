@@ -410,3 +410,90 @@ TEST_CASE("pqueue validate reports corrupt journal entry before later journal da
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::JournalCorrupt);
 #endif
 }
+
+TEST_CASE("pqueue recovers enqueued records from journal before checkpoint") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+        REQUIRE(queue.enqueue("three").ok());
+    }
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, 3U);
+
+    std::string out;
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "one");
+    REQUIRE(reopened.pop().ok());
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "two");
+#endif
+}
+
+TEST_CASE("pqueue recovers popped records from journal before checkpoint") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+        REQUIRE(queue.enqueue("three").ok());
+        REQUIRE(queue.pop().ok());
+        REQUIRE(queue.pop().ok());
+    }
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, 1U);
+
+    std::string out;
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "three");
+#endif
+}
+
+TEST_CASE("pqueue ignores torn final journal entry and keeps valid prefix") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(static_cast<std::streamoff>(testJournalOffset(1)));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, 1U);
+
+    std::string out;
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "one");
+
+    const auto validation = reopened.validate();
+    CHECK(validation.ok);
+    CHECK(validation.errors.empty());
+#endif
+}
