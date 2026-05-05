@@ -68,6 +68,25 @@ TEST_CASE("FileStore rejects corrupt spool slot") {
     CHECK_FALSE(store.readRecord(0, out).ok());
 }
 
+TEST_CASE("FileStore emits diagnostic event when active slot payload CRC is corrupt") {
+    auto fileSystem = makeFakeFileSystem();
+    std::vector<CapturedEvent> events;
+    auto store = makeStore(fileSystem, pqueue::EventOptions{captureEvent, &events});
+
+    REQUIRE(store.writeRecord(0, "payload").ok());
+    fileSystem->corruptSlotPayload(0, slotSize());
+
+    std::string out;
+    const auto status = store.readRecord(0, out);
+
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::CrcMismatch);
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().kind == pqueue::EventKind::Diagnostic);
+    CHECK(events.back().severity == pqueue::Severity::Error);
+    CHECK(events.back().code == pqueue::StatusCode::CrcMismatch);
+}
+
 TEST_CASE("FileStore keeps the older valid metadata copy when the latest is corrupt") {
     auto fileSystem = makeFakeFileSystem();
     auto store = makeStore(fileSystem);

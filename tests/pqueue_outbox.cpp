@@ -46,6 +46,11 @@ pqueue::SendResult fakeSend(void* context, const std::string& payload, const pqu
     return {decision};
 }
 
+void capturePqueueEvent(const pqueue::Event& event, void* user) {
+    auto* events = static_cast<std::vector<pqueue::Event>*>(user);
+    events->push_back(event);
+}
+
 pqueue::OutboxConfig testOutboxConfig() {
     pqueue::OutboxConfig config;
     config.retryDelayMs = 1000;
@@ -193,6 +198,34 @@ TEST_CASE("pqueue outbox drops corrupt front records") {
     CHECK_EQ(drain.corruptDropped, 1U);
     CHECK_EQ(outbox.stats().count, 0U);
     CHECK(sender.payloads.empty());
+#endif
+}
+
+TEST_CASE("pqueue outbox emits dropped event when stored envelope cannot be decoded") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    {
+        pqueue::Config queueConfig;
+        queueConfig.basePath = kOutboxSpoolDir.string();
+        pqueue::Queue queue(queueConfig);
+        REQUIRE(queue.enqueue("not an outbox envelope").ok());
+    }
+
+    std::vector<pqueue::Event> events;
+    FakeSender sender;
+    FakeClock clock;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.events = {capturePqueueEvent, &events};
+
+    auto outbox = makeOutbox(sender, clock, config);
+    auto drain = outbox.drain();
+
+    CHECK_EQ(drain.corruptDropped, 1U);
+    REQUIRE_FALSE(events.empty());
+    const auto& event = events.back();
+    CHECK(event.kind == pqueue::EventKind::RequestDropped);
+    CHECK(event.severity == pqueue::Severity::Error);
+    CHECK(event.status.code == pqueue::StatusCode::DecodeFailed);
 #endif
 }
 

@@ -99,6 +99,24 @@ TEST_CASE("pqueue rewriteFront updates the front record without popping it") {
 #endif
 }
 
+TEST_CASE("pqueue accepts records exactly at the configured max size") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 4;
+    config.reservedBytes = 128;
+    pqueue::Queue queue(config);
+
+    REQUIRE(queue.enqueue("1234").ok());
+    CHECK_EQ(queue.stats().count, 1U);
+
+    std::string out;
+    REQUIRE(queue.peek(out).ok());
+    CHECK_EQ(out, "1234");
+#endif
+}
+
 TEST_CASE("pqueue rejects records over the configured max size") {
 #ifndef ARDUINO
     cleanSpool();
