@@ -3,6 +3,7 @@
 #include <unity.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -16,6 +17,10 @@ namespace {
 
 constexpr const char* kBasePath = "/pqueue_test";
 constexpr const char* kSpoolPath = "/pqueue_test/pqueue.spool";
+constexpr const char* kRebootStatePath = "/pqueue_reboot_state";
+constexpr std::uint8_t kRebootPhaseVerifyInitial = 1;
+constexpr std::uint8_t kRebootPhaseVerifyMutated = 2;
+constexpr std::uint8_t kRebootPhaseFailed = 99;
 
 std::uint64_t g_nowMs = 0;
 
@@ -64,6 +69,140 @@ void cleanLittleFs() {
     TEST_ASSERT_TRUE_MESSAGE(LittleFS.format(), "LittleFS format failed");
     LittleFS.end();
     g_nowMs = 0;
+}
+
+
+bool mountLittleFsForRebootSmoke() {
+    LittleFS.end();
+    return LittleFS.begin(true);
+}
+
+bool formatLittleFsForRebootSmoke() {
+    LittleFS.end();
+    if (!LittleFS.begin(true)) {
+        return false;
+    }
+    if (!LittleFS.format()) {
+        LittleFS.end();
+        return false;
+    }
+    LittleFS.end();
+    g_nowMs = 0;
+    return true;
+}
+
+bool readRebootState(std::uint8_t& phase, std::string& message) {
+    phase = 0;
+    message.clear();
+
+    if (!mountLittleFsForRebootSmoke()) {
+        phase = kRebootPhaseFailed;
+        message = "LittleFS mount failed while reading reboot state";
+        return true;
+    }
+
+    File file = LittleFS.open(kRebootStatePath, "r");
+    if (!file) {
+        LittleFS.end();
+        return false;
+    }
+
+    String phaseLine = file.readStringUntil('\n');
+    String messageLine = file.readStringUntil('\n');
+    file.close();
+    LittleFS.end();
+
+    phase = static_cast<std::uint8_t>(std::atoi(phaseLine.c_str()));
+    message = messageLine.c_str();
+    return true;
+}
+
+void writeRebootState(std::uint8_t phase, const char* message = "") {
+    if (!mountLittleFsForRebootSmoke()) {
+        Serial.println("[pqueue reboot smoke] failed to mount LittleFS while writing state");
+        delay(100);
+        ESP.restart();
+    }
+
+    File file = LittleFS.open(kRebootStatePath, "w");
+    if (!file) {
+        Serial.println("[pqueue reboot smoke] failed to open state file for write");
+        LittleFS.end();
+        delay(100);
+        ESP.restart();
+    }
+
+    file.printf("%u\n%s\n", static_cast<unsigned>(phase), message);
+    file.flush();
+    file.close();
+    LittleFS.end();
+}
+
+void clearRebootState() {
+    if (!mountLittleFsForRebootSmoke()) {
+        return;
+    }
+    LittleFS.remove(kRebootStatePath);
+    LittleFS.end();
+}
+
+void rebootSmokeFail(const char* message) {
+    Serial.print("[pqueue reboot smoke] FAIL: ");
+    Serial.println(message);
+    writeRebootState(kRebootPhaseFailed, message);
+    delay(100);
+    ESP.restart();
+}
+
+void verifyOkOrRebootFail(const pqueue::Status& status, const char* message) {
+    if (!status.ok()) {
+        rebootSmokeFail(message);
+    }
+}
+
+void verifyStringOrRebootFail(const std::string& actual, const char* expected, const char* message) {
+    if (actual != expected) {
+        rebootSmokeFail(message);
+    }
+}
+
+void runQuickRebootSmokePhaseIfNeeded() {
+    std::uint8_t phase = 0;
+    std::string message;
+    const bool hasState = readRebootState(phase, message);
+
+    if (!hasState) {
+        Serial.println("[pqueue reboot smoke] phase 0: write initial queue, then reboot");
+        if (!formatLittleFsForRebootSmoke()) {
+            rebootSmokeFail("phase 0 LittleFS format failed");
+        }
+        {
+            pqueue::Queue queue(queueConfig());
+            verifyOkOrRebootFail(queue.enqueue("one"), "phase 0 enqueue one failed");
+            verifyOkOrRebootFail(queue.enqueue("two"), "phase 0 enqueue two failed");
+            verifyOkOrRebootFail(queue.enqueue("three"), "phase 0 enqueue three failed");
+        }
+        writeRebootState(kRebootPhaseVerifyInitial);
+        delay(100);
+        ESP.restart();
+    }
+
+    if (phase == kRebootPhaseVerifyInitial) {
+        Serial.println("[pqueue reboot smoke] phase 1: verify initial queue, mutate, then reboot");
+        {
+            pqueue::Queue queue(queueConfig());
+            std::string out;
+            verifyOkOrRebootFail(queue.peek(out), "phase 1 peek one failed");
+            verifyStringOrRebootFail(out, "one", "phase 1 expected one");
+            verifyOkOrRebootFail(queue.pop(), "phase 1 pop one failed");
+            verifyOkOrRebootFail(queue.peek(out), "phase 1 peek two failed");
+            verifyStringOrRebootFail(out, "two", "phase 1 expected two");
+            verifyOkOrRebootFail(queue.rewriteFront("two-rewritten"), "phase 1 rewrite front failed");
+        }
+        writeRebootState(kRebootPhaseVerifyMutated);
+        delay(100);
+        ESP.restart();
+    }
 }
 
 void assertQueueEmpty(pqueue::Queue& queue) {
@@ -264,11 +403,36 @@ void test_retryable_failure_does_not_drop() {
     TEST_ASSERT_EQUAL_UINT32(1, queue.stats().count);
 }
 
+
+void test_quick_reboot_persistence() {
+    std::uint8_t phase = 0;
+    std::string message;
+    TEST_ASSERT_TRUE_MESSAGE(readRebootState(phase, message), "quick reboot state missing");
+    if (phase == kRebootPhaseFailed) {
+        TEST_FAIL_MESSAGE(message.empty() ? "quick reboot smoke failed before Unity phase" : message.c_str());
+    }
+    TEST_ASSERT_EQUAL_UINT8(kRebootPhaseVerifyMutated, phase);
+
+    pqueue::Queue queue(queueConfig());
+    std::string out;
+    TEST_ASSERT_TRUE(queue.peek(out).ok());
+    TEST_ASSERT_EQUAL_STRING("two-rewritten", out.c_str());
+    TEST_ASSERT_TRUE(queue.pop().ok());
+    TEST_ASSERT_TRUE(queue.peek(out).ok());
+    TEST_ASSERT_EQUAL_STRING("three", out.c_str());
+    TEST_ASSERT_TRUE(queue.pop().ok());
+    assertQueueEmpty(queue);
+
+    clearRebootState();
+}
+
 } // namespace
 
 void setup() {
     delay(2000);
+    runQuickRebootSmokePhaseIfNeeded();
     UNITY_BEGIN();
+    RUN_TEST(test_quick_reboot_persistence);
     RUN_TEST(test_basic_fifo);
     RUN_TEST(test_remount_persistence);
     RUN_TEST(test_pop_persistence);
