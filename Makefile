@@ -1,6 +1,6 @@
 CXX := g++
 CXXFLAGS_COMMON := -Wall -Wextra -Wpedantic -O2 -MMD -MP \
-            -Isrc -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src \
+            -Isrc -Ilib/pqueue/src -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src \
 			-Ithird_party/doctest -Itests \
 			$(shell pkg-config --cflags sdbus-c++)
 CXXFLAGS := -std=c++17 $(CXXFLAGS_COMMON)
@@ -26,6 +26,19 @@ COV_TEST_TARGET := $(COV_BUILD_DIR)/tests
 
 # --- COMMON SOURCES ---
 
+PQUEUE_SRC := \
+	lib/pqueue/src/pqueue/envelope.cpp \
+	lib/pqueue/src/pqueue/http/esp32_arduino_transport.cpp \
+	lib/pqueue/src/pqueue/http/outbox.cpp \
+	lib/pqueue/src/pqueue/http/posix_curl_transport.cpp \
+	lib/pqueue/src/pqueue/http/request_envelope.cpp \
+	lib/pqueue/src/pqueue/file_store.cpp \
+	lib/pqueue/src/pqueue/storage_common.cpp \
+	lib/pqueue/src/pqueue/storage_posix.cpp \
+	lib/pqueue/src/pqueue/storage_littlefs.cpp \
+	lib/pqueue/src/pqueue/outbox.cpp \
+	lib/pqueue/src/pqueue/queue.cpp
+
 COMMON_SRC := \
 	third_party/PrayerTimes/src/PrayerTimes.cpp \
 	src/api/backend_result.cpp \
@@ -41,17 +54,7 @@ COMMON_SRC := \
 	src/log.cpp \
 	src/network_desktop.cpp \
 	src/platform_desktop.cpp \
-	src/pqueue/envelope.cpp \
-	src/pqueue/http/esp32_arduino_transport.cpp \
-	src/pqueue/http/outbox.cpp \
-	src/pqueue/http/posix_curl_transport.cpp \
-	src/pqueue/http/request_envelope.cpp \
-	src/pqueue/file_store.cpp \
-	src/pqueue/storage_common.cpp \
-	src/pqueue/storage_posix.cpp \
-	src/pqueue/storage_littlefs.cpp \
-	src/pqueue/outbox.cpp \
-	src/pqueue/queue.cpp \
+	$(PQUEUE_SRC) \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
@@ -98,15 +101,7 @@ TEST_SRC := \
 
 PQUEUE_PROFILING_SRC := \
 	tools/pqueue_profiling.cpp \
-	src/pqueue/envelope.cpp \
-	src/pqueue/http/outbox.cpp \
-	src/pqueue/http/request_envelope.cpp \
-	src/pqueue/file_store.cpp \
-	src/pqueue/storage_common.cpp \
-	src/pqueue/storage_posix.cpp \
-	src/pqueue/storage_littlefs.cpp \
-	src/pqueue/outbox.cpp \
-	src/pqueue/queue.cpp
+	$(PQUEUE_SRC)
 
 # --- OBJECT CONVERSION ---
 
