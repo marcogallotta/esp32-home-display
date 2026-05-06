@@ -1,3 +1,4 @@
+#ifndef ARDUINO
 #include "posix_curl_transport.h"
 
 #include <curl/curl.h>
@@ -224,3 +225,4 @@ Response PosixCurlTransport::post(
 }
 
 } // namespace pqueue::http
+#endif
