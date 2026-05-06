@@ -29,7 +29,10 @@ enum class SlowTest : std::uint8_t {
     MissingMetadataFailsSafely = 6,
     CorruptMetadataFailsSafely = 7,
     TmpOrphanIgnored = 8,
-    Churn = 9,
+    QueueFullRebootSafe = 9,
+    RecordSizeMismatchFailsSafely = 10,
+    CapacityMismatchFailsSafely = 11,
+    Churn = 12,
     Done = 255,
 };
 
@@ -394,6 +397,83 @@ void test_reboot_tmp_orphan_ignored() {
     completeSlowTest();
 }
 
+void test_reboot_queue_full_safe() {
+    const std::uint8_t phase = phaseFor(SlowTest::QueueFullRebootSafe);
+    if (phase == 0) {
+        cleanLittleFs();
+        {
+            pqueue::Queue queue(queueConfig(16, 2));
+            TEST_ASSERT_TRUE(queue.enqueue("one").ok());
+            TEST_ASSERT_TRUE(queue.enqueue("two").ok());
+
+            const pqueue::Status full = queue.enqueue("three");
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::QueueFull), static_cast<int>(full.code));
+            TEST_ASSERT_EQUAL_UINT32(2, queue.stats().count);
+        }
+        rebootTo(SlowTest::QueueFullRebootSafe, 1);
+    }
+
+    TEST_ASSERT_EQUAL_UINT8(1, phase);
+    {
+        pqueue::Queue queue(queueConfig(16, 2));
+        TEST_ASSERT_EQUAL_UINT32(2, queue.stats().count);
+        expectFrontAndPop(queue, "one");
+        expectFrontAndPop(queue, "two");
+        expectQueueEmpty(queue);
+    }
+    completeSlowTest();
+}
+
+void test_reboot_record_size_mismatch_fails_safely() {
+    const std::uint8_t phase = phaseFor(SlowTest::RecordSizeMismatchFailsSafely);
+    if (phase == 0) {
+        cleanLittleFs();
+        {
+            pqueue::Queue queue(queueConfig(32, 4));
+            TEST_ASSERT_TRUE(queue.enqueue("record-size-baseline").ok());
+        }
+        rebootTo(SlowTest::RecordSizeMismatchFailsSafely, 1);
+    }
+
+    TEST_ASSERT_EQUAL_UINT8(1, phase);
+    {
+        pqueue::Queue queue(queueConfig(64, 4));
+        std::string out;
+        const pqueue::Status status = queue.peek(out);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::InvalidIndex), static_cast<int>(status.code));
+
+        const pqueue::ValidationResult validation = queue.validate();
+        TEST_ASSERT_FALSE(validation.ok);
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, validation.errors.size());
+    }
+    completeSlowTest();
+}
+
+void test_reboot_capacity_mismatch_fails_safely() {
+    const std::uint8_t phase = phaseFor(SlowTest::CapacityMismatchFailsSafely);
+    if (phase == 0) {
+        cleanLittleFs();
+        {
+            pqueue::Queue queue(queueConfig(32, 4));
+            TEST_ASSERT_TRUE(queue.enqueue("capacity-baseline").ok());
+        }
+        rebootTo(SlowTest::CapacityMismatchFailsSafely, 1);
+    }
+
+    TEST_ASSERT_EQUAL_UINT8(1, phase);
+    {
+        pqueue::Queue queue(queueConfig(32, 5));
+        std::string out;
+        const pqueue::Status status = queue.peek(out);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::InvalidIndex), static_cast<int>(status.code));
+
+        const pqueue::ValidationResult validation = queue.validate();
+        TEST_ASSERT_FALSE(validation.ok);
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, validation.errors.size());
+    }
+    completeSlowTest();
+}
+
 void test_churn_without_reboot() {
     cleanLittleFs();
     pqueue::Queue queue(queueConfig(32, 24));
@@ -438,6 +518,12 @@ SlowTest nextSlowTest(SlowTest test) {
     case SlowTest::CorruptMetadataFailsSafely:
         return SlowTest::TmpOrphanIgnored;
     case SlowTest::TmpOrphanIgnored:
+        return SlowTest::QueueFullRebootSafe;
+    case SlowTest::QueueFullRebootSafe:
+        return SlowTest::RecordSizeMismatchFailsSafely;
+    case SlowTest::RecordSizeMismatchFailsSafely:
+        return SlowTest::CapacityMismatchFailsSafely;
+    case SlowTest::CapacityMismatchFailsSafely:
         return SlowTest::Churn;
     case SlowTest::Churn:
     case SlowTest::Done:
@@ -484,6 +570,15 @@ void runSlowTest(SlowTest test) {
         break;
     case SlowTest::TmpOrphanIgnored:
         RUN_TEST(test_reboot_tmp_orphan_ignored);
+        break;
+    case SlowTest::QueueFullRebootSafe:
+        RUN_TEST(test_reboot_queue_full_safe);
+        break;
+    case SlowTest::RecordSizeMismatchFailsSafely:
+        RUN_TEST(test_reboot_record_size_mismatch_fails_safely);
+        break;
+    case SlowTest::CapacityMismatchFailsSafely:
+        RUN_TEST(test_reboot_capacity_mismatch_fails_safely);
         break;
     case SlowTest::Churn:
         RUN_TEST(test_churn_without_reboot);
