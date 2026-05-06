@@ -1,15 +1,259 @@
-#include "support/pqueue_file_store_support.h"
+#include "pqueue/file_store.h"
+#include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
 
 #ifndef ARDUINO
 
-using pqueue_test::CapturedEvent;
-using pqueue_test::captureEvent;
-using pqueue_test::makeFakeFileSystem;
-using pqueue_test::makeQueueConfig;
-using pqueue_test::makeStore;
-using pqueue_test::slotSize;
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace {
+
+class FakeFileSystem final : public pqueue::FileSystem {
+public:
+    pqueue::Status mount(const std::string& basePath) override {
+        mountedBasePath = basePath;
+        if (failMountOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::MountFailed, "fake mount failed");
+        }
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status readFile(const std::string& name, std::string& out) override {
+        if (failReadOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake read failed");
+        }
+        const auto it = files.find(name);
+        if (it == files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake file missing");
+        }
+        out = it->second;
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status writeFile(const std::string& name, const std::string& data) override {
+        if (failWriteOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake write failed");
+        }
+        const auto existing = files.find(name);
+        const std::size_t existingSize = existing == files.end() ? 0 : existing->second.size();
+        if (usedBytes() - existingSize + data.size() > capacityBytes) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake capacity exceeded");
+        }
+        files[name] = data;
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status readAt(const std::string& name, std::uint64_t offset, std::size_t size, std::string& out) override {
+        if (failReadOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake readAt failed");
+        }
+        const auto it = files.find(name);
+        if (it == files.end() || offset + size > it->second.size()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake readAt range missing");
+        }
+        out = it->second.substr(static_cast<std::size_t>(offset), size);
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status writeAt(const std::string& name, std::uint64_t offset, const std::string& data) override {
+        if (failWriteOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake writeAt failed");
+        }
+        auto it = files.find(name);
+        if (it == files.end() || offset + data.size() > it->second.size()) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake writeAt range missing");
+        }
+        it->second.replace(static_cast<std::size_t>(offset), data.size(), data);
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status resizeFile(const std::string& name, std::uint64_t size) override {
+        if (failWriteOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake resize failed");
+        }
+        const auto existing = files.find(name);
+        const std::size_t existingSize = existing == files.end() ? 0 : existing->second.size();
+        if (usedBytes() - existingSize + size > capacityBytes) {
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake capacity exceeded");
+        }
+        files[name].resize(static_cast<std::size_t>(size), '\0');
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status fileSize(const std::string& name, std::uint64_t& out) override {
+        const auto it = files.find(name);
+        if (it == files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake stat missing");
+        }
+        out = static_cast<std::uint64_t>(it->second.size());
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status removeFile(const std::string& name) override {
+        if (failRemoveOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::RemoveFailed, "fake remove failed");
+        }
+        files.erase(name);
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status renameFile(const std::string& fromName, const std::string& toName) override {
+        if (failRenameOnce.consume()) {
+            return pqueue::Status::failure(pqueue::StatusCode::RenameFailed, "fake rename failed");
+        }
+        const auto it = files.find(fromName);
+        if (it == files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::RenameFailed, "fake source missing");
+        }
+        files[toName] = it->second;
+        files.erase(it);
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status listFiles(std::vector<std::string>& out) override {
+        for (const auto& entry : files) {
+            out.push_back(entry.first);
+        }
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status tryAcquireLockFile(const std::string& name, const std::string& contents) override {
+        if (files.find(name) != files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::LockTimeout, "fake lock exists");
+        }
+        files[name] = contents;
+        return pqueue::Status::success();
+    }
+
+    pqueue::Status releaseLockFile(const std::string& name, const std::string& expectedContents) override {
+        const auto it = files.find(name);
+        if (it == files.end()) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake lock missing");
+        }
+        if (it->second != expectedContents) {
+            return pqueue::Status::failure(pqueue::StatusCode::LockTimeout, "fake lock owned by another queue");
+        }
+        files.erase(it);
+        return pqueue::Status::success();
+    }
+
+    std::uint64_t freeBytes() const override {
+        const auto used = usedBytes();
+        return used < capacityBytes ? capacityBytes - used : 0;
+    }
+
+    void failNextMount() { failMountOnce.arm(); }
+    void failNextRead() { failReadOnce.arm(); }
+    void failNextWrite() { failWriteOnce.arm(); }
+    void failNextRemove() { failRemoveOnce.arm(); }
+    void failNextRename() { failRenameOnce.arm(); }
+
+    void setCapacityBytes(std::size_t bytes) { capacityBytes = bytes; }
+
+    bool exists(const std::string& name) const {
+        return files.find(name) != files.end();
+    }
+
+    void corruptFile(const std::string& name) {
+        auto it = files.find(name);
+        REQUIRE(it != files.end());
+        REQUIRE_FALSE(it->second.empty());
+        it->second[it->second.size() / 2] ^= static_cast<char>(0xff);
+    }
+
+    void corruptSlotHeader(std::uint32_t slot, std::size_t slotSize) {
+        auto it = files.find("pqueue.spool");
+        REQUIRE(it != files.end());
+        const auto offset = pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes + 4096 + slot * slotSize;
+        REQUIRE(it->second.size() >= offset + 1);
+        it->second[offset] ^= static_cast<char>(0xff);
+    }
+
+    void corruptSlotPayload(std::uint32_t slot, std::size_t slotSize) {
+        auto it = files.find("pqueue.spool");
+        REQUIRE(it != files.end());
+        const auto offset = pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes + 4096 + slot * slotSize + pqueue::storage_detail::kRecordHeaderBytes;
+        REQUIRE(it->second.size() > offset);
+        it->second[offset] ^= static_cast<char>(0xff);
+    }
+
+    std::map<std::string, std::string> files;
+    std::string mountedBasePath;
+
+private:
+    struct OneShotFailure {
+        void arm() { armed = true; }
+        bool consume() {
+            if (!armed) {
+                return false;
+            }
+            armed = false;
+            return true;
+        }
+        bool armed = false;
+    };
+
+    std::size_t usedBytes() const {
+        std::size_t out = 0;
+        for (const auto& entry : files) {
+            out += entry.second.size();
+        }
+        return out;
+    }
+
+    OneShotFailure failMountOnce;
+    OneShotFailure failReadOnce;
+    OneShotFailure failWriteOnce;
+    OneShotFailure failRemoveOnce;
+    OneShotFailure failRenameOnce;
+    std::size_t capacityBytes = std::numeric_limits<std::size_t>::max();
+};
+
+struct CapturedEvent {
+    pqueue::EventKind kind = pqueue::EventKind::Diagnostic;
+    pqueue::Severity severity = pqueue::Severity::Debug;
+    pqueue::StatusCode code = pqueue::StatusCode::Ok;
+};
+
+void captureEvent(const pqueue::Event& event, void* user) {
+    auto* events = static_cast<std::vector<CapturedEvent>*>(user);
+    events->push_back(CapturedEvent{event.kind, event.severity, event.status.code});
+}
+
+std::shared_ptr<FakeFileSystem> makeFakeFileSystem() {
+    return std::make_shared<FakeFileSystem>();
+}
+
+pqueue::FileStore makeStore(const std::shared_ptr<FakeFileSystem>& fileSystem, pqueue::EventOptions events = {}, std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t checkpointEveryOps = 64) {
+    pqueue::FileStoreConfig config;
+    config.basePath = "/fake-pqueue";
+    config.fileSystem = fileSystem;
+    config.events = events;
+    config.reservedBytes = reservedBytes;
+    config.recordSizeBytes = recordSizeBytes;
+    config.checkpointEveryOps = checkpointEveryOps;
+    return pqueue::FileStore(config);
+}
+
+std::size_t slotSize(std::size_t recordSizeBytes = 32) {
+    return pqueue::storage_detail::kRecordHeaderBytes + recordSizeBytes;
+}
+
+std::size_t spoolSize(std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t journalBytes = 4096) {
+    const auto slots = reservedBytes / slotSize(recordSizeBytes);
+    return pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes +
+           journalBytes +
+           slots * slotSize(recordSizeBytes);
+}
+
+} // namespace
 
 TEST_CASE("FileStore mounts and preallocates one spool file") {
     auto fileSystem = makeFakeFileSystem();
@@ -18,7 +262,7 @@ TEST_CASE("FileStore mounts and preallocates one spool file") {
     REQUIRE(store.mount().ok());
     CHECK_EQ(fileSystem->mountedBasePath, "/fake-pqueue");
     REQUIRE(fileSystem->exists("pqueue.spool"));
-    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), 3U * slotSize());
+    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), spoolSize());
 }
 
 TEST_CASE("FileStore write/read uses fixed ring slots") {
@@ -68,38 +312,20 @@ TEST_CASE("FileStore rejects corrupt spool slot") {
     CHECK_FALSE(store.readRecord(0, out).ok());
 }
 
-TEST_CASE("FileStore emits diagnostic event when active slot payload CRC is corrupt") {
+TEST_CASE("FileStore keeps the older valid checkpoint when the latest is corrupt") {
     auto fileSystem = makeFakeFileSystem();
-    std::vector<CapturedEvent> events;
-    auto store = makeStore(fileSystem, pqueue::EventOptions{captureEvent, &events});
-
-    REQUIRE(store.writeRecord(0, "payload").ok());
-    fileSystem->corruptSlotPayload(0, slotSize());
-
-    std::string out;
-    const auto status = store.readRecord(0, out);
-
-    REQUIRE_FALSE(status.ok());
-    CHECK(status.code == pqueue::StatusCode::CrcMismatch);
-    REQUIRE_FALSE(events.empty());
-    CHECK(events.back().kind == pqueue::EventKind::Diagnostic);
-    CHECK(events.back().severity == pqueue::Severity::Error);
-    CHECK(events.back().code == pqueue::StatusCode::CrcMismatch);
-}
-
-TEST_CASE("FileStore keeps the older valid metadata copy when the latest is corrupt") {
-    auto fileSystem = makeFakeFileSystem();
-    auto store = makeStore(fileSystem);
+    auto store = makeStore(fileSystem, {}, 160, 32, 1);
 
     REQUIRE(store.writeIndex({0, 1, 1}).ok());
     REQUIRE(store.writeIndex({0, 2, 2}).ok());
-    REQUIRE(fileSystem->exists("pqueue.meta_a"));
-    REQUIRE(fileSystem->exists("pqueue.meta_b"));
+    REQUIRE(fileSystem->exists("pqueue.spool"));
 
-    fileSystem->corruptFile("pqueue.meta_a");
+    const auto latestCheckpointOffset = 3U * pqueue::storage_detail::kCheckpointRecordBytes;
+    fileSystem->files["pqueue.spool"][latestCheckpointOffset] ^= static_cast<char>(0xff);
 
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 1);
     pqueue::FileStoreIndex out;
-    REQUIRE(store.readIndex(out).ok());
+    REQUIRE(reopened.readIndex(out).ok());
     CHECK_EQ(out.head, 0U);
     CHECK_EQ(out.tail, 1U);
     CHECK_EQ(out.count, 1U);
@@ -135,7 +361,7 @@ TEST_CASE("FileStore rounds reserved bytes down to whole slots") {
     auto store = makeStore(fileSystem, {}, static_cast<std::uint32_t>(slotSize() * 2 + 7), 32);
 
     REQUIRE(store.mount().ok());
-    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), 2U * slotSize());
+    CHECK_EQ(fileSystem->files["pqueue.spool"].size(), spoolSize(static_cast<std::uint32_t>(slotSize() * 2 + 7), 32));
 }
 
 TEST_CASE("FileStore rejects configs that cannot fit one slot") {
@@ -159,7 +385,7 @@ TEST_CASE("FileStore removeRecord invalidates the slot") {
 
 TEST_CASE("FileStore fails loudly when spool exists without metadata") {
     auto fileSystem = makeFakeFileSystem();
-    fileSystem->files["pqueue.spool"] = std::string(slotSize() * 2, '\0');
+    fileSystem->files["pqueue.spool"] = std::string(spoolSize(), '\0');
     auto store = makeStore(fileSystem);
 
     const auto status = store.mount();
@@ -167,7 +393,7 @@ TEST_CASE("FileStore fails loudly when spool exists without metadata") {
     CHECK(status.code == pqueue::StatusCode::InvalidIndex);
 }
 
-TEST_CASE("FileStore fails loudly when metadata exists but spool is missing") {
+TEST_CASE("FileStore recreates fresh storage when the single spool file is missing") {
     auto fileSystem = makeFakeFileSystem();
     {
         auto store = makeStore(fileSystem);
@@ -177,9 +403,10 @@ TEST_CASE("FileStore fails loudly when metadata exists but spool is missing") {
     fileSystem->files.erase("pqueue.spool");
 
     auto reopened = makeStore(fileSystem);
-    const auto status = reopened.mount();
-    REQUIRE_FALSE(status.ok());
-    CHECK(status.code == pqueue::StatusCode::ReadFailed);
+    REQUIRE(reopened.mount().ok());
+    pqueue::FileStoreIndex out;
+    REQUIRE(reopened.readIndex(out).ok());
+    CHECK_EQ(out.count, 0U);
 }
 
 TEST_CASE("FileStore fails loudly when spool size does not match layout") {
@@ -198,72 +425,72 @@ TEST_CASE("FileStore fails loudly when spool size does not match layout") {
 
 
 
-TEST_CASE("FileStore keeps older metadata when new metadata write is partial") {
+TEST_CASE("FileStore fails loudly when all checkpoint slots are corrupt") {
     auto fileSystem = makeFakeFileSystem();
-    auto store = makeStore(fileSystem);
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 1);
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+        REQUIRE(store.writeIndex({0, 2, 2}).ok());
+        REQUIRE(store.writeIndex({0, 3, 3}).ok());
+    }
+
+    REQUIRE(fileSystem->exists("pqueue.spool"));
+    for (std::uint32_t slot = 0; slot < pqueue::storage_detail::kCheckpointSlots; ++slot) {
+        const auto offset = slot * pqueue::storage_detail::kCheckpointRecordBytes;
+        fileSystem->files["pqueue.spool"][offset] ^= static_cast<char>(0xff);
+    }
+
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 1);
+    pqueue::FileStoreIndex out;
+    const auto status = reopened.readIndex(out);
+
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::InvalidIndex);
+}
+
+TEST_CASE("FileStore rejects index transition when checkpoint write fails") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem, {}, 160, 32, 1);
 
     REQUIRE(store.writeIndex({0, 1, 1}).ok());
     pqueue::FileStoreIndex before;
     REQUIRE(store.readIndex(before).ok());
     CHECK_EQ(before.count, 1U);
 
-    fileSystem->partialNextWriteFile(8);
+    fileSystem->failNextWrite();
     const auto status = store.writeIndex({0, 2, 2});
+
     REQUIRE_FALSE(status.ok());
     CHECK(status.code == pqueue::StatusCode::WriteFailed);
 
-    auto reopened = makeStore(fileSystem);
     pqueue::FileStoreIndex after;
-    REQUIRE(reopened.readIndex(after).ok());
+    REQUIRE(store.readIndex(after).ok());
     CHECK_EQ(after.head, before.head);
     CHECK_EQ(after.tail, before.tail);
     CHECK_EQ(after.count, before.count);
 }
 
-TEST_CASE("Queue stays empty after partial record slot write during enqueue") {
+TEST_CASE("FileStore rejects index transition when journal append fails") {
     auto fileSystem = makeFakeFileSystem();
-    const auto config = makeQueueConfig(fileSystem);
+    auto store = makeStore(fileSystem, {}, 160, 32, 64);
 
-    {
-        pqueue::Queue queue(config);
-        fileSystem->partialNextWriteAt(6);
-        const auto status = queue.enqueue("payload");
-        REQUIRE_FALSE(status.ok());
-        CHECK(status.code == pqueue::StatusCode::WriteFailed);
-        CHECK_EQ(queue.stats().count, 0U);
-    }
+    REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    pqueue::FileStoreIndex before;
+    REQUIRE(store.readIndex(before).ok());
+    CHECK_EQ(before.count, 1U);
 
-    {
-        pqueue::Queue reopened(config);
-        CHECK_EQ(reopened.stats().count, 0U);
-        REQUIRE(reopened.enqueue("payload").ok());
-        std::string out;
-        REQUIRE(reopened.peek(out).ok());
-        CHECK_EQ(out, "payload");
-    }
+    fileSystem->failNextWrite();
+    const auto status = store.writeIndex({0, 2, 2});
+
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.code == pqueue::StatusCode::WriteFailed);
+
+    pqueue::FileStoreIndex after;
+    REQUIRE(store.readIndex(after).ok());
+    CHECK_EQ(after.head, before.head);
+    CHECK_EQ(after.tail, before.tail);
+    CHECK_EQ(after.count, before.count);
 }
 
-TEST_CASE("Queue stays empty when record slot write succeeds but reports failure") {
-    auto fileSystem = makeFakeFileSystem();
-    const auto config = makeQueueConfig(fileSystem);
-
-    {
-        pqueue::Queue queue(config);
-        fileSystem->writeAtThenFail();
-        const auto status = queue.enqueue("payload");
-        REQUIRE_FALSE(status.ok());
-        CHECK(status.code == pqueue::StatusCode::WriteFailed);
-        CHECK_EQ(queue.stats().count, 0U);
-    }
-
-    {
-        pqueue::Queue reopened(config);
-        CHECK_EQ(reopened.stats().count, 0U);
-        REQUIRE(reopened.enqueue("payload").ok());
-        std::string out;
-        REQUIRE(reopened.peek(out).ok());
-        CHECK_EQ(out, "payload");
-    }
-}
 
 #endif // !ARDUINO

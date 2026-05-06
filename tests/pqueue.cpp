@@ -23,6 +23,28 @@ void capturePqueueEvent(const pqueue::Event& event, void* user) {
     auto* events = static_cast<std::vector<pqueue::Event>*>(user);
     events->push_back(event);
 }
+
+std::uint64_t testRecordRegionOffset(const pqueue::Config& config) {
+    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
+           pqueue::storage_detail::kCheckpointRecordBytes +
+           config.journalBytes;
+}
+
+std::uint64_t testCheckpointOffset(std::uint32_t slot) {
+    return static_cast<std::uint64_t>(slot) * pqueue::storage_detail::kCheckpointRecordBytes;
+}
+
+std::uint64_t testJournalOffset(std::uint32_t entryIndex) {
+    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
+           pqueue::storage_detail::kCheckpointRecordBytes +
+           static_cast<std::uint64_t>(entryIndex) * pqueue::storage_detail::kJournalEntryBytes;
+}
+
+std::uint64_t testSlotOffset(const pqueue::Config& config, std::uint32_t sequence) {
+    const auto slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
+    const auto capacity = config.reservedBytes / slotSize;
+    return testRecordRegionOffset(config) + static_cast<std::uint64_t>(sequence % capacity) * slotSize;
+}
 #endif
 
 } // namespace
@@ -138,7 +160,7 @@ TEST_CASE("pqueue rejects newest record when the fixed ring is full") {
     pqueue::Config config;
     config.basePath = kSpoolDir.string();
     config.recordSizeBytes = 8;
-    config.reservedBytes = static_cast<std::uint32_t>((sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes) * 2);
+    config.reservedBytes = static_cast<std::uint32_t>((pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes) * 2);
     pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("one").ok());
@@ -290,14 +312,12 @@ TEST_CASE("pqueue validate detects corrupt active slot payload") {
         REQUIRE(queue.enqueue("payload").ok());
     }
 
-    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
-    spool.seekp(static_cast<std::streamoff>(sizeof(pqueue::storage_detail::RecordHeader)));
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0) + pqueue::storage_detail::kRecordHeaderBytes));
     char c = 'X';
     spool.write(&c, 1);
     spool.close();
-    (void)slotSize;
 
     pqueue::Queue queue(config);
     const auto result = queue.validate();
@@ -325,7 +345,7 @@ TEST_CASE("pqueue validate ignores inactive corrupt slots") {
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
     char c = 'X';
-    spool.seekp(0);
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0)));
     spool.write(&c, 1);
     spool.close();
 
@@ -350,13 +370,12 @@ TEST_CASE("pqueue validate caps reported errors") {
         REQUIRE(queue.enqueue("second").ok());
     }
 
-    const auto slotSize = sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes;
     std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
     REQUIRE(spool.good());
     char c = 'X';
-    spool.seekp(0);
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0)));
     spool.write(&c, 1);
-    spool.seekp(static_cast<std::streamoff>(slotSize));
+    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 1)));
     spool.write(&c, 1);
     spool.close();
 
@@ -387,5 +406,152 @@ TEST_CASE("pqueue validate fails when another queue owns the lock") {
     REQUIRE_FALSE(result.errors.empty());
     CHECK(result.errors[0].code == pqueue::ValidationIssueCode::QueueLoadFailed);
     CHECK(result.errors[0].message.find("queue lock timeout") != std::string::npos);
+#endif
+}
+
+
+TEST_CASE("pqueue validate reports corrupt checkpoint slots even when fallback checkpoint exists") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 1;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(static_cast<std::streamoff>(testCheckpointOffset(3)));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue queue(config);
+    const auto result = queue.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::MetadataCorrupt);
+#endif
+}
+
+TEST_CASE("pqueue validate reports corrupt journal entry before later journal data") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+        REQUIRE(queue.enqueue("three").ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(static_cast<std::streamoff>(testJournalOffset(1)));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue queue(config);
+    const auto result = queue.validate();
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::JournalCorrupt);
+#endif
+}
+
+TEST_CASE("pqueue recovers enqueued records from journal before checkpoint") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+        REQUIRE(queue.enqueue("three").ok());
+    }
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, 3U);
+
+    std::string out;
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "one");
+    REQUIRE(reopened.pop().ok());
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "two");
+#endif
+}
+
+TEST_CASE("pqueue recovers popped records from journal before checkpoint") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+        REQUIRE(queue.enqueue("three").ok());
+        REQUIRE(queue.pop().ok());
+        REQUIRE(queue.pop().ok());
+    }
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, 1U);
+
+    std::string out;
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "three");
+#endif
+}
+
+TEST_CASE("pqueue ignores torn final journal entry and keeps valid prefix") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = 32;
+    config.reservedBytes = 512;
+    config.checkpointEveryOps = 64;
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("one").ok());
+        REQUIRE(queue.enqueue("two").ok());
+    }
+
+    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(spool.good());
+    char c = 'X';
+    spool.seekp(static_cast<std::streamoff>(testJournalOffset(1)));
+    spool.write(&c, 1);
+    spool.close();
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, 1U);
+
+    std::string out;
+    REQUIRE(reopened.peek(out).ok());
+    CHECK_EQ(out, "one");
+
+    const auto validation = reopened.validate();
+    CHECK(validation.ok);
+    CHECK(validation.errors.empty());
 #endif
 }

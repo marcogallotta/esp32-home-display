@@ -27,6 +27,8 @@ struct FileStoreConfig {
     std::shared_ptr<FileSystem> fileSystem;
     std::uint32_t reservedBytes = 128 * 1024;
     std::size_t recordSizeBytes = 4096;
+    std::uint32_t journalBytes = 4096;
+    std::uint32_t checkpointEveryOps = 64;
     EventOptions events;
 };
 
@@ -40,6 +42,7 @@ enum class ValidationIssueCode {
     InvalidConfig,
     MetadataMissing,
     MetadataCorrupt,
+    JournalCorrupt,
     ConfigMismatch,
     SpoolMissing,
     SpoolSizeMismatch,
@@ -75,6 +78,24 @@ struct ValidationOptions {
     std::size_t maxErrors = 100;
 };
 
+struct FileStoreRuntimeState {
+    bool mounted = false;
+    bool loaded = false;
+    FileStoreIndex index;
+    std::uint32_t checkpointGeneration = 0;
+    std::uint32_t journalUsedBytes = 0;
+    std::uint32_t journalOps = 0;
+    std::uint32_t capacityRecords = 0;
+    std::uint32_t recordSizeBytes = 0;
+    std::uint32_t reservedBytes = 0;
+    std::uint32_t journalBytes = 0;
+    std::uint32_t checkpointEveryOps = 0;
+    std::uint32_t slotSizeBytes = 0;
+    std::uint32_t checkpointBytes = 0;
+    std::uint32_t recordRegionOffset = 0;
+    std::uint32_t spoolBytes = 0;
+};
+
 class FileStore {
     friend class Queue;
 
@@ -87,6 +108,7 @@ public:
     Status writeIndex(const FileStoreIndex& index);
 
     Status writeRecord(std::uint32_t sequence, const std::string& record);
+    Status rewriteRecord(std::uint32_t sequence, const std::string& record);
     Status readRecord(std::uint32_t sequence, std::string& out);
     Status removeRecord(std::uint32_t sequence);
 
@@ -101,9 +123,11 @@ private:
     Status emit(Event event) const;
     Status diagnostic(Severity severity, Status status, const char* operation, std::uint32_t sequence = kNoSequence, const char* path = "") const;
     ValidationResult validateUnlocked(const ValidationOptions& options = ValidationOptions{});
+    Status readIndexFromDisk(FileStoreIndex& out);
 
     FileStoreConfig config_;
     mutable std::shared_ptr<FileSystem> fileSystem_;
+    FileStoreRuntimeState runtime_;
 };
 
 } // namespace pqueue

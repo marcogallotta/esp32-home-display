@@ -196,14 +196,15 @@ public:
     void corruptSlotHeader(std::uint32_t slot, std::size_t slotSize) {
         auto it = files.find("pqueue.spool");
         REQUIRE(it != files.end());
-        REQUIRE(it->second.size() >= slot * slotSize + 1);
-        it->second[slot * slotSize] ^= static_cast<char>(0xff);
+        const auto offset = pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes + 4096 + slot * slotSize;
+        REQUIRE(it->second.size() >= offset + 1);
+        it->second[offset] ^= static_cast<char>(0xff);
     }
 
     void corruptSlotPayload(std::uint32_t slot, std::size_t slotSize) {
         auto it = files.find("pqueue.spool");
         REQUIRE(it != files.end());
-        const auto offset = slot * slotSize + sizeof(pqueue::storage_detail::RecordHeader);
+        const auto offset = pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes + 4096 + slot * slotSize + pqueue::storage_detail::kRecordHeaderBytes;
         REQUIRE(it->second.size() > offset);
         it->second[offset] ^= static_cast<char>(0xff);
     }
@@ -284,6 +285,7 @@ inline pqueue::FileStore makeStore(
     config.events = events;
     config.reservedBytes = reservedBytes;
     config.recordSizeBytes = recordSizeBytes;
+    config.checkpointEveryOps = checkpointEveryOps;
     return pqueue::FileStore(config);
 }
 
