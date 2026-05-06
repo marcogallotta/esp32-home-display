@@ -295,12 +295,17 @@ void test_rewrite_front_persistence() {
 
 void test_capacity_full_behavior() {
     cleanLittleFs();
-    pqueue::Queue queue(queueConfig(16, 2));
+    {
+        pqueue::Queue queue(queueConfig(16, 2));
 
-    TEST_ASSERT_TRUE(queue.enqueue("one").ok());
-    TEST_ASSERT_TRUE(queue.enqueue("two").ok());
-    const pqueue::Status full = queue.enqueue("three");
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::QueueFull), static_cast<int>(full.code));
+        TEST_ASSERT_TRUE(queue.enqueue("one").ok());
+        TEST_ASSERT_TRUE(queue.enqueue("two").ok());
+        const pqueue::Status full = queue.enqueue("three");
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::QueueFull), static_cast<int>(full.code));
+        TEST_ASSERT_EQUAL_UINT32(2, queue.stats().count);
+    }
+
+    pqueue::Queue queue(queueConfig(16, 2));
     TEST_ASSERT_EQUAL_UINT32(2, queue.stats().count);
 
     std::string out;
@@ -309,6 +314,20 @@ void test_capacity_full_behavior() {
     TEST_ASSERT_TRUE(queue.pop().ok());
     TEST_ASSERT_TRUE(queue.peek(out).ok());
     TEST_ASSERT_EQUAL_STRING("two", out.c_str());
+    TEST_ASSERT_TRUE(queue.pop().ok());
+    assertQueueEmpty(queue);
+}
+
+void test_validate_clean_queue() {
+    cleanLittleFs();
+    pqueue::Queue queue(queueConfig());
+
+    TEST_ASSERT_TRUE(queue.enqueue("one").ok());
+    TEST_ASSERT_TRUE(queue.enqueue("two").ok());
+
+    const pqueue::ValidationResult validation = queue.validate();
+    TEST_ASSERT_TRUE(validation.ok);
+    TEST_ASSERT_EQUAL_UINT32(0, validation.errors.size());
 }
 
 void test_record_size_boundary() {
@@ -438,6 +457,7 @@ void setup() {
     RUN_TEST(test_pop_persistence);
     RUN_TEST(test_rewrite_front_persistence);
     RUN_TEST(test_capacity_full_behavior);
+    RUN_TEST(test_validate_clean_queue);
     RUN_TEST(test_record_size_boundary);
     RUN_TEST(test_lock_conflict);
     RUN_TEST(test_corrupt_active_record);
