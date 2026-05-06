@@ -9,6 +9,14 @@
 
 namespace pqueue {
 
+class Lock {
+public:
+    virtual ~Lock() = default;
+
+    virtual Status acquire(const std::string& name, const std::string& contents) = 0;
+    virtual Status release(const std::string& name, const std::string& expectedContents) = 0;
+};
+
 class FileSystem {
 public:
     virtual ~FileSystem() = default;
