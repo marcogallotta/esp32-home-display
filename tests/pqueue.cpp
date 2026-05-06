@@ -4,8 +4,11 @@
 #include "doctest/doctest.h"
 
 #ifndef ARDUINO
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <random>
 #include <vector>
 #endif
 
@@ -152,6 +155,111 @@ TEST_CASE("pqueue rejects newest record when the fixed ring is full") {
     std::string out;
     REQUIRE(queue.peek(out).ok());
     CHECK_EQ(out, "one");
+#endif
+}
+
+
+
+TEST_CASE("pqueue matches std::deque over deterministic random operations") {
+#ifndef ARDUINO
+    cleanSpool();
+
+    constexpr std::size_t kRecordSizeBytes = 16;
+    constexpr std::uint32_t kCapacityRecords = 7;
+    constexpr int kOperationCount = 1000;
+    constexpr std::uint32_t kSeed = 0x70515545U; // "pQUE"
+
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+    config.recordSizeBytes = kRecordSizeBytes;
+    config.reservedBytes = static_cast<std::uint32_t>((sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes) * kCapacityRecords);
+
+    std::deque<std::string> model;
+    auto queue = std::make_unique<pqueue::Queue>(config);
+    std::mt19937 rng(kSeed);
+
+    auto recordFor = [](int value) {
+        return std::string("r") + std::to_string(value);
+    };
+
+    auto assertMatchesModel = [&]() {
+        CHECK_EQ(queue->stats().count, model.size());
+
+        std::string out;
+        const pqueue::Status peek = queue->peek(out);
+        if (model.empty()) {
+            CHECK_FALSE(peek.ok());
+            CHECK(peek.code == pqueue::StatusCode::QueueEmpty);
+        } else {
+            REQUIRE(peek.ok());
+            CHECK_EQ(out, model.front());
+        }
+    };
+
+    assertMatchesModel();
+
+    for (int step = 0; step < kOperationCount; ++step) {
+        const int op = static_cast<int>(rng() % 5);
+        switch (op) {
+        case 0: { // enqueue
+            const std::string record = recordFor(step);
+            const pqueue::Status status = queue->enqueue(record);
+            if (model.size() >= kCapacityRecords) {
+                CHECK_FALSE(status.ok());
+                CHECK(status.code == pqueue::StatusCode::QueueFull);
+            } else {
+                REQUIRE(status.ok());
+                model.push_back(record);
+            }
+            break;
+        }
+        case 1: { // pop
+            const pqueue::Status status = queue->pop();
+            if (model.empty()) {
+                CHECK_FALSE(status.ok());
+                CHECK(status.code == pqueue::StatusCode::QueueEmpty);
+            } else {
+                REQUIRE(status.ok());
+                model.pop_front();
+            }
+            break;
+        }
+        case 2: { // rewriteFront
+            const std::string record = std::string("w") + std::to_string(step);
+            const pqueue::Status status = queue->rewriteFront(record);
+            if (model.empty()) {
+                CHECK_FALSE(status.ok());
+                CHECK(status.code == pqueue::StatusCode::QueueEmpty);
+            } else {
+                REQUIRE(status.ok());
+                model.front() = record;
+            }
+            break;
+        }
+        case 3: { // explicit peek
+            std::string out;
+            const pqueue::Status status = queue->peek(out);
+            if (model.empty()) {
+                CHECK_FALSE(status.ok());
+                CHECK(status.code == pqueue::StatusCode::QueueEmpty);
+            } else {
+                REQUIRE(status.ok());
+                CHECK_EQ(out, model.front());
+            }
+            break;
+        }
+        case 4: // remount/recreate queue
+            queue.reset();
+            queue = std::make_unique<pqueue::Queue>(config);
+            break;
+        }
+
+        assertMatchesModel();
+    }
+
+    queue.reset();
+    queue = std::make_unique<pqueue::Queue>(config);
+    assertMatchesModel();
 #endif
 }
 
