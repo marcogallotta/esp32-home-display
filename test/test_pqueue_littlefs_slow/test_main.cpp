@@ -86,6 +86,12 @@ pqueue::OutboxConfig outboxConfig() {
     return config;
 }
 
+// Outbox records include envelope metadata, so use a larger queue record size than
+// the raw payload-only queue tests.
+pqueue::Config outboxQueueConfig() {
+    return queueConfig(128, 8);
+}
+
 bool mountLittleFs() {
     LittleFS.end();
     return LittleFS.begin(true);
@@ -532,7 +538,7 @@ void test_reboot_outbox_drain() {
         {
             FakeSender retrying;
             retrying.decision = pqueue::SendDecision::RetryLater;
-            pqueue::Outbox outbox(queueConfig(), outboxConfig(), fakeSend, &retrying, fakeClock, nullptr);
+            pqueue::Outbox outbox(outboxQueueConfig(), outboxConfig(), fakeSend, &retrying, fakeClock, nullptr);
 
             const pqueue::SubmitResult submitted = outbox.submit("outbox-reboot-payload");
             TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::SubmitStatus::Queued), static_cast<int>(submitted.status));
@@ -548,7 +554,7 @@ void test_reboot_outbox_drain() {
     {
         FakeSender succeeding;
         succeeding.decision = pqueue::SendDecision::Sent;
-        pqueue::Outbox outbox(queueConfig(), outboxConfig(), fakeSend, &succeeding, fakeClock, nullptr);
+        pqueue::Outbox outbox(outboxQueueConfig(), outboxConfig(), fakeSend, &succeeding, fakeClock, nullptr);
 
         TEST_ASSERT_EQUAL_UINT32(1, outbox.stats().count);
         const pqueue::DrainResult drained = outbox.drain();
