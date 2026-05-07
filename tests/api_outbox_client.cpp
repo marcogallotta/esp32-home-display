@@ -200,6 +200,50 @@ TEST_CASE("api outbox client drains queued backlog after retry delay") {
     CHECK_EQ(transport.posts[2].url, "https://example.test/api/xiaomi/reading");
 }
 
+
+TEST_CASE("api outbox client drainPending respects drainRateCap per second") {
+    cleanTestFiles();
+    auto config = testConfig();
+    config.api.outbox.drainRateCap = 2;
+    config.api.outbox.retryDelayMs = 0;
+
+    FakeTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
+    REQUIRE(client.postXiaomiReading(identity(), validXiaomiReading()).status == api::WriteStatus::Queued);
+    REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
+    REQUIRE_EQ(transport.posts.size(), 1U);
+
+    const auto firstDrain = client.drainPending(clock.nowMs);
+    CHECK_EQ(firstDrain.attempted, 2);
+    CHECK_EQ(firstDrain.sent, 2);
+    CHECK_EQ(firstDrain.dropped, 0);
+    CHECK_FALSE(firstDrain.notDueYet);
+    CHECK_FALSE(firstDrain.blockedByRetryableFailure);
+    REQUIRE_EQ(transport.posts.size(), 3U);
+
+    const auto cappedDrain = client.drainPending(clock.nowMs);
+    CHECK_EQ(cappedDrain.attempted, 0);
+    CHECK_EQ(cappedDrain.sent, 0);
+    CHECK_EQ(cappedDrain.dropped, 0);
+    CHECK(cappedDrain.notDueYet);
+    CHECK_FALSE(cappedDrain.blockedByRetryableFailure);
+    CHECK_EQ(transport.posts.size(), 3U);
+
+    clock.nowMs += 1000;
+    const auto secondWindowDrain = client.drainPending(clock.nowMs);
+    CHECK_EQ(secondWindowDrain.attempted, 1);
+    CHECK_EQ(secondWindowDrain.sent, 1);
+    CHECK_EQ(secondWindowDrain.dropped, 0);
+    CHECK_FALSE(secondWindowDrain.notDueYet);
+    CHECK_FALSE(secondWindowDrain.blockedByRetryableFailure);
+    REQUIRE_EQ(transport.posts.size(), 4U);
+    CHECK_EQ(transport.posts[3].url, "https://example.test/api/switchbot/reading");
+}
+
 TEST_CASE("api outbox client drops permanent backend rejection and writes dropped log") {
     cleanTestFiles();
     std::filesystem::create_directories("spool");
