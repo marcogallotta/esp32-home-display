@@ -16,6 +16,7 @@ struct SyncRequest {
     uint32_t endEpoch = 0;
     uint32_t timeSyncEpoch = 0;
     uint32_t commandTimeoutMs = 3000;
+    std::string progressLabel;
 };
 
 enum class SyncStatus {

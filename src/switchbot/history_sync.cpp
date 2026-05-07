@@ -115,7 +115,7 @@ std::string badPageMessage(uint32_t pageIndex, const std::vector<uint8_t>& respo
            "," + responseSummary(response);
 }
 
-void logProgress(const std::string& mac, uint32_t done, uint32_t total) {
+void logProgress(const std::string& label, uint32_t done, uint32_t total) {
     if (total == 0) {
         return;
     }
@@ -123,7 +123,7 @@ void logProgress(const std::string& mac, uint32_t done, uint32_t total) {
     const uint32_t percent = std::min<uint32_t>(100, (done * 100U) / total);
     logLine(
         LogLevel::Info,
-        "switchbot_history_progress," + mac + "," +
+        "switchbot_history_progress," + label + "," +
         std::to_string(done) + "/" + std::to_string(total) + "," +
         std::to_string(percent) + "%"
     );
@@ -451,7 +451,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
                 result.samples.push_back(sample);
                 ++keptSamples;
                 if (nextProgressAt != 0 && keptSamples >= nextProgressAt) {
-                    logProgress(mac, keptSamples, totalProgressSamples);
+                    logProgress(request.progressLabel.empty() ? mac : request.progressLabel, keptSamples, totalProgressSamples);
                     nextProgressAt += 60;
                     if (nextProgressAt > totalProgressSamples) {
                         nextProgressAt = totalProgressSamples > keptSamples ? totalProgressSamples : 0;

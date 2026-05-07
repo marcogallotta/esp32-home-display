@@ -13,18 +13,19 @@ namespace history {
 namespace {
 
 std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
-    if (!sensor.shortName.empty()) {
-        return sensor.shortName;
-    }
     if (!sensor.name.empty()) {
         return sensor.name;
+    }
+    if (!sensor.shortName.empty()) {
+        return sensor.shortName;
     }
     return sensor.mac;
 }
 
-SyncRequest makeRequest(std::time_t now, const HistoryServiceOptions& options) {
+SyncRequest makeRequest(std::time_t now, const HistoryServiceOptions& options, const std::string& label) {
     SyncRequest request;
     request.commandTimeoutMs = options.commandTimeoutMs;
+    request.progressLabel = label;
     request.endEpoch = static_cast<std::uint32_t>(now);
     request.startEpoch = request.endEpoch > options.startupWindowSeconds
         ? request.endEpoch - options.startupWindowSeconds
@@ -37,13 +38,13 @@ void runOneSensor(const SwitchbotSensorConfig& sensor,
                   std::time_t now) {
     const std::string label = sensorLabel(sensor);
 
-    logLine(LogLevel::Info, "switchbot_history_sync_start," + label + "," + sensor.mac);
+    logLine(LogLevel::Info, "switchbot_history_sync_start," + label);
 
-    const SyncResult result = syncSensorHistory(sensor.mac, makeRequest(now, options));
+    const SyncResult result = syncSensorHistory(sensor.mac, makeRequest(now, options, label));
     if (!result.ok()) {
         logLine(
             LogLevel::Error,
-            "switchbot_history_sync_failed," + label + "," + sensor.mac + "," +
+            "switchbot_history_sync_failed," + label + "," +
             syncStatusName(result.status) + "," + result.message
         );
         return;
@@ -51,7 +52,7 @@ void runOneSensor(const SwitchbotSensorConfig& sensor,
 
     logLine(
         LogLevel::Info,
-        "switchbot_history_metadata," + label + "," + sensor.mac + "," +
+        "switchbot_history_metadata," + label + "," +
         std::to_string(result.metadata.startEpoch) + "," +
         std::to_string(result.metadata.endEpoch) + "," +
         std::to_string(result.metadata.endIndex) + "," +
@@ -61,7 +62,7 @@ void runOneSensor(const SwitchbotSensorConfig& sensor,
 
     logLine(
         LogLevel::Info,
-        "switchbot_history_sync_done," + label + "," + sensor.mac + "," +
+        "switchbot_history_sync_done," + label + "," +
         std::to_string(result.samples.size())
     );
 }
