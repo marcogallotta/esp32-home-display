@@ -155,14 +155,14 @@ DrainResult Outbox::drain() {
     return drainOne(true);
 }
 
-DrainResult Outbox::drainBurst(std::uint16_t maxDrainAttempts) {
+DrainResult Outbox::drainUpTo(std::uint16_t maxDrainAttempts) {
     DrainResult total;
     if (maxDrainAttempts == 0) {
         maxDrainAttempts = 1;
     }
 
     for (std::uint16_t i = 0; i < maxDrainAttempts; ++i) {
-        const DrainResult current = drainOne(false);
+        const DrainResult current = drainOne(true);
         total.attempts += current.attempts;
         total.sent += current.sent;
         total.dropped += current.dropped;
@@ -249,11 +249,10 @@ DrainResult Outbox::drainOne(bool enforceRateLimit) {
             Status::failure(StatusCode::SendFailed, "drain rate limit not due"),
             "drain",
             decoded.attempts,
-            static_cast<std::uint32_t>(drainIntervalMs() - (nowMs - lastDrainAttemptMs_)));
+            drainRateRemainingMs(nowMs));
         return result;
     }
-    lastDrainAttemptMs_ = nowMs;
-    hasDrainAttempt_ = true;
+    recordDrainAttempt(nowMs);
 
     result.attempts += 1;
     emitRequestEvent(
@@ -394,18 +393,35 @@ bool Outbox::frontIsCoolingDown(std::uint64_t nowMs) const {
 }
 
 bool Outbox::drainRateAllows(std::uint64_t nowMs) const {
-    if (!hasDrainAttempt_) {
+    if (!hasDrainWindow_) {
         return true;
     }
-    return nowMs - lastDrainAttemptMs_ >= drainIntervalMs();
+    if (nowMs - drainWindowStartMs_ >= 1000U) {
+        return true;
+    }
+    return drainAttemptsInWindow_ < maxDrainAttemptsPerSecond();
 }
 
-std::uint64_t Outbox::drainIntervalMs() const {
-    const std::uint16_t attemptsPerSecond = config_.maxDrainAttemptsPerSecond == 0
-        ? 1
-        : config_.maxDrainAttemptsPerSecond;
-    const std::uint64_t interval = 1000U / attemptsPerSecond;
-    return interval == 0 ? 1 : interval;
+void Outbox::recordDrainAttempt(std::uint64_t nowMs) {
+    if (!hasDrainWindow_ || nowMs - drainWindowStartMs_ >= 1000U) {
+        drainWindowStartMs_ = nowMs;
+        drainAttemptsInWindow_ = 0;
+        hasDrainWindow_ = true;
+    }
+    if (drainAttemptsInWindow_ != std::numeric_limits<std::uint16_t>::max()) {
+        drainAttemptsInWindow_ += 1;
+    }
+}
+
+std::uint32_t Outbox::drainRateRemainingMs(std::uint64_t nowMs) const {
+    if (!hasDrainWindow_ || nowMs - drainWindowStartMs_ >= 1000U) {
+        return 0;
+    }
+    return static_cast<std::uint32_t>(1000U - (nowMs - drainWindowStartMs_));
+}
+
+std::uint16_t Outbox::maxDrainAttemptsPerSecond() const {
+    return config_.maxDrainAttemptsPerSecond == 0 ? 1 : config_.maxDrainAttemptsPerSecond;
 }
 
 } // namespace pqueue

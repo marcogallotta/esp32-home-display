@@ -129,7 +129,7 @@ public:
 
     pqueue::SubmitResult submitPost(const std::string& path, const std::string& body);
     pqueue::DrainResult drain();
-    pqueue::DrainResult drainBurst(std::uint16_t maxDrainAttempts);
+    pqueue::DrainResult drainUpTo(std::uint16_t maxDrainAttempts);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 

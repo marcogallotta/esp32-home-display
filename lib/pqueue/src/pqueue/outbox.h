@@ -85,7 +85,7 @@ public:
 
     SubmitResult submit(const std::string& payload);
     DrainResult drain();
-    DrainResult drainBurst(std::uint16_t maxDrainAttempts);
+    DrainResult drainUpTo(std::uint16_t maxDrainAttempts);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 
@@ -114,7 +114,9 @@ private:
     );
     bool frontIsCoolingDown(std::uint64_t nowMs) const;
     bool drainRateAllows(std::uint64_t nowMs) const;
-    std::uint64_t drainIntervalMs() const;
+    void recordDrainAttempt(std::uint64_t nowMs);
+    std::uint32_t drainRateRemainingMs(std::uint64_t nowMs) const;
+    std::uint16_t maxDrainAttemptsPerSecond() const;
 
     Queue queue_;
     OutboxConfig config_;
@@ -122,8 +124,9 @@ private:
     void* sendContext_ = nullptr;
     ClockCallback clock_ = nullptr;
     void* clockContext_ = nullptr;
-    std::uint64_t lastDrainAttemptMs_ = 0;
-    bool hasDrainAttempt_ = false;
+    std::uint64_t drainWindowStartMs_ = 0;
+    std::uint16_t drainAttemptsInWindow_ = 0;
+    bool hasDrainWindow_ = false;
     std::uint64_t frontNextAttemptMs_ = 0;
     bool hasFrontCooldown_ = false;
 };

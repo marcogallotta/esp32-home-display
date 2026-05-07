@@ -324,7 +324,7 @@ TEST_CASE("pqueue outbox allows first drain immediately") {
 #endif
 }
 
-TEST_CASE("pqueue outbox burst drain sends multiple queued records in one call") {
+TEST_CASE("pqueue outbox drainUpTo sends multiple queued records within rate cap") {
 #ifndef ARDUINO
     cleanOutboxSpool();
     FakeSender sender;
@@ -332,7 +332,7 @@ TEST_CASE("pqueue outbox burst drain sends multiple queued records in one call")
     FakeClock clock;
     pqueue::OutboxConfig config;
     config.retryDelayMs = 0;
-    config.maxDrainAttemptsPerSecond = 1;
+    config.maxDrainAttemptsPerSecond = 3;
 
     auto outbox = makeOutbox(sender, clock, config);
     REQUIRE(outbox.submit("one").status == pqueue::SubmitStatus::Queued);
@@ -341,14 +341,50 @@ TEST_CASE("pqueue outbox burst drain sends multiple queued records in one call")
     REQUIRE(outbox.submit("four").status == pqueue::SubmitStatus::Queued);
     CHECK_EQ(outbox.stats().count, 4U);
 
-    const auto first = outbox.drainBurst(3);
+    const auto first = outbox.drainUpTo(3);
     CHECK_EQ(first.attempts, 3U);
     CHECK_EQ(first.sent, 3U);
     CHECK_FALSE(first.rateLimited);
     CHECK_EQ(outbox.stats().count, 1U);
 
-    const auto second = outbox.drainBurst(3);
+    clock.nowMs += 1000;
+    const auto second = outbox.drainUpTo(3);
     CHECK_EQ(second.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+
+TEST_CASE("pqueue outbox drainUpTo respects per-second cap") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config;
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 2;
+
+    auto outbox = makeOutbox(sender, clock, config);
+    REQUIRE(outbox.submit("one").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("two").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("three").status == pqueue::SubmitStatus::Queued);
+
+    const auto first = outbox.drainUpTo(3);
+    CHECK_EQ(first.attempts, 2U);
+    CHECK_EQ(first.sent, 2U);
+    CHECK(first.rateLimited);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    const auto second = outbox.drainUpTo(3);
+    CHECK_EQ(second.attempts, 0U);
+    CHECK(second.rateLimited);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    clock.nowMs += 1000;
+    const auto third = outbox.drainUpTo(3);
+    CHECK_EQ(third.sent, 1U);
+    CHECK_FALSE(third.rateLimited);
     CHECK_EQ(outbox.stats().count, 0U);
 #endif
 }
@@ -433,7 +469,7 @@ TEST_CASE("pqueue outbox drops queued request when send policy drops during drai
 #endif
 }
 
-TEST_CASE("pqueue outbox burst drain stops when front request asks to retry") {
+TEST_CASE("pqueue outbox drainUpTo stops when front request asks to retry") {
 #ifndef ARDUINO
     cleanOutboxSpool();
     FakeSender sender;
@@ -449,7 +485,7 @@ TEST_CASE("pqueue outbox burst drain stops when front request asks to retry") {
     REQUIRE(outbox.submit("three").status == pqueue::SubmitStatus::Queued);
 
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
-    const auto drain = outbox.drainBurst(3);
+    const auto drain = outbox.drainUpTo(3);
 
     CHECK_EQ(drain.attempts, 1U);
     CHECK_EQ(drain.sent, 0U);

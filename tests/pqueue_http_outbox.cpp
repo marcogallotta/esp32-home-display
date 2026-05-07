@@ -479,7 +479,7 @@ TEST_CASE("pqueue http outbox keeps retryable front request instead of dropping 
 #endif
 }
 
-TEST_CASE("pqueue http outbox burst drain sends multiple queued requests in one call") {
+TEST_CASE("pqueue http outbox drainUpTo sends multiple queued requests within rate cap") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();
     FakeHttpTransport transport;
@@ -489,7 +489,7 @@ TEST_CASE("pqueue http outbox burst drain sends multiple queued requests in one 
     pqueue::http::Config httpConfig;
     httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
     httpConfig.outbox.retryDelayMs = 0;
-    httpConfig.outbox.maxDrainAttemptsPerSecond = 1;
+    httpConfig.outbox.maxDrainAttemptsPerSecond = 3;
     httpConfig.baseUrl = "https://example.test/api";
 
     pqueue::http::Outbox outbox(httpConfig, transport, fakeClockNow, &clock);
@@ -498,7 +498,7 @@ TEST_CASE("pqueue http outbox burst drain sends multiple queued requests in one 
     REQUIRE(outbox.submitPost("/three", "three").status == pqueue::SubmitStatus::Queued);
     REQUIRE(outbox.submitPost("/four", "four").status == pqueue::SubmitStatus::Queued);
 
-    const auto first = outbox.drainBurst(3);
+    const auto first = outbox.drainUpTo(3);
     CHECK_EQ(first.attempts, 3U);
     CHECK_EQ(first.sent, 3U);
     CHECK_FALSE(first.rateLimited);
