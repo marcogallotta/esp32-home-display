@@ -251,7 +251,6 @@ TEST_CASE("pqueue http outbox retries 503 without max-attempt drop") {
 
     pqueue::http::Config httpConfig;
     httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
-    httpConfig.outbox.maxAttempts = 1;
     httpConfig.outbox.retryDelayMs = 1000;
     httpConfig.baseUrl = "https://example.test";
     httpConfig.dropContext = &observer;
@@ -432,7 +431,6 @@ TEST_CASE("pqueue http outbox keeps retryable front request instead of dropping 
     pqueue::http::Config httpConfig;
     httpConfig.queue.basePath = kHttpOutboxSpoolDir.string();
     httpConfig.outbox.retryDelayMs = 1000;
-    httpConfig.outbox.maxAttempts = 2;
     httpConfig.outbox.maxDrainAttemptsPerSecond = 1;
     httpConfig.baseUrl = "https://example.test/api";
 
@@ -444,7 +442,6 @@ TEST_CASE("pqueue http outbox keeps retryable front request instead of dropping 
 
     clock.nowMs += 1000;
     auto drain = outbox.drain();
-    CHECK_EQ(drain.droppedMaxAttempts, 0U);
     CHECK_EQ(drain.sent, 0U);
     CHECK_EQ(outbox.stats().count, 3U);
 

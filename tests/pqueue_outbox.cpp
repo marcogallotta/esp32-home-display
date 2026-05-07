@@ -164,7 +164,6 @@ TEST_CASE("pqueue outbox retries transient failures indefinitely") {
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
     FakeClock clock;
     pqueue::OutboxConfig config;
-    config.maxAttempts = 2;
     config.retryDelayMs = 1000;
 
     auto outbox = makeOutbox(sender, clock, config);
@@ -172,9 +171,8 @@ TEST_CASE("pqueue outbox retries transient failures indefinitely") {
 
     clock.nowMs += 1000;
     sender.decisions.push_back(pqueue::SendDecision::RetryLater);
-    auto drain = outbox.drain();
+    outbox.drain();
 
-    CHECK_EQ(drain.droppedMaxAttempts, 0U);
     CHECK_EQ(outbox.stats().count, 1U);
 #endif
 }

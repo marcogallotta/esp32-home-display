@@ -85,8 +85,8 @@ pqueue::DrainResult Outbox::drain() {
     return outbox_.drain();
 }
 
-pqueue::DrainResult Outbox::drainBurst(std::uint16_t maxAttempts) {
-    return outbox_.drainBurst(maxAttempts);
+pqueue::DrainResult Outbox::drainBurst(std::uint16_t maxDrainAttempts) {
+    return outbox_.drainBurst(maxDrainAttempts);
 }
 
 ValidationResult Outbox::validate(const ValidationOptions& options) {

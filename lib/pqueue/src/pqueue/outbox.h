@@ -37,8 +37,6 @@ using OutboxPayloadValidator = bool (*)(void* context, const std::string& payloa
 // Retry attempt count is persisted in the envelope; retry cooldown timing is RAM-only.
 struct OutboxConfig {
     // Retryable sends are retried indefinitely. attempts is retained only as a saturated diagnostic counter.
-    // TODO: replace/remove maxAttempts after adding explicit max-age and per-failure policy controls.
-    std::uint8_t maxAttempts = 5;
     std::uint16_t maxDrainAttemptsPerSecond = 5;
     std::uint32_t retryDelayMs = 10000;
     EventOptions events;
@@ -63,7 +61,6 @@ struct DrainResult {
     std::uint16_t attempts = 0;
     std::uint16_t sent = 0;
     std::uint16_t dropped = 0;
-    std::uint16_t droppedMaxAttempts = 0;
     std::uint16_t corruptDropped = 0;
     bool rateLimited = false;
     bool notDue = false;
@@ -88,7 +85,7 @@ public:
 
     SubmitResult submit(const std::string& payload);
     DrainResult drain();
-    DrainResult drainBurst(std::uint16_t maxAttempts);
+    DrainResult drainBurst(std::uint16_t maxDrainAttempts);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 
