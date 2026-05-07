@@ -39,6 +39,9 @@ struct OutboxConfig {
     // Retryable sends are retried indefinitely. attempts is retained only as a saturated diagnostic counter.
     std::uint16_t maxDrainAttemptsPerSecond = 5;
     std::uint32_t retryDelayMs = 10000;
+    // Proven-corrupt front records may be skipped so one bad slot does not brick the outbox.
+    // 0 disables automatic corrupt-record dropping; the default stops after a small cluster.
+    std::uint16_t maxCorruptDropsPerLifetime = 3;
     EventOptions events;
     // TODO: make CRC configurable once the envelope has a published compatibility policy.
     // TODO: consider burst drain/backoff strategies after the strict FIFO v1 settles.
@@ -116,6 +119,8 @@ private:
     bool drainRateAllows(std::uint64_t nowMs) const;
     void recordDrainAttempt(std::uint64_t nowMs);
     std::uint32_t drainRateRemainingMs(std::uint64_t nowMs) const;
+    bool canDropCorruptFrontRecord() const;
+    DrainResult dropCorruptFrontRecord(Status corruptStatus);
     std::uint16_t maxDrainAttemptsPerSecond() const;
 
     Queue queue_;
@@ -129,6 +134,7 @@ private:
     bool hasDrainWindow_ = false;
     std::uint64_t frontNextAttemptMs_ = 0;
     bool hasFrontCooldown_ = false;
+    std::uint16_t corruptDropsThisLifetime_ = 0;
 };
 
 } // namespace pqueue

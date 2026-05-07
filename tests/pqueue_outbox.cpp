@@ -1,9 +1,12 @@
 #include "pqueue/outbox.h"
+#include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
 
 #ifndef ARDUINO
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 #endif
@@ -70,6 +73,38 @@ pqueue::Outbox makeOutbox(
 
 pqueue::Outbox makeOutbox(FakeSender& sender, FakeClock& clock) {
     return makeOutbox(sender, clock, testOutboxConfig());
+}
+
+std::uint64_t outboxSlotOffset(std::uint32_t sequence) {
+    pqueue::Config config;
+    const std::uint64_t slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
+    const std::uint64_t capacity = config.reservedBytes / slotSize;
+    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
+               pqueue::storage_detail::kCheckpointRecordBytes +
+           config.journalBytes +
+           (sequence % capacity) * slotSize;
+}
+
+void flipSpoolByte(std::uint64_t offset) {
+    const auto path = kOutboxSpoolDir / "pqueue.spool";
+    std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+    REQUIRE(file.good());
+    file.seekg(static_cast<std::streamoff>(offset));
+    char byte = 0;
+    file.read(&byte, 1);
+    REQUIRE(file.good());
+    byte ^= static_cast<char>(0xff);
+    file.seekp(static_cast<std::streamoff>(offset));
+    file.write(&byte, 1);
+    REQUIRE(file.good());
+}
+
+void corruptOutboxSlotHeader(std::uint32_t sequence) {
+    flipSpoolByte(outboxSlotOffset(sequence));
+}
+
+void corruptOutboxSlotPayload(std::uint32_t sequence) {
+    flipSpoolByte(outboxSlotOffset(sequence) + pqueue::storage_detail::kRecordHeaderBytes);
 }
 #endif
 
@@ -224,6 +259,95 @@ TEST_CASE("pqueue outbox emits dropped event when stored envelope cannot be deco
     CHECK(event.kind == pqueue::EventKind::RequestDropped);
     CHECK(event.severity == pqueue::Severity::Error);
     CHECK(event.status.code == pqueue::StatusCode::DecodeFailed);
+#endif
+}
+
+
+TEST_CASE("pqueue outbox drops front record with corrupt storage payload CRC") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeClock clock;
+    {
+        FakeSender sender;
+        sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+        auto outbox = makeOutbox(sender, clock);
+        REQUIRE(outbox.submit("corrupt-front").status == pqueue::SubmitStatus::Queued);
+        REQUIRE(outbox.submit("valid-behind").status == pqueue::SubmitStatus::Queued);
+    }
+
+    corruptOutboxSlotPayload(0);
+
+    FakeSender sender;
+    auto outbox = makeOutbox(sender, clock);
+    const auto drain = outbox.drainUpTo(2);
+
+    CHECK_EQ(drain.corruptDropped, 1U);
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_FALSE(drain.queueError);
+    REQUIRE_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "valid-behind");
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("pqueue outbox drops front record with corrupt storage header") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeClock clock;
+    {
+        FakeSender sender;
+        sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+        auto outbox = makeOutbox(sender, clock);
+        REQUIRE(outbox.submit("corrupt-front").status == pqueue::SubmitStatus::Queued);
+        REQUIRE(outbox.submit("valid-behind").status == pqueue::SubmitStatus::Queued);
+    }
+
+    corruptOutboxSlotHeader(0);
+
+    FakeSender sender;
+    auto outbox = makeOutbox(sender, clock);
+    const auto drain = outbox.drainUpTo(2);
+
+    CHECK_EQ(drain.corruptDropped, 1U);
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_FALSE(drain.queueError);
+    REQUIRE_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "valid-behind");
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("pqueue outbox stops after corrupt front drop lifetime limit") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeClock clock;
+    {
+        FakeSender sender;
+        sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+        auto outbox = makeOutbox(sender, clock);
+        REQUIRE(outbox.submit("corrupt-0").status == pqueue::SubmitStatus::Queued);
+        REQUIRE(outbox.submit("corrupt-1").status == pqueue::SubmitStatus::Queued);
+        REQUIRE(outbox.submit("corrupt-2").status == pqueue::SubmitStatus::Queued);
+        REQUIRE(outbox.submit("corrupt-3").status == pqueue::SubmitStatus::Queued);
+    }
+
+    corruptOutboxSlotPayload(0);
+    corruptOutboxSlotPayload(1);
+    corruptOutboxSlotPayload(2);
+    corruptOutboxSlotPayload(3);
+
+    FakeSender sender;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.maxCorruptDropsPerLifetime = 3;
+    auto outbox = makeOutbox(sender, clock, config);
+    const auto drain = outbox.drainUpTo(10);
+
+    CHECK_EQ(drain.corruptDropped, 3U);
+    CHECK(drain.queueError);
+    CHECK(drain.detail.code == pqueue::StatusCode::CrcMismatch);
+    CHECK_EQ(std::string(drain.detail.message), "corrupt front record drop limit exceeded");
+    CHECK(sender.payloads.empty());
+    CHECK_EQ(outbox.stats().count, 1U);
 #endif
 }
 

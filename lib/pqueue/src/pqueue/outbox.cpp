@@ -37,6 +37,10 @@ struct OutboxValidationContext {
     void* payloadValidatorContext = nullptr;
 };
 
+bool isCorruptFrontRecordStatus(StatusCode code) {
+    return code == StatusCode::InvalidRecord || code == StatusCode::CrcMismatch;
+}
+
 bool validateOutboxRecord(void* rawContext, const std::string& record, std::uint32_t sequence, std::uint32_t) {
     auto* context = static_cast<OutboxValidationContext*>(rawContext);
 
@@ -176,7 +180,7 @@ DrainResult Outbox::drainUpTo(std::uint16_t maxDrainAttempts) {
         }
 
         const bool madeProgress = current.sent != 0 || current.dropped != 0 || current.corruptDropped != 0;
-        const bool shouldStop = current.attempts == 0 || current.notDue || current.rateLimited || current.queueError || current.sendError || !madeProgress;
+        const bool shouldStop = !madeProgress || current.notDue || current.rateLimited || current.queueError || current.sendError;
         if (shouldStop) {
             break;
         }
@@ -202,6 +206,9 @@ DrainResult Outbox::drainOne(bool enforceRateLimit) {
             clearFrontCooldown();
             return result;
         }
+        if (isCorruptFrontRecordStatus(st.code)) {
+            return dropCorruptFrontRecord(st);
+        }
         result.queueError = true;
         result.detail = st;
         emitDiagnostic(Severity::Error, st, "drain");
@@ -210,23 +217,8 @@ DrainResult Outbox::drainOne(bool enforceRateLimit) {
 
     envelope::DecodedEnvelope decoded;
     if (!envelope::decodeEnvelope(record, decoded)) {
-        st = queue_.pop();
-        if (!st.ok()) {
-            result.queueError = true;
-            result.detail = st;
-            emitDiagnostic(Severity::Error, st, "drain");
-            return result;
-        }
-        clearFrontCooldown();
-        result.corruptDropped += 1;
-        emitRequestEvent(
-            EventKind::RequestDropped,
-            Severity::Error,
-            Status::failure(StatusCode::DecodeFailed, "stored outbox envelope could not be decoded"),
-            "drain",
-            0,
-            0);
-        return result;
+        return dropCorruptFrontRecord(
+            Status::failure(StatusCode::DecodeFailed, "stored outbox envelope could not be decoded"));
     }
 
     if (frontIsCoolingDown(nowMs)) {
@@ -418,6 +410,46 @@ std::uint32_t Outbox::drainRateRemainingMs(std::uint64_t nowMs) const {
         return 0;
     }
     return static_cast<std::uint32_t>(1000U - (nowMs - drainWindowStartMs_));
+}
+
+
+bool Outbox::canDropCorruptFrontRecord() const {
+    return config_.maxCorruptDropsPerLifetime != 0 &&
+           corruptDropsThisLifetime_ < config_.maxCorruptDropsPerLifetime;
+}
+
+DrainResult Outbox::dropCorruptFrontRecord(Status corruptStatus) {
+    DrainResult result;
+    if (!canDropCorruptFrontRecord()) {
+        result.queueError = true;
+        result.detail = Status::failure(
+            corruptStatus.code,
+            "corrupt front record drop limit exceeded",
+            corruptStatus.backendCode);
+        emitDiagnostic(Severity::Error, result.detail, "drain_corrupt_front_limit");
+        return result;
+    }
+
+    const Status popStatus = queue_.pop();
+    if (!popStatus.ok()) {
+        result.queueError = true;
+        result.detail = popStatus;
+        emitDiagnostic(Severity::Error, popStatus, "drain_corrupt_front_pop");
+        return result;
+    }
+
+    clearFrontCooldown();
+    corruptDropsThisLifetime_ += 1;
+    result.corruptDropped += 1;
+    result.detail = corruptStatus;
+    emitRequestEvent(
+        EventKind::RequestDropped,
+        Severity::Error,
+        corruptStatus,
+        "drain_corrupt_front",
+        0,
+        0);
+    return result;
 }
 
 std::uint16_t Outbox::maxDrainAttemptsPerSecond() const {
