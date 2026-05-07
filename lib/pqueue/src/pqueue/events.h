@@ -22,6 +22,9 @@ enum class EventKind {
 
 constexpr std::uint32_t kNoSequence = 0xffffffffU;
 
+// String pointer fields in Event are borrowed.
+// They are valid only for the duration of EventOptions::emit()/EventSink.
+// Event sinks that retain events must copy any string data they need.
 struct Event {
     EventKind kind = EventKind::Diagnostic;
     Severity severity = Severity::Debug;
