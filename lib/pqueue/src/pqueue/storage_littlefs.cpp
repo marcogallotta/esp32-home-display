@@ -4,9 +4,15 @@
 
 #include <LittleFS.h>
 
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace pqueue {
@@ -48,10 +54,87 @@ Status ensureDirectory(const std::string& path) {
     return Status::success();
 }
 
+
+#if defined(ESP32)
+
+SemaphoreHandle_t littleFsMutex() {
+    static SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    return mutex;
+}
+
+class LittleFsMutexLock final : public Lock {
+public:
+    explicit LittleFsMutexLock(std::string basePath) : basePath_(std::move(basePath)) {}
+
+    Status acquire(const std::string& name, const std::string&) override {
+        SemaphoreHandle_t mutex = littleFsMutex();
+        if (mutex == nullptr) {
+            return Status::failure(StatusCode::LockTimeout, "failed to create LittleFS queue mutex");
+        }
+
+        if (xSemaphoreTake(mutex, 0) != pdTRUE) {
+            return Status::failure(StatusCode::LockTimeout, "LittleFS queue mutex is busy");
+        }
+
+        acquired_ = true;
+
+        removeLegacyLockPath(name);
+        removeLegacyLockPath("pqueue.lock");
+
+        return Status::success();
+    }
+
+    Status release(const std::string&, const std::string&) override {
+        if (!acquired_) {
+            return Status::success();
+        }
+
+        acquired_ = false;
+        xSemaphoreGive(littleFsMutex());
+        return Status::success();
+    }
+
+private:
+    std::string path(const std::string& name) const {
+        return joinPath(basePath_, name);
+    }
+
+    void removeLegacyLockPath(const std::string& name) const {
+        const std::string fullPath = path(name);
+
+        LittleFS.remove((fullPath + "/owner").c_str());
+        LittleFS.remove(fullPath.c_str());
+        LittleFS.rmdir(fullPath.c_str());
+    }
+
+    std::string basePath_;
+    bool acquired_ = false;
+};
+
+#else
+
+class LittleFsMutexLock final : public Lock {
+public:
+    explicit LittleFsMutexLock(std::string) {}
+
+    Status acquire(const std::string&, const std::string&) override {
+        return Status::success();
+    }
+
+    Status release(const std::string&, const std::string&) override {
+        return Status::success();
+    }
+};
+
+#endif
+
 class LittleFsFileSystem final : public FileSystem {
 public:
     Status mount(const std::string& basePath) override {
         basePath_ = normalizeBasePath(basePath);
+        if (!lock_) {
+            lock_ = std::make_unique<LittleFsMutexLock>(basePath_);
+        }
 
         // Never format automatically. Users must make that decision explicitly outside PQUEUE.
         if (!LittleFS.begin(false)) {
@@ -220,33 +303,17 @@ public:
     }
 
     Status tryAcquireLockFile(const std::string& name, const std::string& contents) override {
-        const std::string fullPath = path(name);
-        if (LittleFS.exists(fullPath.c_str())) {
-            return Status::failure(StatusCode::LockTimeout, "queue lock already exists");
+        if (!lock_) {
+            return Status::failure(StatusCode::BackendUnavailable, "LittleFS lock backend is not mounted");
         }
-
-        // TODO: LittleFS create-after-exists is not a true atomic lock primitive.
-        // POSIX can recover stale pid locks; ESP32 needs a future boot-id/age/force recovery policy.
-        File file = LittleFS.open(fullPath.c_str(), "w");
-        if (!file) {
-            return Status::failure(StatusCode::WriteFailed, "failed to create LittleFS queue lock file");
-        }
-        file.write(reinterpret_cast<const uint8_t*>(contents.data()), contents.size());
-        file.flush();
-        file.close();
-        return Status::success();
+        return lock_->acquire(name, contents);
     }
 
     Status releaseLockFile(const std::string& name, const std::string& expectedContents) override {
-        std::string actual;
-        Status st = readFile(name, actual);
-        if (!st.ok()) {
-            return st;
+        if (!lock_) {
+            return Status::failure(StatusCode::BackendUnavailable, "LittleFS lock backend is not mounted");
         }
-        if (actual != expectedContents) {
-            return Status::failure(StatusCode::LockTimeout, "queue lock is owned by another process");
-        }
-        return removeFile(name);
+        return lock_->release(name, expectedContents);
     }
 
     std::uint64_t freeBytes() const override {
@@ -261,6 +328,7 @@ private:
     }
 
     std::string basePath_ = "/pqueue_spool";
+    std::unique_ptr<Lock> lock_;
 };
 
 } // namespace
