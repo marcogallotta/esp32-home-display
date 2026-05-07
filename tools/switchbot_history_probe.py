@@ -42,6 +42,14 @@ class PageRequest:
     count: int
 
 
+@dataclass(frozen=True)
+class DecodedSample:
+    index: int
+    epoch: int
+    temperature_c: float
+    humidity_pct: int
+
+
 def parse_int(value: str) -> int:
     value = value.strip().lower()
     if value.startswith("0x"):
@@ -113,6 +121,51 @@ def parse_metadata(data: bytes) -> Metadata:
     )
 
 
+def decode_temperature(raw_temp: int, decimal: int) -> float:
+    # Same sign convention as the passive advertisement decoder:
+    # high bit set = positive, low 7 bits = integer part.
+    sign = 1 if (raw_temp & 0x80) else -1
+    return sign * ((raw_temp & 0x7F) + decimal / 10.0)
+
+
+def decode_history_payload(data: bytes, start_index: int, metadata: Metadata) -> list[DecodedSample]:
+    # Observed history page response:
+    #   01 <15 bytes>
+    # The 15-byte body is 3 groups of 5 bytes. Each group contains 2 samples:
+    #   temp1 humidity1 decimals temp2 humidity2
+    # where high nibble of decimals belongs to sample1, low nibble to sample2.
+    if not data or data[0] != 0x01:
+        return []
+
+    body = data[1:]
+    samples: list[DecodedSample] = []
+    sample_offset = 0
+
+    for pos in range(0, len(body) - 4, 5):
+        t1 = body[pos]
+        h1 = body[pos + 1]
+        decimals = body[pos + 2]
+        t2 = body[pos + 3]
+        h2 = body[pos + 4]
+
+        for raw_t, raw_h, dec in (
+            (t1, h1, (decimals >> 4) & 0x0F),
+            (t2, h2, decimals & 0x0F),
+        ):
+            index = start_index + sample_offset
+            samples.append(
+                DecodedSample(
+                    index=index,
+                    epoch=metadata.start_epoch + index * metadata.interval_seconds,
+                    temperature_c=decode_temperature(raw_t, dec),
+                    humidity_pct=raw_h & 0x7F,
+                )
+            )
+            sample_offset += 1
+
+    return samples
+
+
 def epoch_to_index(metadata: Metadata, epoch: int, *, round_up: bool) -> int:
     offset = (epoch - metadata.start_epoch) / metadata.interval_seconds
     index = math.ceil(offset) if round_up else math.floor(offset)
@@ -168,19 +221,21 @@ def build_page_plan(args: argparse.Namespace, metadata: Metadata) -> list[PageRe
 
 
 class Probe:
-    def __init__(self, client: BleakClient, notify_uuid: str, write_uuid: str, timeout: float, out_path: Path):
+    def __init__(self, client: BleakClient, notify_uuid: str, write_uuid: str, timeout: float, raw_out_path: Path | None):
         self.client = client
         self.notify_uuid = notify_uuid
         self.write_uuid = write_uuid
         self.timeout = timeout
-        self.out_path = out_path
         self.queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self.out = out_path.open("w", encoding="utf-8")
+        self.raw_out = raw_out_path.open("w", encoding="utf-8") if raw_out_path else None
 
     async def close(self) -> None:
-        self.out.close()
+        if self.raw_out:
+            self.raw_out.close()
 
-    def log(self, direction: str, label: str, data: bytes, extra: dict[str, Any] | None = None) -> None:
+    def log_raw(self, direction: str, label: str, data: bytes, extra: dict[str, Any] | None = None) -> None:
+        if not self.raw_out:
+            return
         row: dict[str, Any] = {
             "t": time.time(),
             "direction": direction,
@@ -189,13 +244,12 @@ class Probe:
         }
         if extra:
             row.update(extra)
-        self.out.write(json.dumps(row, sort_keys=True) + "\n")
-        self.out.flush()
-        print(f"{direction:>2} {label:<12} {data.hex()}")
+        self.raw_out.write(json.dumps(row, sort_keys=True) + "\n")
+        self.raw_out.flush()
 
     def on_notify(self, _sender: Any, data: bytearray) -> None:
         payload = bytes(data)
-        self.log("<-", "notify", payload)
+        self.log_raw("<-", "notify", payload)
         self.queue.put_nowait(payload)
 
     async def start_notify(self) -> None:
@@ -208,22 +262,21 @@ class Probe:
 
     async def write_and_wait(self, label: str, command: bytes, wait: bool = True) -> bytes | None:
         await self.drain_queue()
-        self.log("->", label, command)
+        self.log_raw("->", label, command)
         await self.client.write_gatt_char(self.write_uuid, command, response=True)
         if not wait:
             return None
         return await asyncio.wait_for(self.queue.get(), timeout=self.timeout)
 
-
 async def run(args: argparse.Namespace) -> None:
-    out_path = Path(args.out)
+    raw_out_path = Path(args.raw_out) if args.raw_out else None
 
     async with BleakClient(args.mac, timeout=args.connect_timeout) as client:
         if not client.is_connected:
             raise RuntimeError("failed to connect")
 
         print(f"connected: {args.mac}")
-        probe = Probe(client, args.notify_uuid, args.write_uuid, args.timeout, out_path)
+        probe = Probe(client, args.notify_uuid, args.write_uuid, args.timeout, raw_out_path)
 
         try:
             await probe.start_notify()
@@ -246,28 +299,21 @@ async def run(args: argparse.Namespace) -> None:
             print(f"  end_index:   0x{metadata.end_index:08x} ({metadata.end_index})")
             print(f"  interval:    {metadata.interval_seconds}s")
 
-            probe.log(
-                "==",
-                "metadata-parsed",
-                b"",
-                {
-                    "start_epoch": metadata.start_epoch,
-                    "end_epoch": metadata.end_epoch,
-                    "end_index": metadata.end_index,
-                    "interval_seconds": metadata.interval_seconds,
-                },
-            )
+            probe.log_raw("==", "metadata-parsed", b"", metadata.__dict__)
 
             if args.metadata_only:
                 return
 
             requests = build_page_plan(args, metadata)
             print(f"page requests: {len(requests)}")
+            decoded_samples: list[DecodedSample] = []
 
             for page_no, req in enumerate(requests):
                 command = build_page_command(req.index, req.count)
                 response = await probe.write_and_wait(f"page-{page_no}", command)
-                probe.log(
+                samples = decode_history_payload(response or b"", req.index, metadata)
+                decoded_samples.extend(samples)
+                probe.log_raw(
                     "==",
                     "page-parsed",
                     b"",
@@ -275,10 +321,36 @@ async def run(args: argparse.Namespace) -> None:
                         "page_no": page_no,
                         "index": req.index,
                         "count": req.count,
-                        "response_hex": response.hex() if response else None,
+                        "decoded_samples": [sample.__dict__ for sample in samples],
                     },
                 )
                 await asyncio.sleep(args.delay_ms / 1000)
+
+            # Trim over-fetched full pages to the requested range.
+            start_epoch = args.start_epoch if args.start_epoch is not None else metadata.start_epoch
+            end_epoch = args.end_epoch if args.end_epoch is not None else metadata.end_epoch
+            trimmed = [s for s in decoded_samples if start_epoch <= s.epoch < end_epoch]
+
+            print(f"samples: {len(trimmed)}")
+            print("index,datetime_utc,temperature_c,humidity_pct")
+            for sample in trimmed:
+                print(
+                    f"{sample.index},{utc_iso(sample.epoch)},{sample.temperature_c:.1f},{sample.humidity_pct}"
+                )
+
+            if args.decoded_out:
+                decoded_path = Path(args.decoded_out)
+                with decoded_path.open("w", encoding="utf-8") as f:
+                    f.write("index,epoch,datetime_utc,temperature_c,humidity_pct\n")
+                    for sample in trimmed:
+                        f.write(
+                            f"{sample.index},{sample.epoch},{utc_iso(sample.epoch)},"
+                            f"{sample.temperature_c:.1f},{sample.humidity_pct}\n"
+                        )
+                print(f"wrote decoded: {decoded_path}")
+
+            if raw_out_path:
+                print(f"wrote raw: {raw_out_path}")
 
         finally:
             try:
@@ -286,7 +358,6 @@ async def run(args: argparse.Namespace) -> None:
             finally:
                 await probe.close()
 
-    print(f"wrote: {out_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -294,7 +365,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mac", required=True, help="sensor MAC address")
     parser.add_argument("--write-uuid", default=DEFAULT_WRITE_UUID, help="GATT write characteristic UUID")
     parser.add_argument("--notify-uuid", default=DEFAULT_NOTIFY_UUID, help="GATT notify characteristic UUID")
-    parser.add_argument("--out", default="switchbot_history_raw.jsonl", help="output JSONL file")
+    parser.add_argument("--raw-out", default="", help="optional raw JSONL output for debugging")
+    parser.add_argument("--decoded-out", default="switchbot_history_decoded.csv", help="decoded CSV output; pass empty string to disable")
 
     parser.add_argument("--pages", type=int, default=5, help="number of history pages to request when no end is supplied")
     parser.add_argument("--page-count", type=int, default=6, help="record count byte in 3c page request")

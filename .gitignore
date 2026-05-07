@@ -18,5 +18,5 @@ otadata.bin
 partition_table.bin
 server/.env
 tools/switchbot.sh
+tools/switchbot_history_decoded.csv
 tools/xiaomi.sh
-tools/switchbot_history_raw.jsonl
