@@ -90,6 +90,30 @@ std::uint32_t slotSize(std::size_t recordSizeBytes) {
     return static_cast<std::uint32_t>(sizeof(pqueue::storage_detail::RecordHeader) + recordSizeBytes);
 }
 
+std::uint32_t recordRegionOffset(const pqueue::Config& config) {
+    return static_cast<std::uint32_t>(pqueue::storage_detail::kCheckpointSlots) *
+               pqueue::storage_detail::kCheckpointRecordBytes +
+           config.journalBytes;
+}
+
+std::uint32_t recordSlotOffset(const pqueue::Config& config, std::uint32_t slot) {
+    return recordRegionOffset(config) + slot * slotSize(config.recordSizeBytes);
+}
+
+void corruptSlotPayload(const pqueue::Config& config, std::uint32_t slot) {
+    LittleFS.end();
+    TEST_ASSERT_TRUE_MESSAGE(LittleFS.begin(true), "LittleFS mount failed for slot corruption");
+    File spool = LittleFS.open(kSpoolPath, "r+");
+    TEST_ASSERT_TRUE_MESSAGE(spool, "failed to open pqueue spool for slot corruption");
+    const std::uint32_t payloadOffset =
+        recordSlotOffset(config, slot) + pqueue::storage_detail::kRecordHeaderBytes;
+    TEST_ASSERT_TRUE(spool.seek(payloadOffset, SeekSet));
+    TEST_ASSERT_EQUAL_UINT(1, spool.write(static_cast<uint8_t>(0xff)));
+    spool.flush();
+    spool.close();
+    LittleFS.end();
+}
+
 pqueue::Config queueConfigForBase(
     const char* basePath,
     std::size_t recordSizeBytes = 32,
@@ -593,6 +617,43 @@ void test_corrupt_active_record() {
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, validation.errors.size());
 }
 
+void test_outbox_drops_corrupt_front_record_on_littlefs() {
+    cleanLittleFs();
+    g_nowMs = 1000;
+    const pqueue::Config config = queueConfig();
+
+    {
+        FakeSender retrying;
+        retrying.decision = pqueue::SendDecision::RetryLater;
+        pqueue::Outbox outbox(config, outboxConfig(), fakeSend, &retrying, fakeClock, nullptr);
+
+        const pqueue::SubmitResult first = outbox.submit("bad");
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::SubmitStatus::Queued), static_cast<int>(first.status));
+        TEST_ASSERT_EQUAL_UINT16(1, retrying.calls);
+
+        const pqueue::SubmitResult second = outbox.submit("ok");
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::SubmitStatus::Queued), static_cast<int>(second.status));
+        TEST_ASSERT_EQUAL_UINT32(2, outbox.stats().count);
+    }
+
+    corruptSlotPayload(config, 0);
+
+    FakeSender succeeding;
+    succeeding.decision = pqueue::SendDecision::Sent;
+    pqueue::Outbox outbox(config, outboxConfig(), fakeSend, &succeeding, fakeClock, nullptr);
+    const pqueue::DrainResult drained = outbox.drainUpTo(2);
+
+    TEST_ASSERT_EQUAL_UINT16(1, drained.attempts);
+    TEST_ASSERT_EQUAL_UINT16(1, drained.corruptDropped);
+    TEST_ASSERT_EQUAL_UINT16(1, drained.sent);
+    TEST_ASSERT_EQUAL_UINT16(0, drained.dropped);
+    TEST_ASSERT_FALSE(drained.queueError);
+    TEST_ASSERT_FALSE(drained.sendError);
+    TEST_ASSERT_EQUAL_UINT16(1, succeeding.calls);
+    TEST_ASSERT_EQUAL_STRING("ok", succeeding.lastPayload.c_str());
+    TEST_ASSERT_EQUAL_UINT32(0, outbox.stats().count);
+}
+
 void test_outbox_backlog_persistence() {
     cleanLittleFs();
     FakeSender retrying;
@@ -627,7 +688,7 @@ void test_retryable_failure_does_not_drop() {
         TEST_ASSERT_EQUAL_UINT32(1, outbox.stats().count);
 
         for (int i = 0; i < 3; ++i) {
-            const pqueue::DrainResult drained = outbox.drainBurst(1);
+            const pqueue::DrainResult drained = outbox.drainUpTo(1);
             TEST_ASSERT_EQUAL_UINT16(1, drained.attempts);
             TEST_ASSERT_EQUAL_UINT16(0, drained.sent);
             TEST_ASSERT_EQUAL_UINT16(0, drained.dropped);
@@ -684,6 +745,7 @@ void setup() {
     RUN_TEST(test_legacy_lock_directory_is_removed_and_does_not_block);
     RUN_TEST(test_legacy_alt_lock_directory_is_removed_and_does_not_block);
     RUN_TEST(test_corrupt_active_record);
+    RUN_TEST(test_outbox_drops_corrupt_front_record_on_littlefs);
     RUN_TEST(test_outbox_backlog_persistence);
     RUN_TEST(test_retryable_failure_does_not_drop);
     UNITY_END();
