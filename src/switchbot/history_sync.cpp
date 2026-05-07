@@ -396,9 +396,11 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         cleanup();
         return fail(SyncStatus::Timeout, "start command timed out or write failed");
     }
-    if (response != std::vector<uint8_t>({0x01, 0x51, 0x00, 0x04, 0x03, 0x02, 0x01})) {
+    // Observed devices return different 0x01-prefixed start ACK variants.
+    // Keep metadata parsing as the strict validation gate for the history session.
+    if (response.empty() || response[0] != 0x01) {
         cleanup();
-        return fail(SyncStatus::BadAck, badAckMessage("start", response, "01510004030201"));
+        return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed ack"));
     }
 
     delay(50);
