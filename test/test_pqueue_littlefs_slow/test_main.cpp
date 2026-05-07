@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "pqueue/outbox.h"
 #include "pqueue/queue.h"
 #include "pqueue/status.h"
 #include "pqueue/storage_common.h"
@@ -32,7 +33,8 @@ enum class SlowTest : std::uint8_t {
     QueueFullRebootSafe = 9,
     RecordSizeMismatchFailsSafely = 10,
     CapacityMismatchFailsSafely = 11,
-    Churn = 12,
+    OutboxRebootDrain = 12,
+    Churn = 13,
     Done = 255,
 };
 
@@ -51,6 +53,32 @@ pqueue::Config queueConfig(std::size_t recordSizeBytes = 32, std::uint32_t capac
     config.storageBackend = pqueue::StorageBackend::LittleFS;
     config.recordSizeBytes = recordSizeBytes;
     config.reservedBytes = slotSize(recordSizeBytes) * capacityRecords;
+    return config;
+}
+
+struct FakeSender {
+    pqueue::SendDecision decision = pqueue::SendDecision::Sent;
+    std::uint16_t calls = 0;
+    std::string lastPayload;
+    std::uint8_t lastAttempts = 0;
+};
+
+std::uint64_t fakeClock(void*) {
+    return 0;
+}
+
+pqueue::SendResult fakeSend(void* context, const std::string& payload, const pqueue::RetryState& retry) {
+    auto* sender = static_cast<FakeSender*>(context);
+    sender->calls += 1;
+    sender->lastPayload = payload;
+    sender->lastAttempts = retry.attempts;
+    return {sender->decision};
+}
+
+pqueue::OutboxConfig outboxConfig() {
+    pqueue::OutboxConfig config;
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 1000;
     return config;
 }
 
@@ -474,6 +502,46 @@ void test_reboot_capacity_mismatch_fails_safely() {
     completeSlowTest();
 }
 
+void test_reboot_outbox_drain() {
+    const std::uint8_t phase = phaseFor(SlowTest::OutboxRebootDrain);
+    if (phase == 0) {
+        cleanLittleFs();
+        {
+            FakeSender retrying;
+            retrying.decision = pqueue::SendDecision::RetryLater;
+            pqueue::Outbox outbox(queueConfig(), outboxConfig(), fakeSend, &retrying, fakeClock, nullptr);
+
+            const pqueue::SubmitResult submitted = outbox.submit("outbox-reboot-payload");
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::SubmitStatus::Queued), static_cast<int>(submitted.status));
+            TEST_ASSERT_EQUAL_UINT16(1, retrying.calls);
+            TEST_ASSERT_EQUAL_STRING("outbox-reboot-payload", retrying.lastPayload.c_str());
+            TEST_ASSERT_EQUAL_UINT8(0, retrying.lastAttempts);
+            TEST_ASSERT_EQUAL_UINT32(1, outbox.stats().count);
+        }
+        rebootTo(SlowTest::OutboxRebootDrain, 1);
+    }
+
+    TEST_ASSERT_EQUAL_UINT8(1, phase);
+    {
+        FakeSender succeeding;
+        succeeding.decision = pqueue::SendDecision::Sent;
+        pqueue::Outbox outbox(queueConfig(), outboxConfig(), fakeSend, &succeeding, fakeClock, nullptr);
+
+        TEST_ASSERT_EQUAL_UINT32(1, outbox.stats().count);
+        const pqueue::DrainResult drained = outbox.drain();
+        TEST_ASSERT_EQUAL_UINT16(1, drained.attempts);
+        TEST_ASSERT_EQUAL_UINT16(1, drained.sent);
+        TEST_ASSERT_EQUAL_UINT16(0, drained.dropped);
+        TEST_ASSERT_FALSE(drained.queueError);
+        TEST_ASSERT_FALSE(drained.sendError);
+        TEST_ASSERT_EQUAL_UINT16(1, succeeding.calls);
+        TEST_ASSERT_EQUAL_STRING("outbox-reboot-payload", succeeding.lastPayload.c_str());
+        TEST_ASSERT_EQUAL_UINT8(1, succeeding.lastAttempts);
+        TEST_ASSERT_EQUAL_UINT32(0, outbox.stats().count);
+    }
+    completeSlowTest();
+}
+
 void test_churn_without_reboot() {
     cleanLittleFs();
     pqueue::Queue queue(queueConfig(32, 24));
@@ -524,6 +592,8 @@ SlowTest nextSlowTest(SlowTest test) {
     case SlowTest::RecordSizeMismatchFailsSafely:
         return SlowTest::CapacityMismatchFailsSafely;
     case SlowTest::CapacityMismatchFailsSafely:
+        return SlowTest::OutboxRebootDrain;
+    case SlowTest::OutboxRebootDrain:
         return SlowTest::Churn;
     case SlowTest::Churn:
     case SlowTest::Done:
@@ -579,6 +649,9 @@ void runSlowTest(SlowTest test) {
         break;
     case SlowTest::CapacityMismatchFailsSafely:
         RUN_TEST(test_reboot_capacity_mismatch_fails_safely);
+        break;
+    case SlowTest::OutboxRebootDrain:
+        RUN_TEST(test_reboot_outbox_drain);
         break;
     case SlowTest::Churn:
         RUN_TEST(test_churn_without_reboot);
