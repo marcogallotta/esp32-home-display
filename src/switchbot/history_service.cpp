@@ -22,15 +22,6 @@ std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
     return sensor.mac;
 }
 
-std::string sampleLine(const std::string& label, const Sample& sample) {
-    return "switchbot_history_sample," +
-           label + "," +
-           std::to_string(sample.index) + "," +
-           std::to_string(sample.epoch) + "," +
-           std::to_string(sample.temperatureC) + "," +
-           std::to_string(sample.humidityPct);
-}
-
 SyncRequest makeRequest(std::time_t now, const HistoryServiceOptions& options) {
     SyncRequest request;
     request.commandTimeoutMs = options.commandTimeoutMs;
@@ -51,7 +42,7 @@ void runOneSensor(const SwitchbotSensorConfig& sensor,
     const SyncResult result = syncSensorHistory(sensor.mac, makeRequest(now, options));
     if (!result.ok()) {
         logLine(
-            LogLevel::Warn,
+            LogLevel::Error,
             "switchbot_history_sync_failed," + label + "," + sensor.mac + "," +
             syncStatusName(result.status) + "," + result.message
         );
@@ -67,11 +58,6 @@ void runOneSensor(const SwitchbotSensorConfig& sensor,
         std::to_string(result.metadata.intervalSeconds) + "," +
         std::to_string(result.samples.size())
     );
-
-    logLine(LogLevel::Info, "switchbot_history_header,sensor,index,epoch,temperature_c,humidity_pct");
-    for (const Sample& sample : result.samples) {
-        logLine(LogLevel::Info, sampleLine(label, sample));
-    }
 
     logLine(
         LogLevel::Info,

@@ -8,6 +8,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include "../log.h"
 #endif
 
 namespace switchbot {
@@ -91,6 +92,41 @@ void logBytes(const char* label, const std::vector<uint8_t>& bytes) {
     (void)label;
     (void)bytes;
 #endif
+}
+
+std::string responseSummary(const std::vector<uint8_t>& response) {
+    return "len=" + std::to_string(response.size()) + ",raw=" + bytesToHex(response);
+}
+
+std::string badAckMessage(const char* command,
+                          const std::vector<uint8_t>& response,
+                          const char* expected) {
+    return std::string("unexpected ") + command + " ack," +
+           responseSummary(response) + ",expected=" + expected;
+}
+
+std::string badDecodeMessage(const char* context,
+                             const std::vector<uint8_t>& response) {
+    return std::string(context) + "," + responseSummary(response);
+}
+
+std::string badPageMessage(uint32_t pageIndex, const std::vector<uint8_t>& response) {
+    return "page response decode failed,page_index=" + std::to_string(pageIndex) +
+           "," + responseSummary(response);
+}
+
+void logProgress(const std::string& mac, uint32_t done, uint32_t total) {
+    if (total == 0) {
+        return;
+    }
+
+    const uint32_t percent = std::min<uint32_t>(100, (done * 100U) / total);
+    logLine(
+        LogLevel::Info,
+        "switchbot_history_progress," + mac + "," +
+        std::to_string(done) + "/" + std::to_string(total) + "," +
+        std::to_string(percent) + "%"
+    );
 }
 
 bool waitForNotify(NotifyState& state, uint32_t timeoutMs, std::vector<uint8_t>& out) {
@@ -233,6 +269,24 @@ uint32_t rangeEndExclusiveIndex(const Metadata& metadata, const SyncRequest& req
     );
 }
 
+uint32_t progressTotalSamples(const Metadata& metadata,
+                              const SyncRequest& request,
+                              uint32_t endExclusiveIndex) {
+    if (request.startEpoch == 0 && request.endEpoch == 0) {
+        return endExclusiveIndex >= rangeStartIndex(metadata, request)
+            ? endExclusiveIndex - rangeStartIndex(metadata, request)
+            : 0;
+    }
+
+    const uint32_t firstWanted = indexForEpochCeil(
+        metadata.startEpoch,
+        request.startEpoch,
+        metadata.intervalSeconds
+    );
+    return endExclusiveIndex > firstWanted ? endExclusiveIndex - firstWanted : 0;
+}
+
+
 bool keepSample(const Sample& sample, const SyncRequest& request, uint32_t endExclusiveIndex) {
     if (sample.index >= endExclusiveIndex) {
         return false;
@@ -333,7 +387,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     }
     if (response.size() != 1 || response[0] != 0x01) {
         cleanup();
-        return fail(SyncStatus::BadAck, "unexpected time sync ack");
+        return fail(SyncStatus::BadAck, badAckMessage("time-sync", response, "01"));
     }
 
     delay(50);
@@ -344,7 +398,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     }
     if (response != std::vector<uint8_t>({0x01, 0x51, 0x00, 0x04, 0x03, 0x02, 0x01})) {
         cleanup();
-        return fail(SyncStatus::BadAck, "unexpected start ack");
+        return fail(SyncStatus::BadAck, badAckMessage("start", response, "01510004030201"));
     }
 
     delay(50);
@@ -358,7 +412,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     if (!parseMetadataResponse(response, metadata)) {
         logBytes("bad-metadata", response);
         cleanup();
-        return fail(SyncStatus::BadMetadata, "metadata response decode failed");
+        return fail(SyncStatus::BadMetadata, badDecodeMessage("metadata response decode failed", response));
     }
 
     SyncResult result;
@@ -366,6 +420,9 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
 
     const uint32_t firstPage = rangeStartIndex(result.metadata, request);
     const uint32_t endExclusive = rangeEndExclusiveIndex(result.metadata, request);
+    const uint32_t totalProgressSamples = progressTotalSamples(result.metadata, request, endExclusive);
+    uint32_t keptSamples = 0;
+    uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
 
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += 6) {
         delay(50);
@@ -384,12 +441,20 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         if (samples.empty()) {
             logBytes("bad-page", response);
             cleanup();
-            return fail(SyncStatus::BadPage, "page response decode failed");
+            return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
         }
 
         for (const Sample& sample : samples) {
             if (keepSample(sample, request, endExclusive)) {
                 result.samples.push_back(sample);
+                ++keptSamples;
+                if (nextProgressAt != 0 && keptSamples >= nextProgressAt) {
+                    logProgress(mac, keptSamples, totalProgressSamples);
+                    nextProgressAt += 60;
+                    if (nextProgressAt > totalProgressSamples) {
+                        nextProgressAt = totalProgressSamples > keptSamples ? totalProgressSamples : 0;
+                    }
+                }
             }
         }
     }
