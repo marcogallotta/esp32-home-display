@@ -45,13 +45,22 @@ std::string baseName(const char* path) {
 }
 
 Status ensureDirectory(const std::string& path) {
-    if (path == "/" || LittleFS.exists(path.c_str())) {
+    if (path == "/") {
         return Status::success();
     }
-    if (!LittleFS.mkdir(path.c_str())) {
-        return Status::failure(StatusCode::MountFailed, "failed to create LittleFS directory");
+    if (LittleFS.mkdir(path.c_str())) {
+        return Status::success();
     }
-    return Status::success();
+
+    File dir = LittleFS.open(path.c_str(), "r");
+    if (dir && dir.isDirectory()) {
+        dir.close();
+        return Status::success();
+    }
+    if (dir) {
+        dir.close();
+    }
+    return Status::failure(StatusCode::MountFailed, "failed to create LittleFS directory");
 }
 
 
@@ -99,10 +108,42 @@ private:
         return joinPath(basePath_, name);
     }
 
-    void removeLegacyLockPath(const std::string& name) const {
-        const std::string fullPath = path(name);
+    bool entryExists(const std::string& dirPath, const std::string& name) const {
+        File dir = LittleFS.open(dirPath.c_str(), "r");
+        if (!dir || !dir.isDirectory()) {
+            if (dir) {
+                dir.close();
+            }
+            return false;
+        }
 
-        LittleFS.remove((fullPath + "/owner").c_str());
+        File file = dir.openNextFile();
+        while (file) {
+            const bool match = baseName(file.name()) == name;
+            file.close();
+            if (match) {
+                dir.close();
+                return true;
+            }
+            file = dir.openNextFile();
+        }
+        dir.close();
+        return false;
+    }
+
+    bool baseEntryExists(const std::string& name) const {
+        return entryExists(basePath_, name);
+    }
+
+    void removeLegacyLockPath(const std::string& name) const {
+        if (!baseEntryExists(name)) {
+            return;
+        }
+
+        const std::string fullPath = path(name);
+        if (entryExists(fullPath, "owner")) {
+            LittleFS.remove((fullPath + "/owner").c_str());
+        }
         LittleFS.remove(fullPath.c_str());
         LittleFS.rmdir(fullPath.c_str());
     }
@@ -219,10 +260,9 @@ public:
 
     Status resizeFile(const std::string& name, std::uint64_t size) override {
         const std::string fullPath = path(name);
-        File file = LittleFS.open(fullPath.c_str(), "r+");
-        if (!file) {
-            file = LittleFS.open(fullPath.c_str(), "w");
-        }
+        File file = fileExistsQuiet(name)
+            ? LittleFS.open(fullPath.c_str(), "r+")
+            : LittleFS.open(fullPath.c_str(), "w");
         if (!file) {
             return Status::failure(StatusCode::WriteFailed, "failed to open LittleFS file for resize");
         }
@@ -325,6 +365,29 @@ public:
 private:
     std::string path(const std::string& name) const {
         return joinPath(basePath_, name);
+    }
+
+    bool fileExistsQuiet(const std::string& name) const {
+        File dir = LittleFS.open(basePath_.c_str(), "r");
+        if (!dir || !dir.isDirectory()) {
+            if (dir) {
+                dir.close();
+            }
+            return false;
+        }
+
+        File file = dir.openNextFile();
+        while (file) {
+            const bool match = baseName(file.name()) == name;
+            file.close();
+            if (match) {
+                dir.close();
+                return true;
+            }
+            file = dir.openNextFile();
+        }
+        dir.close();
+        return false;
     }
 
     std::string basePath_ = "/pqueue_spool";

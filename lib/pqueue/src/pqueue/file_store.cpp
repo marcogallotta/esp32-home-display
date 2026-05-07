@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace pqueue {
 namespace {
@@ -14,6 +16,12 @@ constexpr const char* kSpoolName = "pqueue.spool";
 constexpr std::uint32_t kJournalFullPercent = 75;
 
 bool fileExists(FileSystem& fs, const std::string& name) {
+    std::vector<std::string> files;
+    const Status listStatus = fs.listFiles(files);
+    if (listStatus.ok()) {
+        return std::find(files.begin(), files.end(), name) != files.end();
+    }
+
     std::uint64_t ignored = 0;
     return fs.fileSize(name, ignored).ok();
 }
