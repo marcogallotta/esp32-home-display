@@ -91,6 +91,42 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail(std::string(path) + " must be one of debug, info, warning, error, none");
     };
 
+    auto readOptionalBleAddressType = [&](JsonObject obj, const char* key, std::uint8_t& value, const char* path) {
+        const JsonVariant field = obj[key];
+        if (field.isNull()) {
+            return true;
+        }
+        if (field.is<unsigned int>()) {
+            const unsigned int raw = field.as<unsigned int>();
+            if (raw > 3) {
+                return fail(std::string(path) + " must be 0, 1, 2, or 3");
+            }
+            value = static_cast<std::uint8_t>(raw);
+            return true;
+        }
+        if (!field.is<const char*>()) {
+            return fail(std::string(path) + " must be an int or string");
+        }
+        const std::string raw = field.as<const char*>();
+        if (raw == "public") {
+            value = 0;
+            return true;
+        }
+        if (raw == "random") {
+            value = 1;
+            return true;
+        }
+        if (raw == "public_id") {
+            value = 2;
+            return true;
+        }
+        if (raw == "random_id") {
+            value = 3;
+            return true;
+        }
+        return fail(std::string(path) + " must be one of public, random, public_id, random_id, 0, 1, 2, 3");
+    };
+
     const JsonObject forecast = json["forecast"];
     if (forecast.isNull()) {
         return fail("forecast is not an object");
@@ -277,6 +313,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         sensor.mac = s["mac"].as<const char*>();
         sensor.name = s["name"].as<const char*>();
         sensor.shortName = s["short_name"].as<const char*>();
+        if (!readOptionalBleAddressType(s, "address_type", sensor.addressType, "switchbot.sensors[].address_type")) {
+            return false;
+        }
         config.switchbot.sensors.push_back(sensor);
     }
 

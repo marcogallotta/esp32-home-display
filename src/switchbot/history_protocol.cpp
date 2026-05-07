@@ -69,7 +69,7 @@ std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count) {
 }
 
 bool parseMetadataResponse(const std::vector<uint8_t>& response, Metadata& out) {
-    if (response.size() != 16 || response[0] != 0x01) {
+    if (response.size() != 15 || response[0] != 0x01) {
         return false;
     }
     out.startEpoch = readU32BE(response, 1);

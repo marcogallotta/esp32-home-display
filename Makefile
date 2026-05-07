@@ -58,6 +58,7 @@ COMMON_SRC := \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
+	src/switchbot/history_sync.cpp \
 	src/switchbot/protocol.cpp \
 	src/switchbot/ble.cpp \
 	src/timing.cpp \

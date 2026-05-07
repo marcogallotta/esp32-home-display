@@ -58,6 +58,9 @@ struct SwitchbotSensorConfig {
     std::string name;
     // Display name on ESP32
     std::string shortName;
+    // NimBLE peer address type. 0=public, 1=random, 2=public_id, 3=random_id.
+    // Optional in config; defaults to public to preserve the old NimBLE constructor behavior.
+    std::uint8_t addressType = 0;
 };
 
 struct SwitchbotConfig {
