@@ -153,6 +153,22 @@ pqueue::SendDecision customClassify(void* context, const pqueue::http::Response&
 
 } // namespace
 
+TEST_CASE("pqueue http outbox returns encode failure detail") {
+#ifndef ARDUINO
+    cleanHttpOutboxSpool();
+    FakeHttpTransport transport;
+    FakeClock clock;
+    auto outbox = makeHttpOutbox(transport, clock);
+
+    const auto result = outbox.submitPost(std::string(65536, 'x'), "body");
+
+    CHECK(result.status == pqueue::SubmitStatus::SendError);
+    CHECK(result.detail.code == pqueue::StatusCode::EncodeFailed);
+    CHECK(std::string(result.detail.message) == "failed to encode HTTP request envelope");
+    CHECK(transport.posts.empty());
+#endif
+}
+
 TEST_CASE("pqueue http outbox posts immediately when queue is empty") {
 #ifndef ARDUINO
     cleanHttpOutboxSpool();

@@ -69,12 +69,15 @@ pqueue::SubmitResult Outbox::submitPost(const std::string& path, const std::stri
 
     std::string encoded;
     if (!encodeRequestEnvelope(request, encoded)) {
+        const Status status = Status::failure(
+            StatusCode::EncodeFailed,
+            "failed to encode HTTP request envelope");
         emitDiagnostic(
             Severity::Error,
-            Status::failure(StatusCode::EncodeFailed, "failed to encode HTTP request envelope"),
+            status,
             "submitPost",
             &request);
-        return {pqueue::SubmitStatus::SendError};
+        return {pqueue::SubmitStatus::SendError, status};
     }
 
     emitDiagnostic(Severity::Debug, Status::success(), "submitPost", &request);
