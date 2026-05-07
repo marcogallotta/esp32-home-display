@@ -1,4 +1,5 @@
 #include "pqueue/file_store.h"
+#include "pqueue/queue.h"
 #include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
@@ -46,6 +47,12 @@ public:
         if (usedBytes() - existingSize + data.size() > capacityBytes) {
             return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake capacity exceeded");
         }
+        if (partialWriteFileOnce.armed) {
+            const auto bytes = std::min(partialWriteFileOnce.bytes, data.size());
+            files[name] = data.substr(0, bytes);
+            partialWriteFileOnce.clear();
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake partial write failed");
+        }
         files[name] = data;
         return pqueue::Status::success();
     }
@@ -69,6 +76,12 @@ public:
         auto it = files.find(name);
         if (it == files.end() || offset + data.size() > it->second.size()) {
             return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake writeAt range missing");
+        }
+        if (partialWriteAtOnce.armed) {
+            const auto bytes = std::min(partialWriteAtOnce.bytes, data.size());
+            it->second.replace(static_cast<std::size_t>(offset), bytes, data.substr(0, bytes));
+            partialWriteAtOnce.clear();
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake partial writeAt failed");
         }
         it->second.replace(static_cast<std::size_t>(offset), data.size(), data);
         return pqueue::Status::success();
@@ -154,6 +167,8 @@ public:
     void failNextWrite() { failWriteOnce.arm(); }
     void failNextRemove() { failRemoveOnce.arm(); }
     void failNextRename() { failRenameOnce.arm(); }
+    void partialNextWriteFile(std::size_t bytes) { partialWriteFileOnce.arm(bytes); }
+    void partialNextWriteAt(std::size_t bytes) { partialWriteAtOnce.arm(bytes); }
 
     void setCapacityBytes(std::size_t bytes) { capacityBytes = bytes; }
 
@@ -200,6 +215,19 @@ private:
         bool armed = false;
     };
 
+    struct OneShotPartialWrite {
+        void arm(std::size_t prefixBytes) {
+            armed = true;
+            bytes = prefixBytes;
+        }
+        void clear() {
+            armed = false;
+            bytes = 0;
+        }
+        bool armed = false;
+        std::size_t bytes = 0;
+    };
+
     std::size_t usedBytes() const {
         std::size_t out = 0;
         for (const auto& entry : files) {
@@ -213,6 +241,8 @@ private:
     OneShotFailure failWriteOnce;
     OneShotFailure failRemoveOnce;
     OneShotFailure failRenameOnce;
+    OneShotPartialWrite partialWriteFileOnce;
+    OneShotPartialWrite partialWriteAtOnce;
     std::size_t capacityBytes = std::numeric_limits<std::size_t>::max();
 };
 
@@ -240,6 +270,17 @@ pqueue::FileStore makeStore(const std::shared_ptr<FakeFileSystem>& fileSystem, p
     config.recordSizeBytes = recordSizeBytes;
     config.checkpointEveryOps = checkpointEveryOps;
     return pqueue::FileStore(config);
+}
+
+pqueue::Config makeQueueConfig(const std::shared_ptr<FakeFileSystem>& fileSystem, pqueue::EventOptions events = {}, std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t checkpointEveryOps = 64) {
+    pqueue::Config config;
+    config.basePath = "/fake-pqueue";
+    config.fileSystem = fileSystem;
+    config.events = events;
+    config.reservedBytes = reservedBytes;
+    config.recordSizeBytes = recordSizeBytes;
+    config.checkpointEveryOps = checkpointEveryOps;
+    return config;
 }
 
 std::size_t slotSize(std::size_t recordSizeBytes = 32) {
@@ -380,6 +421,46 @@ TEST_CASE("FileStore removeRecord invalidates the slot") {
 
     std::string out;
     CHECK_FALSE(store.readRecord(0, out).ok());
+}
+
+TEST_CASE("Queue does not advance index after torn record write") {
+    auto fileSystem = makeFakeFileSystem();
+
+    {
+        auto store = makeStore(fileSystem);
+        REQUIRE(store.mount().ok());
+    }
+
+    {
+        auto queue = pqueue::Queue(makeQueueConfig(fileSystem));
+        fileSystem->partialNextWriteAt(pqueue::storage_detail::kRecordHeaderBytes / 2);
+        const auto status = queue.enqueue("first");
+        REQUIRE_FALSE(status.ok());
+        CHECK(status.code == pqueue::StatusCode::WriteFailed);
+    }
+
+    {
+        auto store = makeStore(fileSystem);
+        pqueue::FileStoreIndex index;
+        REQUIRE(store.readIndex(index).ok());
+        CHECK_EQ(index.head, 0U);
+        CHECK_EQ(index.tail, 0U);
+        CHECK_EQ(index.count, 0U);
+    }
+
+    {
+        auto queue = pqueue::Queue(makeQueueConfig(fileSystem));
+        std::string out;
+        CHECK(queue.peek(out).code == pqueue::StatusCode::QueueEmpty);
+
+        REQUIRE(queue.enqueue("second").ok());
+        REQUIRE(queue.peek(out).ok());
+        CHECK_EQ(out, "second");
+
+        const auto validation = queue.validate();
+        CHECK(validation.ok);
+        CHECK_EQ(validation.checkedRecords, 1U);
+    }
 }
 
 
