@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -59,6 +60,33 @@ class SensorOut(BaseModel):
 
 class SensorsOut(BaseModel):
     sensors: list[SensorOut]
+
+
+class BulkIn(BaseModel):
+    sensor_id: UUID
+    readings: list[Any]
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if not self.readings:
+            raise ValueError("readings must not be empty")
+        return self
+
+
+class BulkErrorOut(BaseModel):
+    index: int
+    code: str
+    message: str
+
+
+class BulkOut(BaseModel):
+    status: str
+    received: int
+    created: int
+    duplicate: int
+    conflict: int
+    invalid: int
+    errors: list[BulkErrorOut]
 
 
 SENSOR = SensorSpec[ReadingIn, ReadingOut, SwitchbotReading](

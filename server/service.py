@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from psycopg.errors import UniqueViolation
+from pydantic import ValidationError
 from sqlalchemy import and_, extract, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -249,6 +250,118 @@ def ingest_reading(
         return {"status": "ok", "result": "created"}
 
     return classify_existing_reading(existing_values, reading, sensor.data_fields)
+
+
+
+def add_bulk_error(
+    errors: list[dict[str, Any]],
+    *,
+    error_limit: int,
+    index: int,
+    code: str,
+    message: str,
+):
+    if len(errors) >= error_limit:
+        return
+    errors.append({"index": index, "code": code, "message": message})
+
+
+def validation_error_message(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "invalid reading"
+
+    first = errors[0]
+    loc = first.get("loc", ())
+    message = first.get("msg", "invalid reading")
+
+    if loc:
+        return f"{'.'.join(str(part) for part in loc)}: {message}"
+    return message
+
+
+def bulk_result_counts(
+    db: Session,
+    *,
+    sensor_row: Sensor,
+    raw_readings: list[Any],
+    reading_model: Any,
+    sensor: SensorSpec,
+    error_limit: int,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "ok",
+        "received": len(raw_readings),
+        "created": 0,
+        "duplicate": 0,
+        "conflict": 0,
+        "invalid": 0,
+        "errors": [],
+    }
+
+    for index, raw in enumerate(raw_readings):
+        if not isinstance(raw, dict):
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="invalid_reading",
+                message="reading must be an object",
+            )
+            continue
+
+        try:
+            reading = reading_model(**{**raw, "mac": sensor_row.mac, "name": None})
+            row_result = ingest_reading(db=db, reading=reading, sensor=sensor)
+        except ValidationError as exc:
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="invalid_reading",
+                message=validation_error_message(exc),
+            )
+            continue
+        except BadRequestError as exc:
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="invalid_reading",
+                message=str(exc),
+            )
+            continue
+
+        row_status = row_result.get("result")
+        if row_status == "created":
+            result["created"] += 1
+        elif row_status == "duplicate":
+            result["duplicate"] += 1
+        elif row_status == "merged":
+            result["created"] += 1
+        elif row_status in {"conflict", "merged_with_conflict"}:
+            result["conflict"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="conflict",
+                message="conflicting reading ignored",
+            )
+        else:
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="unexpected_result",
+                message=f"unexpected ingest result: {row_status}",
+            )
+
+    return result
 
 
 def choose_bucket_seconds(window_seconds: float, max_points: int) -> int:
