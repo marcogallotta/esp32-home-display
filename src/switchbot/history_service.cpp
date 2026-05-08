@@ -128,22 +128,36 @@ void logMissingConfiguredSensors(const std::vector<std::string>& requestedMacs,
     }
 }
 
+std::string windowAction(const std::string& source) {
+    if (source == "internal_gap") {
+        return "backend internal gap needs";
+    }
+    if (source == "trailing") {
+        return "trailing catch-up needs";
+    }
+    if (source == "new_sensor") {
+        return "new sensor backfill needs";
+    }
+    return source + " needs";
+}
+
 void logPlannedWindow(const std::string& label,
                       const BackendSensorInfo& sensor,
                       const PlannedHistoryWindow& window,
                       const HistoryServiceOptions& options) {
     logLine(
         LogLevel::Info,
-        "SwitchBot history: " + label + " needs " + std::to_string(window.pointCount) +
-        " target " + formatDuration(options.sampleIntervalSeconds) + " readings from " +
-        formatIsoUtc(window.startEpoch) + " to " + formatIsoUtc(window.endEpoch) +
-        " (" + window.source + ")"
+        "SwitchBot history: " + label + " " + windowAction(window.source) + " " +
+        std::to_string(window.pointCount) + " target " + formatDuration(options.sampleIntervalSeconds) +
+        " readings from " + formatIsoUtc(window.startEpoch) + " to " +
+        formatIsoUtc(window.endEpoch)
     );
 
     if (window.pointCount > 0) {
         logLine(
             LogLevel::Debug,
             "SwitchBot history window detail: " + label +
+            " source=" + window.source +
             " first_point=" + formatIsoUtc(window.firstPointEpoch) +
             " last_point=" + formatIsoUtc(window.lastPointEpoch) +
             " clamped_68d=" + yesNo(window.clampedToHistoryLimit) +
