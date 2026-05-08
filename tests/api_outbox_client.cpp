@@ -3,6 +3,7 @@
 #include "doctest/doctest.h"
 #include "ArduinoJson.h"
 #include "pqueue/http/outbox.h"
+#include "pqueue/queue.h"
 
 #ifndef ARDUINO
 
@@ -103,6 +104,13 @@ api::OutboxClient makeClient(const Config& config, FakeTransport& transport, Fak
     return api::OutboxClient(config, transport, kApiOutboxSpoolDir.string(), fakeClockNow, &clock);
 }
 
+pqueue::Config lockedQueueConfig(const Config& config) {
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kApiOutboxSpoolDir.string();
+    queueConfig.reservedBytes = config.api.outbox.diskReserveBytes;
+    return queueConfig;
+}
+
 StaticJsonDocument<512> parseBody(const PostedRequest& request) {
     StaticJsonDocument<512> doc;
     const auto err = deserializeJson(doc, request.body);
@@ -174,6 +182,26 @@ TEST_CASE("api outbox client queues retryable failure and skips direct send whil
     CHECK(second.status == api::WriteStatus::Queued);
     CHECK(second.queueReason == api::WriteQueueReason::BacklogPresent);
     CHECK_EQ(transport.posts.size(), 1U);
+}
+
+
+TEST_CASE("api outbox client reports retryable send that cannot be queued as temporary failure") {
+    cleanTestFiles();
+    const auto config = testConfig();
+
+    pqueue::Queue lockHolder(lockedQueueConfig(config));
+    REQUIRE_EQ(lockHolder.stats().count, 0U);
+
+    FakeTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    const auto result = client.postSwitchbotReading(identity(), validSwitchbotReading());
+
+    CHECK(result.status == api::WriteStatus::FailedTemporary);
+    CHECK_EQ(result.httpStatusCode, 0);
+    REQUIRE_EQ(transport.posts.size(), 1U);
 }
 
 TEST_CASE("api outbox client drains queued backlog after retry delay") {
