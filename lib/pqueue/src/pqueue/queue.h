@@ -39,7 +39,9 @@ private:
     friend class Outbox;
     using RecordVisitor = bool (*)(void* context, const std::string& record, std::uint32_t sequence, std::uint32_t ordinal);
 
-    Status ensureLoaded();
+    class ScopedLock;
+
+    Status loadLatestIndex();
     Status acquireLock();
     void releaseLock();
     Status emit(Event event) const;
@@ -50,7 +52,6 @@ private:
     FileStore store_;
     FileStoreIndex index_;
     std::string lockContents_;
-    bool loaded_ = false;
     bool lockHeld_ = false;
 };
 

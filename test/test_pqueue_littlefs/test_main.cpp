@@ -470,42 +470,48 @@ void test_record_size_boundary() {
     TEST_ASSERT_EQUAL_UINT32(1, queue.stats().count);
 }
 
-void test_lock_conflict() {
+void test_multiple_queue_objects_share_same_base_path() {
     cleanLittleFs();
     pqueue::Queue first(queueConfig());
     pqueue::Queue second(queueConfig());
 
-    const auto held = first.enqueue("held");
-    dbgStatus("lock conflict first enqueue", held);
-    TEST_ASSERT_TRUE(held.ok());
+    const auto firstStatus = first.enqueue("first");
+    dbgStatus("multi object first enqueue", firstStatus);
+    TEST_ASSERT_TRUE(firstStatus.ok());
+
+    const auto secondStatus = second.enqueue("second");
+    dbgStatus("multi object second enqueue", secondStatus);
+    TEST_ASSERT_TRUE(secondStatus.ok());
 
     std::string out;
-    const pqueue::Status locked = second.peek(out);
-    dbgStatus("lock conflict second peek", locked);
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::LockTimeout), static_cast<int>(locked.code));
+    const pqueue::Status peekFirst = first.peek(out);
+    dbgStatus("multi object first peek", peekFirst);
+    TEST_ASSERT_TRUE(peekFirst.ok());
+    TEST_ASSERT_EQUAL_STRING("first", out.c_str());
+
+    TEST_ASSERT_TRUE(first.pop().ok());
+
+    const pqueue::Status peekSecond = second.peek(out);
+    dbgStatus("multi object second peek", peekSecond);
+    TEST_ASSERT_TRUE(peekSecond.ok());
+    TEST_ASSERT_EQUAL_STRING("second", out.c_str());
+    TEST_ASSERT_EQUAL_UINT32(1, second.stats().count);
 }
 
-void test_lock_released_after_queue_destroyed() {
+void test_queue_lock_released_after_each_operation() {
     cleanLittleFs();
 
-    {
-        pqueue::Queue first(queueConfig());
-        const auto firstStatus = first.enqueue("first");
-        dbgStatus("lock release first enqueue", firstStatus);
-        TEST_ASSERT_TRUE(firstStatus.ok());
-
-        pqueue::Queue blocked(queueConfig());
-        std::string out;
-        const pqueue::Status locked = blocked.peek(out);
-        dbgStatus("lock release blocked peek", locked);
-        TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::LockTimeout), static_cast<int>(locked.code));
-    }
+    pqueue::Queue first(queueConfig());
+    const auto firstStatus = first.enqueue("first");
+    dbgStatus("per-operation lock first enqueue", firstStatus);
+    TEST_ASSERT_TRUE(firstStatus.ok());
 
     pqueue::Queue second(queueConfig());
     const auto secondStatus = second.enqueue("second");
-    dbgStatus("lock release second enqueue", secondStatus);
+    dbgStatus("per-operation lock second enqueue", secondStatus);
     TEST_ASSERT_TRUE(secondStatus.ok());
-    dbgStats("lock release final stats", second);
+
+    dbgStats("per-operation lock final stats", second);
     TEST_ASSERT_EQUAL_UINT32(2, second.stats().count);
 }
 
@@ -740,8 +746,8 @@ void setup() {
     RUN_TEST(test_capacity_full_behavior);
     RUN_TEST(test_validate_clean_queue);
     RUN_TEST(test_record_size_boundary);
-    RUN_TEST(test_lock_conflict);
-    RUN_TEST(test_lock_released_after_queue_destroyed);
+    RUN_TEST(test_multiple_queue_objects_share_same_base_path);
+    RUN_TEST(test_queue_lock_released_after_each_operation);
     RUN_TEST(test_littlefs_locks_are_independent_across_base_paths);
     RUN_TEST(test_legacy_lock_file_is_removed_and_does_not_block);
     RUN_TEST(test_legacy_lock_directory_is_removed_and_does_not_block);
