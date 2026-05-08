@@ -228,27 +228,12 @@ uint32_t chooseTimeSyncEpoch(const SyncRequest& request) {
     return 0;
 }
 
-uint32_t indexForEpochCeil(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds) {
-    if (intervalSeconds == 0 || epoch <= startEpoch) {
-        return 0;
-    }
-
-    const uint32_t delta = epoch - startEpoch;
-    return (delta + static_cast<uint32_t>(intervalSeconds) - 1) /
-        static_cast<uint32_t>(intervalSeconds);
-}
-
-uint32_t pageStartForIndex(uint32_t index) {
-    return index - (index % 6U);
-}
-
 uint32_t rangeStartIndex(const Metadata& metadata, const SyncRequest& request) {
     if (request.startEpoch == 0 && request.endEpoch == 0) {
         // The metadata endIndex behaves like an exclusive end cursor.
-        // Requesting endIndex - 5 with count 6 asks one sample past the end and
-        // SwitchBot replies with 0x02. The last full 6-sample page starts at
-        // endIndex - 6.
-        return metadata.endIndex >= 6 ? metadata.endIndex - 6 : 0;
+        // The device rejects reads that spill past that cursor, so the latest
+        // one-page request starts exactly one full page before endIndex.
+        return metadata.endIndex >= kSamplesPerPage ? metadata.endIndex - kSamplesPerPage : 0;
     }
 
     // For explicit time-window syncs, start at the exact first wanted index.
@@ -273,23 +258,35 @@ uint32_t rangeEndExclusiveIndex(const Metadata& metadata, const SyncRequest& req
     );
 }
 
+struct RequestedSampleRange {
+    uint32_t firstRequestIndex = 0;
+    uint32_t endExclusiveIndex = 0;
+    uint32_t progressTotalSamples = 0;
+};
+
 uint32_t progressTotalSamples(const Metadata& metadata,
                               const SyncRequest& request,
                               uint32_t endExclusiveIndex) {
     if (request.startEpoch == 0 && request.endEpoch == 0) {
-        return endExclusiveIndex >= rangeStartIndex(metadata, request)
-            ? endExclusiveIndex - rangeStartIndex(metadata, request)
-            : 0;
+        const uint32_t firstRequestIndex = rangeStartIndex(metadata, request);
+        return endExclusiveIndex >= firstRequestIndex ? endExclusiveIndex - firstRequestIndex : 0;
     }
 
-    const uint32_t firstWanted = indexForEpochCeil(
+    const uint32_t firstWantedIndex = indexForEpochCeil(
         metadata.startEpoch,
         request.startEpoch,
         metadata.intervalSeconds
     );
-    return endExclusiveIndex > firstWanted ? endExclusiveIndex - firstWanted : 0;
+    return endExclusiveIndex > firstWantedIndex ? endExclusiveIndex - firstWantedIndex : 0;
 }
 
+RequestedSampleRange planRequestedSampleRange(const Metadata& metadata, const SyncRequest& request) {
+    RequestedSampleRange range;
+    range.firstRequestIndex = rangeStartIndex(metadata, request);
+    range.endExclusiveIndex = rangeEndExclusiveIndex(metadata, request);
+    range.progressTotalSamples = progressTotalSamples(metadata, request, range.endExclusiveIndex);
+    return range;
+}
 
 bool keepSample(const Sample& sample, const SyncRequest& request, uint32_t endExclusiveIndex) {
     if (sample.index >= endExclusiveIndex) {
@@ -414,57 +411,68 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         return fail(SyncStatus::Timeout, "metadata command timed out or write failed");
     }
 
-    Metadata metadata;
-    if (!parseMetadataResponse(response, metadata)) {
+    const auto metadata = parseMetadataResponse(response);
+    if (!metadata.has_value()) {
         logBytes("bad-metadata", response);
         cleanup();
         return fail(SyncStatus::BadMetadata, badDecodeMessage("metadata response decode failed", response));
     }
 
     SyncResult result;
-    result.metadata = metadata;
+    result.metadata = *metadata;
 
-    const uint32_t firstPage = rangeStartIndex(result.metadata, request);
-    const uint32_t endExclusive = rangeEndExclusiveIndex(result.metadata, request);
-    const uint32_t totalProgressSamples = progressTotalSamples(result.metadata, request, endExclusive);
+    const RequestedSampleRange requestedRange = planRequestedSampleRange(result.metadata, request);
+    const uint32_t firstPage = requestedRange.firstRequestIndex;
+    const uint32_t endExclusive = requestedRange.endExclusiveIndex;
+    const uint32_t totalProgressSamples = requestedRange.progressTotalSamples;
+
+    HISTORY_DBG_PRINTF(
+        "[switchbot history debug] range start_index=%lu end_exclusive=%lu interval=%u start_epoch=%lu end_epoch=%lu progress_total=%lu\n",
+        static_cast<unsigned long>(firstPage),
+        static_cast<unsigned long>(endExclusive),
+        static_cast<unsigned>(result.metadata.intervalSeconds),
+        static_cast<unsigned long>(result.metadata.startEpoch),
+        static_cast<unsigned long>(result.metadata.endEpoch),
+        static_cast<unsigned long>(totalProgressSamples)
+    );
     uint32_t keptSamples = 0;
     uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
     bool haveLastKeptIndex = false;
     uint32_t lastKeptIndex = 0;
 
-    for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += 6) {
+    for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
         delay(50);
 
         uint32_t requestPageIndex = pageIndex;
-        if (requestPageIndex + 6U > result.metadata.endIndex) {
-            if (result.metadata.endIndex < 6U) {
+        if (requestPageIndex + kSamplesPerPage > result.metadata.endIndex) {
+            if (result.metadata.endIndex < kSamplesPerPage) {
                 break;
             }
             // The device rejects page reads that extend past the metadata
             // endIndex cursor with a one-byte 0x02 response. For a partial
             // final window, read the last full page and trim/skip duplicates
             // locally instead of asking the device for an invalid tail page.
-            requestPageIndex = result.metadata.endIndex - 6U;
+            requestPageIndex = result.metadata.endIndex - kSamplesPerPage;
         }
 
-        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(requestPageIndex, 6), request.commandTimeoutMs, response)) {
+        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(requestPageIndex, kSamplesPerPage), request.commandTimeoutMs, response)) {
             cleanup();
             return fail(SyncStatus::Timeout, "page command timed out or write failed");
         }
 
-        const std::vector<Sample> samples = decodePageResponse(
+        const auto samples = decodePageResponse(
             response,
             requestPageIndex,
             result.metadata.startEpoch,
             result.metadata.intervalSeconds
         );
-        if (samples.empty()) {
+        if (!samples.has_value()) {
             logBytes("bad-page", response);
             cleanup();
             return fail(SyncStatus::BadPage, badPageMessage(requestPageIndex, response));
         }
 
-        for (const Sample& sample : samples) {
+        for (const Sample& sample : *samples) {
             if (keepSample(sample, request, endExclusive)) {
                 if (haveLastKeptIndex && sample.index <= lastKeptIndex) {
                     continue;
