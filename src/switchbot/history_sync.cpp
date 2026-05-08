@@ -8,6 +8,8 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "../log.h"
 #endif
 
@@ -59,8 +61,22 @@ constexpr uint32_t kScanDurationMs = 15000;
 #endif
 
 struct NotifyState {
+    NotifyState()
+        : ready(xSemaphoreCreateBinary()) {}
+
+    ~NotifyState() {
+        if (ready != nullptr) {
+            vSemaphoreDelete(ready);
+        }
+    }
+
+    NotifyState(const NotifyState&) = delete;
+    NotifyState& operator=(const NotifyState&) = delete;
+
+    bool valid() const { return ready != nullptr; }
+
     std::vector<uint8_t> value;
-    volatile bool hasValue = false;
+    SemaphoreHandle_t ready = nullptr;
 };
 
 SyncResult fail(SyncStatus status, const std::string& message) {
@@ -79,7 +95,8 @@ std::string normalizedMac(std::string value) {
 
 void drainNotifications(NotifyState& state) {
     state.value.clear();
-    state.hasValue = false;
+    while (state.ready != nullptr && xSemaphoreTake(state.ready, 0) == pdTRUE) {
+    }
 }
 
 void logBytes(const char* label, const std::vector<uint8_t>& bytes) {
@@ -317,6 +334,10 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     }
 
     NotifyState notifyState;
+    if (!notifyState.valid()) {
+        return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
+    }
+
     NimBLEClient* client = NimBLEDevice::createClient();
     if (client == nullptr) {
         return fail(SyncStatus::ConnectFailed, "NimBLEDevice::createClient failed");
@@ -367,7 +388,9 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         true,
         [&notifyState](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
             notifyState.value.assign(data, data + length);
-            notifyState.hasValue = true;
+            if (notifyState.ready != nullptr) {
+                xSemaphoreGive(notifyState.ready);
+            }
         }
     );
     if (!subscribed) {
