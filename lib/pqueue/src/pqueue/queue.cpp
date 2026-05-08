@@ -288,14 +288,21 @@ ValidationResult Queue::validate(const ValidationOptions& options) {
     return result;
 }
 
-Stats Queue::stats() {
-    Stats out;
-    if (!ensureLoaded().ok()) {
-        return out;
+StatsResult Queue::statsResult() {
+    StatsResult result;
+    const Status st = ensureLoaded();
+    if (!st.ok()) {
+        result.status = st;
+        return result;
     }
-    out.count = index_.count;
-    out.freeBytes = store_.freeBytes();
-    return out;
+
+    result.stats.count = index_.count;
+    result.stats.freeBytes = store_.freeBytes();
+    return result;
+}
+
+Stats Queue::stats() {
+    return statsResult().stats;
 }
 
 } // namespace pqueue

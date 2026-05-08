@@ -32,6 +32,7 @@ public:
     Status pop();
     Status rewriteFront(const std::string& record);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
+    StatsResult statsResult();
     Stats stats();
 
 private:
