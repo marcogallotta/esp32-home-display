@@ -40,6 +40,8 @@ const char* writeStatusName(api::WriteStatus status) {
             return "dropped permanently";
         case api::WriteStatus::DroppedQueueFull:
             return "dropped because queue is full";
+        case api::WriteStatus::FailedTemporary:
+            return "failed temporarily";
     }
 
     return "unknown";
@@ -82,6 +84,7 @@ void logApiWriteResult(
     const LogLevel level =
         response.status == api::WriteStatus::DroppedPermanent ||
         response.status == api::WriteStatus::DroppedQueueFull ||
+        response.status == api::WriteStatus::FailedTemporary ||
         response.backendResult == api::BackendWriteResult::Conflict ||
         response.backendResult == api::BackendWriteResult::Failed
             ? LogLevel::Warn

@@ -141,6 +141,29 @@ TEST_CASE("pqueue outbox queues retryable fresh send failure") {
 #endif
 }
 
+
+TEST_CASE("pqueue outbox supports multiple live objects on the same base path") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender firstSender;
+    firstSender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeSender secondSender;
+    FakeClock clock;
+
+    auto first = makeOutbox(firstSender, clock);
+    auto second = makeOutbox(secondSender, clock);
+
+    REQUIRE(first.submit("first").status == pqueue::SubmitStatus::Queued);
+    CHECK_EQ(first.stats().count, 1U);
+
+    const auto secondSubmit = second.submit("second");
+    CHECK(secondSubmit.status == pqueue::SubmitStatus::Queued);
+    CHECK(secondSender.payloads.empty());
+    CHECK_EQ(first.stats().count, 2U);
+    CHECK_EQ(second.stats().count, 2U);
+#endif
+}
+
 TEST_CASE("pqueue outbox preserves FIFO when backlog exists") {
 #ifndef ARDUINO
     cleanOutboxSpool();

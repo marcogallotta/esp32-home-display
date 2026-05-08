@@ -25,6 +25,7 @@ enum class WriteStatus {
     Queued,
     DroppedPermanent,
     DroppedQueueFull,
+    FailedTemporary,
 };
 
 enum class WriteQueueReason {

@@ -34,4 +34,9 @@ struct Stats {
     std::uint64_t freeBytes = 0;
 };
 
+struct StatsResult {
+    Status status = Status::success();
+    Stats stats;
+};
+
 } // namespace pqueue
