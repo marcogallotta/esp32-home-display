@@ -147,19 +147,16 @@ void logProgress(const std::string& label, uint32_t done, uint32_t total) {
 }
 
 bool waitForNotify(NotifyState& state, uint32_t timeoutMs, std::vector<uint8_t>& out) {
-    const uint32_t start = millis();
-    while (!state.hasValue) {
-        if (millis() - start >= timeoutMs) {
-            HISTORY_DBG_PRINTF("[switchbot history debug] notify timeout after %lu ms\n",
-                               static_cast<unsigned long>(timeoutMs));
-            return false;
-        }
-        delay(10);
+    const TickType_t timeoutTicks = pdMS_TO_TICKS(timeoutMs);
+    if (state.ready == nullptr || xSemaphoreTake(state.ready, timeoutTicks) != pdTRUE) {
+        HISTORY_DBG_PRINTF("[switchbot history debug] notify timeout after %lu ms\n",
+                           static_cast<unsigned long>(timeoutMs));
+        return false;
     }
 
     out = state.value;
     logBytes("notify", out);
-    drainNotifications(state);
+    state.value.clear();
     return true;
 }
 
