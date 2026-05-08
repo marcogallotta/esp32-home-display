@@ -1,6 +1,5 @@
 #include "switchbot/history_protocol.h"
 
-#include <algorithm>
 #include <cctype>
 #include <iomanip>
 #include <sstream>
@@ -10,23 +9,84 @@ namespace switchbot {
 namespace history {
 namespace {
 
-void appendU32BE(std::vector<uint8_t>& out, uint32_t value) {
-    out.push_back(static_cast<uint8_t>((value >> 24) & 0xff));
-    out.push_back(static_cast<uint8_t>((value >> 16) & 0xff));
-    out.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
-    out.push_back(static_cast<uint8_t>(value & 0xff));
-}
+constexpr uint8_t kSuccessResponse = 0x01;
+constexpr uint8_t kCommandHeader = 0x57;
+constexpr uint8_t kHistoryCommandGroup = 0x0f;
+constexpr uint8_t kReservedByte = 0x00;
+constexpr uint8_t kDefaultPageSampleCount = 6;
 
-uint32_t readU32BE(const std::vector<uint8_t>& bytes, size_t offset) {
-    return (static_cast<uint32_t>(bytes[offset]) << 24) |
-           (static_cast<uint32_t>(bytes[offset + 1]) << 16) |
-           (static_cast<uint32_t>(bytes[offset + 2]) << 8) |
-           static_cast<uint32_t>(bytes[offset + 3]);
-}
+constexpr uint8_t kTemperaturePositiveBit = 0x80;
+constexpr uint8_t kSevenBitValueMask = 0x7f;
+constexpr uint8_t kDecimalNibbleMask = 0x0f;
 
-uint16_t readU16BE(const std::vector<uint8_t>& bytes, size_t offset) {
-    return static_cast<uint16_t>((static_cast<uint16_t>(bytes[offset]) << 8) |
-                                 static_cast<uint16_t>(bytes[offset + 1]));
+constexpr size_t kMetadataResponseBytes = 15;
+constexpr size_t kMetadataStartEpochOffset = 1;
+constexpr size_t kMetadataEndEpochOffset = 5;
+constexpr size_t kMetadataEndIndexOffset = 9;
+constexpr size_t kMetadataIntervalOffset = 13;
+
+constexpr size_t kPageResponseBytes = 16;
+constexpr size_t kPagePayloadOffset = 1;
+constexpr size_t kPackedSampleGroupBytes = 5;
+constexpr size_t kPackedSampleGroupsPerPage = 3;
+
+constexpr uint8_t kStartHistoryCommand = 0x3a;
+constexpr uint8_t kMetadataCommand = 0x3b;
+constexpr uint8_t kPageCommand = 0x3c;
+
+const uint8_t kTimeSyncPrefix[] = {
+    kCommandHeader, 0x00, 0x05, 0x03, 0x0d,
+    kReservedByte, kReservedByte, kReservedByte, kReservedByte,
+};
+
+class ByteWriter {
+public:
+    void append(uint8_t value) { bytes_.push_back(value); }
+
+    void appendBytes(const uint8_t* values, size_t count) {
+        bytes_.insert(bytes_.end(), values, values + count);
+    }
+
+    void appendU32BE(uint32_t value) {
+        append(static_cast<uint8_t>((value >> 24) & 0xff));
+        append(static_cast<uint8_t>((value >> 16) & 0xff));
+        append(static_cast<uint8_t>((value >> 8) & 0xff));
+        append(static_cast<uint8_t>(value & 0xff));
+    }
+
+    std::vector<uint8_t> finish() { return std::move(bytes_); }
+
+private:
+    std::vector<uint8_t> bytes_;
+};
+
+class ByteReader {
+public:
+    explicit ByteReader(const std::vector<uint8_t>& bytes)
+        : bytes_(bytes) {}
+
+    uint8_t u8(size_t offset) const {
+        return bytes_[offset];
+    }
+
+    uint16_t u16BE(size_t offset) const {
+        return static_cast<uint16_t>((static_cast<uint16_t>(bytes_[offset]) << 8) |
+                                     static_cast<uint16_t>(bytes_[offset + 1]));
+    }
+
+    uint32_t u32BE(size_t offset) const {
+        return (static_cast<uint32_t>(bytes_[offset]) << 24) |
+               (static_cast<uint32_t>(bytes_[offset + 1]) << 16) |
+               (static_cast<uint32_t>(bytes_[offset + 2]) << 8) |
+               static_cast<uint32_t>(bytes_[offset + 3]);
+    }
+
+private:
+    const std::vector<uint8_t>& bytes_;
+};
+
+std::vector<uint8_t> buildHistoryCommand(uint8_t command) {
+    return {kCommandHeader, kHistoryCommandGroup, command};
 }
 
 Sample decodeSample(uint8_t tempByte,
@@ -35,47 +95,57 @@ Sample decodeSample(uint8_t tempByte,
                     uint32_t index,
                     uint32_t startEpoch,
                     uint16_t intervalSeconds) {
-    const int sign = (tempByte & 0x80) ? 1 : -1;
-    const int tempInt = tempByte & 0x7f;
+    const int sign = (tempByte & kTemperaturePositiveBit) ? 1 : -1;
+    const int tempInt = tempByte & kSevenBitValueMask;
+
     Sample sample;
     sample.index = index;
     sample.epoch = indexToEpoch(index, startEpoch, intervalSeconds);
-    sample.temperatureC = sign * (tempInt + static_cast<double>(decimalNibble & 0x0f) / 10.0);
-    sample.humidityPct = humidityByte & 0x7f;
+    sample.temperatureC = sign * (tempInt + static_cast<double>(decimalNibble & kDecimalNibbleMask) / 10.0);
+    sample.humidityPct = humidityByte & kSevenBitValueMask;
     return sample;
 }
 
 }  // namespace
 
 std::vector<uint8_t> buildTimeSyncCommand(uint32_t unixEpoch) {
-    std::vector<uint8_t> out = {0x57, 0x00, 0x05, 0x03, 0x0d, 0x00, 0x00, 0x00, 0x00};
-    appendU32BE(out, unixEpoch);
-    return out;
+    ByteWriter out;
+    out.appendBytes(kTimeSyncPrefix, sizeof(kTimeSyncPrefix));
+    out.appendU32BE(unixEpoch);
+    return out.finish();
 }
 
 std::vector<uint8_t> buildStartCommand() {
-    return {0x57, 0x0f, 0x3a};
+    return buildHistoryCommand(kStartHistoryCommand);
 }
 
 std::vector<uint8_t> buildMetadataCommand() {
-    return {0x57, 0x0f, 0x3b, 0x00};
-}
-
-std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count) {
-    std::vector<uint8_t> out = {0x57, 0x0f, 0x3c, 0x00};
-    appendU32BE(out, absoluteIndex);
-    out.push_back(count);
+    std::vector<uint8_t> out = buildHistoryCommand(kMetadataCommand);
+    out.push_back(kReservedByte);
     return out;
 }
 
+std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count) {
+    ByteWriter out;
+    out.append(kCommandHeader);
+    out.append(kHistoryCommandGroup);
+    out.append(kPageCommand);
+    out.append(kReservedByte);
+    out.appendU32BE(absoluteIndex);
+    out.append(count == 0 ? kDefaultPageSampleCount : count);
+    return out.finish();
+}
+
 bool parseMetadataResponse(const std::vector<uint8_t>& response, Metadata& out) {
-    if (response.size() != 15 || response[0] != 0x01) {
+    if (response.size() != kMetadataResponseBytes || response[0] != kSuccessResponse) {
         return false;
     }
-    out.startEpoch = readU32BE(response, 1);
-    out.endEpoch = readU32BE(response, 5);
-    out.endIndex = readU32BE(response, 9);
-    out.intervalSeconds = readU16BE(response, 13);
+
+    const ByteReader reader(response);
+    out.startEpoch = reader.u32BE(kMetadataStartEpochOffset);
+    out.endEpoch = reader.u32BE(kMetadataEndEpochOffset);
+    out.endIndex = reader.u32BE(kMetadataEndIndexOffset);
+    out.intervalSeconds = reader.u16BE(kMetadataIntervalOffset);
     return out.intervalSeconds != 0;
 }
 
@@ -84,21 +154,22 @@ std::vector<Sample> decodePageResponse(const std::vector<uint8_t>& response,
                                        uint32_t startEpoch,
                                        uint16_t intervalSeconds) {
     std::vector<Sample> out;
-    if (response.size() != 16 || response[0] != 0x01 || intervalSeconds == 0) {
+    if (response.size() != kPageResponseBytes || response[0] != kSuccessResponse || intervalSeconds == 0) {
         return out;
     }
 
-    size_t offset = 1;
+    const ByteReader reader(response);
     uint32_t index = pageStartIndex;
-    for (int group = 0; group < 3; ++group) {
-        const uint8_t temp1 = response[offset];
-        const uint8_t humidity1 = response[offset + 1];
-        const uint8_t decimals = response[offset + 2];
-        const uint8_t temp2 = response[offset + 3];
-        const uint8_t humidity2 = response[offset + 4];
+    for (size_t group = 0; group < kPackedSampleGroupsPerPage; ++group) {
+        const size_t offset = kPagePayloadOffset + group * kPackedSampleGroupBytes;
+        const uint8_t temp1 = reader.u8(offset);
+        const uint8_t humidity1 = reader.u8(offset + 1);
+        const uint8_t decimals = reader.u8(offset + 2);
+        const uint8_t temp2 = reader.u8(offset + 3);
+        const uint8_t humidity2 = reader.u8(offset + 4);
+
         out.push_back(decodeSample(temp1, humidity1, decimals >> 4, index++, startEpoch, intervalSeconds));
-        out.push_back(decodeSample(temp2, humidity2, decimals & 0x0f, index++, startEpoch, intervalSeconds));
-        offset += 5;
+        out.push_back(decodeSample(temp2, humidity2, decimals & kDecimalNibbleMask, index++, startEpoch, intervalSeconds));
     }
     return out;
 }
