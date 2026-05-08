@@ -17,6 +17,7 @@ from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import SWITCHBOT_TYPE, XIAOMI_TYPE
 from service import (
     fetch_readings,
+    get_or_create_sensors_with_latest,
     get_sensor_by_id,
     ingest_reading,
     list_sensors,
@@ -123,6 +124,16 @@ def create_app(config: dict) -> FastAPI:
             end_ts=end_ts,
             max_points=max_points,
             sensor=SENSOR_SPECS[sensor_row.type],
+        )
+
+    @protected.post("/switchbot/sensors", response_model=sb.SensorsOut)
+    def create_switchbot_sensors(payload: sb.SensorsIn, db: Session = Depends(get_db)):
+        return sb.SensorsOut(
+            sensors=get_or_create_sensors_with_latest(
+                db=db,
+                requested_sensors=payload.sensors,
+                sensor=sb.SENSOR,
+            )
         )
 
     @protected.post("/switchbot/reading")

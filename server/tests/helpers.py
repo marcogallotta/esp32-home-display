@@ -60,3 +60,11 @@ def get_sensor_readings(client, api_key, sensor_id, params=None):
         headers=auth_headers(api_key),
         params=params or {},
     )
+
+
+def post_switchbot_sensors(client, api_key, sensors):
+    return client.post(
+        "/switchbot/sensors",
+        headers=auth_headers(api_key),
+        json={"sensors": sensors},
+    )

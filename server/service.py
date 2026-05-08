@@ -40,6 +40,80 @@ def list_sensors(db: Session) -> list[Sensor]:
     return db.execute(select(Sensor).order_by(Sensor.name)).scalars().all()
 
 
+def reconcile_sensor_name(sensor: Sensor, name: str | None):
+    if name is None or sensor.name == name:
+        return
+
+    if sensor.name == sensor.mac:
+        sensor.name = name
+        return
+
+    raise BadRequestError("sensor name does not match existing sensor")
+
+
+def get_or_create_sensor_for_sync(
+    db: Session,
+    *,
+    mac: str,
+    name: str | None,
+    sensor_type: int,
+) -> Sensor:
+    mac = validate_mac_address(mac)
+    sensor = get_sensor_by_mac(db, mac)
+
+    if sensor is None:
+        insert_stmt = (
+            insert(Sensor)
+            .values(mac=mac, name=name or mac, type=sensor_type)
+            .on_conflict_do_nothing(index_elements=[Sensor.mac])
+        )
+        db.execute(insert_stmt)
+        sensor = get_sensor_by_mac(db, mac)
+
+    if sensor is None:
+        raise BadRequestError("sensor could not be resolved")
+
+    if sensor.type != sensor_type:
+        raise BadRequestError("sensor type does not match existing sensor")
+
+    reconcile_sensor_name(sensor, name)
+    return sensor
+
+
+def get_latest_timestamp(db: Session, sensor_id: UUID, sensor: SensorSpec) -> datetime | None:
+    return db.execute(
+        select(func.max(sensor.reading_model.timestamp)).where(
+            sensor.reading_model.sensor_id == sensor_id,
+        )
+    ).scalar_one()
+
+
+def get_or_create_sensors_with_latest(
+    db: Session,
+    requested_sensors: list[Any],
+    sensor: SensorSpec,
+) -> list[dict[str, Any]]:
+    resolved = []
+
+    for requested in requested_sensors:
+        sensor_row = get_or_create_sensor_for_sync(
+            db=db,
+            mac=requested.mac,
+            name=requested.name,
+            sensor_type=sensor.db_sensor_type,
+        )
+        resolved.append(
+            {
+                "mac": sensor_row.mac,
+                "sensor_id": sensor_row.id,
+                "latest_timestamp": get_latest_timestamp(db, sensor_row.id, sensor),
+            }
+        )
+
+    db.commit()
+    return resolved
+
+
 def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int) -> Sensor:
     sensor = get_sensor_by_mac(db, mac)
 
@@ -54,9 +128,7 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int) -> 
     if sensor.type != sensor_type:
         raise BadRequestError("sensor type does not match existing sensor")
 
-    if name is not None and sensor.name != name:
-        raise BadRequestError("sensor name does not match existing sensor")
-
+    reconcile_sensor_name(sensor, name)
     return sensor
 
 

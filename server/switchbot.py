@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, model_validator
 
@@ -27,6 +28,37 @@ class ReadingOut(BaseModel):
     timestamp: datetime
     temperature_c: float
     humidity_pct: float
+
+
+class SensorIn(BaseModel):
+    mac: str
+    name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if self.name == "":
+            raise ValueError("name must not be empty")
+        return self
+
+
+class SensorsIn(BaseModel):
+    sensors: list[SensorIn]
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if not self.sensors:
+            raise ValueError("sensors must not be empty")
+        return self
+
+
+class SensorOut(BaseModel):
+    mac: str
+    sensor_id: UUID
+    latest_timestamp: datetime | None
+
+
+class SensorsOut(BaseModel):
+    sensors: list[SensorOut]
 
 
 SENSOR = SensorSpec[ReadingIn, ReadingOut, SwitchbotReading](
