@@ -3,7 +3,6 @@
 #include "doctest/doctest.h"
 #include "ArduinoJson.h"
 #include "pqueue/http/outbox.h"
-#include "pqueue/queue.h"
 
 #ifndef ARDUINO
 
@@ -14,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -104,11 +104,13 @@ api::OutboxClient makeClient(const Config& config, FakeTransport& transport, Fak
     return api::OutboxClient(config, transport, kApiOutboxSpoolDir.string(), fakeClockNow, &clock);
 }
 
-pqueue::Config lockedQueueConfig(const Config& config) {
-    pqueue::Config queueConfig;
-    queueConfig.basePath = kApiOutboxSpoolDir.string();
-    queueConfig.reservedBytes = config.api.outbox.diskReserveBytes;
-    return queueConfig;
+void writeActiveQueueLockFile() {
+    std::filesystem::create_directories(kApiOutboxSpoolDir);
+    std::ofstream lock(kApiOutboxSpoolDir / ".pqueue.lock", std::ios::binary | std::ios::trunc);
+    REQUIRE(lock.good());
+    lock << "pqueue-lock-v1\n";
+    lock << "pid=" << static_cast<long>(::getpid()) << "\n";
+    lock << "token=active-api-outbox-client-test-lock\n";
 }
 
 StaticJsonDocument<512> parseBody(const PostedRequest& request) {
@@ -184,13 +186,10 @@ TEST_CASE("api outbox client queues retryable failure and skips direct send whil
     CHECK_EQ(transport.posts.size(), 1U);
 }
 
-
 TEST_CASE("api outbox client reports retryable send that cannot be queued as temporary failure") {
     cleanTestFiles();
     const auto config = testConfig();
-
-    pqueue::Queue lockHolder(lockedQueueConfig(config));
-    REQUIRE_EQ(lockHolder.stats().count, 0U);
+    writeActiveQueueLockFile();
 
     FakeTransport transport;
     transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
@@ -227,7 +226,6 @@ TEST_CASE("api outbox client drains queued backlog after retry delay") {
     CHECK_EQ(transport.posts[1].url, "https://example.test/api/switchbot/reading");
     CHECK_EQ(transport.posts[2].url, "https://example.test/api/xiaomi/reading");
 }
-
 
 TEST_CASE("api outbox client drainPending respects drainRateCap per second") {
     cleanTestFiles();

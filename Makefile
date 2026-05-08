@@ -33,6 +33,7 @@ PQUEUE_SRC := \
 	lib/pqueue/src/pqueue/http/posix_curl_transport.cpp \
 	lib/pqueue/src/pqueue/http/request_envelope.cpp \
 	lib/pqueue/src/pqueue/file_store.cpp \
+	lib/pqueue/src/pqueue/diagnostics.cpp \
 	lib/pqueue/src/pqueue/storage_common.cpp \
 	lib/pqueue/src/pqueue/storage_posix.cpp \
 	lib/pqueue/src/pqueue/storage_littlefs.cpp \
@@ -88,9 +89,11 @@ TEST_SRC := \
 	tests/pqueue.cpp \
 	tests/pqueue_envelope.cpp \
 	tests/pqueue_file_store.cpp \
+	tests/pqueue_diagnostics.cpp \
 	tests/pqueue_http_outbox.cpp \
 	tests/pqueue_http_request_envelope.cpp \
 	tests/pqueue_outbox.cpp \
+	tests/pqueue_queue_edges.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \

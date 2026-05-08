@@ -537,9 +537,24 @@ TEST_CASE("Outbox drops corrupt front record when index already points at it") {
 }
 
 
-TEST_CASE("FileStore fails loudly when spool exists without metadata") {
+TEST_CASE("FileStore initializes an all-zero spool left by interrupted first format") {
     auto fileSystem = makeFakeFileSystem();
     fileSystem->files["pqueue.spool"] = std::string(spoolSize(), '\0');
+    auto store = makeStore(fileSystem);
+
+    REQUIRE(store.mount().ok());
+
+    pqueue::FileStoreIndex out;
+    REQUIRE(store.readIndex(out).ok());
+    CHECK_EQ(out.head, 0U);
+    CHECK_EQ(out.tail, 0U);
+    CHECK_EQ(out.count, 0U);
+}
+
+TEST_CASE("FileStore fails loudly when metadata is missing but spool is not empty") {
+    auto fileSystem = makeFakeFileSystem();
+    fileSystem->files["pqueue.spool"] = std::string(spoolSize(), '\0');
+    fileSystem->files["pqueue.spool"][pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes] = static_cast<char>(0x7f);
     auto store = makeStore(fileSystem);
 
     const auto status = store.mount();
