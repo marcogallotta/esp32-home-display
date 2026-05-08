@@ -5,6 +5,7 @@
 #ifdef ARDUINO
 
 #include <cstdint>
+#include <string>
 
 namespace fs {
 class FS;
@@ -41,7 +42,7 @@ public:
 private:
     bool isNetworkReady() const;
     TransportError mapHttpClientError(int code) const;
-    bool configureTlsClient(WiFiClientSecure& client) const;
+    bool configureTlsClient(WiFiClientSecure& client, std::string& caCertStorage) const;
 
     Esp32ArduinoTransportConfig config_;
 };
