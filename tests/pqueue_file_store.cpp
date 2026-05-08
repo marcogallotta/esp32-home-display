@@ -1,4 +1,6 @@
 #include "pqueue/file_store.h"
+#include "pqueue/outbox.h"
+#include "pqueue/queue.h"
 #include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
@@ -69,6 +71,12 @@ public:
         auto it = files.find(name);
         if (it == files.end() || offset + data.size() > it->second.size()) {
             return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake writeAt range missing");
+        }
+        if (partialWriteAtOnce.armed) {
+            const auto bytes = std::min(partialWriteAtOnce.bytes, data.size());
+            it->second.replace(static_cast<std::size_t>(offset), bytes, data.substr(0, bytes));
+            partialWriteAtOnce.clear();
+            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "fake partial writeAt failed");
         }
         it->second.replace(static_cast<std::size_t>(offset), data.size(), data);
         return pqueue::Status::success();
@@ -154,6 +162,7 @@ public:
     void failNextWrite() { failWriteOnce.arm(); }
     void failNextRemove() { failRemoveOnce.arm(); }
     void failNextRename() { failRenameOnce.arm(); }
+    void partialNextWriteAt(std::size_t bytes) { partialWriteAtOnce.arm(bytes); }
 
     void setCapacityBytes(std::size_t bytes) { capacityBytes = bytes; }
 
@@ -200,6 +209,19 @@ private:
         bool armed = false;
     };
 
+    struct OneShotPartialWrite {
+        void arm(std::size_t prefixBytes) {
+            armed = true;
+            bytes = prefixBytes;
+        }
+        void clear() {
+            armed = false;
+            bytes = 0;
+        }
+        bool armed = false;
+        std::size_t bytes = 0;
+    };
+
     std::size_t usedBytes() const {
         std::size_t out = 0;
         for (const auto& entry : files) {
@@ -213,6 +235,7 @@ private:
     OneShotFailure failWriteOnce;
     OneShotFailure failRemoveOnce;
     OneShotFailure failRenameOnce;
+    OneShotPartialWrite partialWriteAtOnce;
     std::size_t capacityBytes = std::numeric_limits<std::size_t>::max();
 };
 
@@ -240,6 +263,61 @@ pqueue::FileStore makeStore(const std::shared_ptr<FakeFileSystem>& fileSystem, p
     config.recordSizeBytes = recordSizeBytes;
     config.checkpointEveryOps = checkpointEveryOps;
     return pqueue::FileStore(config);
+}
+
+pqueue::Config makeQueueConfig(const std::shared_ptr<FakeFileSystem>& fileSystem, pqueue::EventOptions events = {}, std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t checkpointEveryOps = 64) {
+    pqueue::Config config;
+    config.basePath = "/fake-pqueue";
+    config.fileSystem = fileSystem;
+    config.events = events;
+    config.reservedBytes = reservedBytes;
+    config.recordSizeBytes = recordSizeBytes;
+    config.checkpointEveryOps = checkpointEveryOps;
+    return config;
+}
+
+struct FakeClock {
+    std::uint64_t nowMs = 1000;
+};
+
+std::uint64_t fakeClockNow(void* context) {
+    return static_cast<FakeClock*>(context)->nowMs;
+}
+
+struct FakeSender {
+    std::vector<pqueue::SendDecision> decisions;
+    std::vector<std::string> payloads;
+    std::vector<pqueue::RetryState> retries;
+};
+
+pqueue::SendResult fakeSend(void* context, const std::string& payload, const pqueue::RetryState& retry) {
+    auto* sender = static_cast<FakeSender*>(context);
+    sender->payloads.push_back(payload);
+    sender->retries.push_back(retry);
+
+    if (sender->decisions.empty()) {
+        return {pqueue::SendDecision::Sent};
+    }
+
+    const pqueue::SendDecision decision = sender->decisions.front();
+    sender->decisions.erase(sender->decisions.begin());
+    return {decision};
+}
+
+pqueue::OutboxConfig makeOutboxConfig() {
+    pqueue::OutboxConfig config;
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 10;
+    return config;
+}
+
+pqueue::Outbox makeOutbox(
+    const std::shared_ptr<FakeFileSystem>& fileSystem,
+    FakeSender& sender,
+    FakeClock& clock,
+    pqueue::OutboxConfig outboxConfig = makeOutboxConfig()
+) {
+    return pqueue::Outbox(makeQueueConfig(fileSystem), outboxConfig, fakeSend, &sender, fakeClockNow, &clock);
 }
 
 std::size_t slotSize(std::size_t recordSizeBytes = 32) {
@@ -380,6 +458,82 @@ TEST_CASE("FileStore removeRecord invalidates the slot") {
 
     std::string out;
     CHECK_FALSE(store.readRecord(0, out).ok());
+}
+
+TEST_CASE("Queue does not advance index after torn record write") {
+    auto fileSystem = makeFakeFileSystem();
+
+    {
+        auto store = makeStore(fileSystem);
+        REQUIRE(store.mount().ok());
+    }
+
+    {
+        auto queue = pqueue::Queue(makeQueueConfig(fileSystem));
+        fileSystem->partialNextWriteAt(pqueue::storage_detail::kRecordHeaderBytes / 2);
+        const auto status = queue.enqueue("first");
+        REQUIRE_FALSE(status.ok());
+        CHECK(status.code == pqueue::StatusCode::WriteFailed);
+    }
+
+    {
+        auto store = makeStore(fileSystem);
+        pqueue::FileStoreIndex index;
+        REQUIRE(store.readIndex(index).ok());
+        CHECK_EQ(index.head, 0U);
+        CHECK_EQ(index.tail, 0U);
+        CHECK_EQ(index.count, 0U);
+    }
+
+    {
+        auto queue = pqueue::Queue(makeQueueConfig(fileSystem));
+        std::string out;
+        CHECK(queue.peek(out).code == pqueue::StatusCode::QueueEmpty);
+
+        REQUIRE(queue.enqueue("second").ok());
+        REQUIRE(queue.peek(out).ok());
+        CHECK_EQ(out, "second");
+
+        const auto validation = queue.validate();
+        CHECK(validation.ok);
+        CHECK_EQ(validation.checkedRecords, 1U);
+    }
+}
+
+TEST_CASE("Outbox drops corrupt front record when index already points at it") {
+    auto fileSystem = makeFakeFileSystem();
+    FakeClock clock;
+
+    {
+        FakeSender sender;
+        sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+        auto outbox = makeOutbox(fileSystem, sender, clock);
+
+        REQUIRE(outbox.submit("corrupt-front").status == pqueue::SubmitStatus::Queued);
+        REQUIRE(outbox.submit("valid-behind").status == pqueue::SubmitStatus::Queued);
+    }
+
+    {
+        auto store = makeStore(fileSystem);
+        pqueue::FileStoreIndex index;
+        REQUIRE(store.readIndex(index).ok());
+        CHECK_EQ(index.head, 0U);
+        CHECK_EQ(index.tail, 2U);
+        CHECK_EQ(index.count, 2U);
+    }
+
+    fileSystem->corruptSlotPayload(0, slotSize());
+
+    FakeSender sender;
+    auto outbox = makeOutbox(fileSystem, sender, clock);
+    const auto drain = outbox.drainUpTo(2);
+
+    CHECK_EQ(drain.corruptDropped, 1U);
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_FALSE(drain.queueError);
+    REQUIRE_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "valid-behind");
+    CHECK_EQ(outbox.stats().count, 0U);
 }
 
 

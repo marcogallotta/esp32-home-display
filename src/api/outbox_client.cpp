@@ -284,8 +284,6 @@ std::string dropReasonName(pqueue::http::DropReason reason) {
             return "decode_failed";
         case pqueue::http::DropReason::ClassifiedDrop:
             return "classified_drop";
-        case pqueue::http::DropReason::MaxAttempts:
-            return "max_attempts";
     }
     return "dropped";
 }
@@ -610,12 +608,10 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     const std::uint16_t maxDrain = config_.api.outbox.drainRateCap <= 0
         ? 1
         : static_cast<std::uint16_t>(config_.api.outbox.drainRateCap);
-    const pqueue::DrainResult drainResult = pqueue_->outbox.drainBurst(maxDrain);
+    const pqueue::DrainResult drainResult = pqueue_->outbox.drainUpTo(maxDrain);
     result.attempted = drainResult.attempts;
     result.sent = drainResult.sent;
-    result.dropped = drainResult.dropped +
-        drainResult.droppedMaxAttempts +
-        drainResult.corruptDropped;
+    result.dropped = drainResult.dropped + drainResult.corruptDropped;
     result.notDueYet = drainResult.notDue || drainResult.rateLimited;
     result.blockedByRetryableFailure = drainResult.sendError || drainResult.queueError;
     return result;

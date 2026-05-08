@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "pqueue/outbox.h"
 #include "pqueue/queue.h"
 #include "pqueue/status.h"
 #include "pqueue/storage_common.h"
@@ -16,9 +17,8 @@ namespace {
 
 constexpr const char* kBasePath = "/pqueue_slow";
 constexpr const char* kStatePath = "/pqueue_slow_state";
-constexpr const char* kMetaAPath = "/pqueue_slow/pqueue.meta_a";
-constexpr const char* kMetaBPath = "/pqueue_slow/pqueue.meta_b";
-constexpr const char* kTmpMetaPath = "/pqueue_slow/pqueue.meta_a.tmp";
+constexpr const char* kSpoolPath = "/pqueue_slow/pqueue.spool";
+constexpr const char* kTmpOrphanPath = "/pqueue_slow/pqueue.spool.tmp";
 
 enum class SlowTest : std::uint8_t {
     FifoMany = 1,
@@ -32,7 +32,8 @@ enum class SlowTest : std::uint8_t {
     QueueFullRebootSafe = 9,
     RecordSizeMismatchFailsSafely = 10,
     CapacityMismatchFailsSafely = 11,
-    Churn = 12,
+    OutboxRebootDrain = 12,
+    Churn = 13,
     Done = 255,
 };
 
@@ -45,13 +46,50 @@ std::uint32_t slotSize(std::size_t recordSizeBytes) {
     return static_cast<std::uint32_t>(sizeof(pqueue::storage_detail::RecordHeader) + recordSizeBytes);
 }
 
-pqueue::Config queueConfig(std::size_t recordSizeBytes = 32, std::uint32_t capacityRecords = 40) {
+pqueue::Config queueConfig(
+    std::size_t recordSizeBytes = 32,
+    std::uint32_t capacityRecords = 40,
+    std::uint32_t checkpointEveryOps = 64
+) {
     pqueue::Config config;
     config.basePath = kBasePath;
     config.storageBackend = pqueue::StorageBackend::LittleFS;
     config.recordSizeBytes = recordSizeBytes;
     config.reservedBytes = slotSize(recordSizeBytes) * capacityRecords;
+    config.checkpointEveryOps = checkpointEveryOps;
     return config;
+}
+
+struct FakeSender {
+    pqueue::SendDecision decision = pqueue::SendDecision::Sent;
+    std::uint16_t calls = 0;
+    std::string lastPayload;
+    std::uint8_t lastAttempts = 0;
+};
+
+std::uint64_t fakeClock(void*) {
+    return 0;
+}
+
+pqueue::SendResult fakeSend(void* context, const std::string& payload, const pqueue::RetryState& retry) {
+    auto* sender = static_cast<FakeSender*>(context);
+    sender->calls += 1;
+    sender->lastPayload = payload;
+    sender->lastAttempts = retry.attempts;
+    return {sender->decision};
+}
+
+pqueue::OutboxConfig outboxConfig() {
+    pqueue::OutboxConfig config;
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 1000;
+    return config;
+}
+
+// Outbox records include envelope metadata, so use a larger queue record size than
+// the raw payload-only queue tests.
+pqueue::Config outboxQueueConfig() {
+    return queueConfig(128, 8);
 }
 
 bool mountLittleFs() {
@@ -146,30 +184,48 @@ void expectDrain(pqueue::Queue& queue, const std::vector<std::string>& expected)
     expectQueueEmpty(queue);
 }
 
-void corruptFileByte(const char* path) {
-    TEST_ASSERT_TRUE_MESSAGE(mountLittleFs(), "failed to mount LittleFS for corruption");
-    File file = LittleFS.open(path, "r+");
-    TEST_ASSERT_TRUE_MESSAGE(file, "failed to open file for corruption");
-    TEST_ASSERT_TRUE(file.seek(0, SeekSet));
-    TEST_ASSERT_EQUAL_UINT(1, file.write(static_cast<std::uint8_t>(0xff)));
+std::uint32_t checkpointOffset(std::uint32_t slot) {
+    return slot * pqueue::storage_detail::kCheckpointRecordBytes;
+}
+
+void writeSpoolBytes(std::uint32_t offset, const std::string& bytes) {
+    TEST_ASSERT_TRUE_MESSAGE(mountLittleFs(), "failed to mount LittleFS for spool write");
+    File file = LittleFS.open(kSpoolPath, "r+");
+    TEST_ASSERT_TRUE_MESSAGE(file, "failed to open pqueue spool for write");
+    TEST_ASSERT_TRUE(file.seek(offset, SeekSet));
+    TEST_ASSERT_EQUAL_UINT(bytes.size(), file.write(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()),
+        bytes.size()
+    ));
     file.flush();
     file.close();
     LittleFS.end();
 }
 
-void removeFileIfPresent(const char* path) {
-    TEST_ASSERT_TRUE_MESSAGE(mountLittleFs(), "failed to mount LittleFS for remove");
-    if (LittleFS.exists(path)) {
-        TEST_ASSERT_TRUE_MESSAGE(LittleFS.remove(path), "failed to remove LittleFS file");
+void corruptCheckpointSlot(std::uint32_t slot) {
+    const char bad = static_cast<char>(0xff);
+    writeSpoolBytes(checkpointOffset(slot), std::string(1, bad));
+}
+
+void corruptAllCheckpointSlots() {
+    for (std::uint32_t slot = 0; slot < pqueue::storage_detail::kCheckpointSlots; ++slot) {
+        corruptCheckpointSlot(slot);
     }
-    LittleFS.end();
+}
+
+void zeroAllCheckpointSlots() {
+    const std::string zeroes(
+        pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes,
+        '\0'
+    );
+    writeSpoolBytes(0, zeroes);
 }
 
 void writeOrphanTmpFile() {
     TEST_ASSERT_TRUE_MESSAGE(mountLittleFs(), "failed to mount LittleFS for tmp orphan");
-    File file = LittleFS.open(kTmpMetaPath, "w");
+    File file = LittleFS.open(kTmpOrphanPath, "w");
     TEST_ASSERT_TRUE_MESSAGE(file, "failed to create tmp orphan");
-    file.print("orphan tmp metadata that must be ignored");
+    file.print("orphan tmp file that must be ignored");
     file.flush();
     file.close();
     LittleFS.end();
@@ -303,24 +359,27 @@ void test_reboot_index_fallback() {
     if (phase == 0) {
         cleanLittleFs();
         {
-            pqueue::Queue queue(queueConfig());
-            TEST_ASSERT_TRUE(queue.enqueue("kept-by-older-index").ok());
-            TEST_ASSERT_TRUE(queue.enqueue("lost-with-newer-index").ok());
+            pqueue::Queue queue(queueConfig(32, 40, 1));
+            TEST_ASSERT_TRUE(queue.enqueue("kept-by-older-checkpoint").ok());
+            TEST_ASSERT_TRUE(queue.enqueue("lost-with-newer-checkpoint").ok());
         }
-        corruptFileByte(kMetaAPath);
+
+        // With checkpointEveryOps=1: initial generation is slot 1, first enqueue is slot 2,
+        // second enqueue is slot 3. Corrupting slot 3 should make mount fall back to slot 2.
+        corruptCheckpointSlot(3);
         rebootTo(SlowTest::IndexFallback, 1);
     }
 
     TEST_ASSERT_EQUAL_UINT8(1, phase);
     {
-        pqueue::Queue queue(queueConfig());
+        pqueue::Queue queue(queueConfig(32, 40, 1));
         TEST_ASSERT_EQUAL_UINT32(1, queue.stats().count);
 
         const pqueue::ValidationResult validation = queue.validate();
         TEST_ASSERT_FALSE(validation.ok);
         TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, validation.errors.size());
 
-        expectFrontAndPop(queue, "kept-by-older-index");
+        expectFrontAndPop(queue, "kept-by-older-checkpoint");
         expectQueueEmpty(queue);
     }
     completeSlowTest();
@@ -332,10 +391,9 @@ void test_reboot_missing_metadata_fails_safely() {
         cleanLittleFs();
         {
             pqueue::Queue queue(queueConfig());
-            TEST_ASSERT_TRUE(queue.enqueue("spool-without-metadata").ok());
+            TEST_ASSERT_TRUE(queue.enqueue("spool-without-checkpoints").ok());
         }
-        removeFileIfPresent(kMetaAPath);
-        removeFileIfPresent(kMetaBPath);
+        zeroAllCheckpointSlots();
         rebootTo(SlowTest::MissingMetadataFailsSafely, 1);
     }
 
@@ -355,10 +413,9 @@ void test_reboot_corrupt_metadata_fails_safely() {
         cleanLittleFs();
         {
             pqueue::Queue queue(queueConfig());
-            TEST_ASSERT_TRUE(queue.enqueue("spool-with-corrupt-metadata").ok());
+            TEST_ASSERT_TRUE(queue.enqueue("spool-with-corrupt-checkpoints").ok());
         }
-        corruptFileByte(kMetaAPath);
-        corruptFileByte(kMetaBPath);
+        corruptAllCheckpointSlots();
         rebootTo(SlowTest::CorruptMetadataFailsSafely, 1);
     }
 
@@ -474,6 +531,46 @@ void test_reboot_capacity_mismatch_fails_safely() {
     completeSlowTest();
 }
 
+void test_reboot_outbox_drain() {
+    const std::uint8_t phase = phaseFor(SlowTest::OutboxRebootDrain);
+    if (phase == 0) {
+        cleanLittleFs();
+        {
+            FakeSender retrying;
+            retrying.decision = pqueue::SendDecision::RetryLater;
+            pqueue::Outbox outbox(outboxQueueConfig(), outboxConfig(), fakeSend, &retrying, fakeClock, nullptr);
+
+            const pqueue::SubmitResult submitted = outbox.submit("outbox-reboot-payload");
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::SubmitStatus::Queued), static_cast<int>(submitted.status));
+            TEST_ASSERT_EQUAL_UINT16(1, retrying.calls);
+            TEST_ASSERT_EQUAL_STRING("outbox-reboot-payload", retrying.lastPayload.c_str());
+            TEST_ASSERT_EQUAL_UINT8(0, retrying.lastAttempts);
+            TEST_ASSERT_EQUAL_UINT32(1, outbox.stats().count);
+        }
+        rebootTo(SlowTest::OutboxRebootDrain, 1);
+    }
+
+    TEST_ASSERT_EQUAL_UINT8(1, phase);
+    {
+        FakeSender succeeding;
+        succeeding.decision = pqueue::SendDecision::Sent;
+        pqueue::Outbox outbox(outboxQueueConfig(), outboxConfig(), fakeSend, &succeeding, fakeClock, nullptr);
+
+        TEST_ASSERT_EQUAL_UINT32(1, outbox.stats().count);
+        const pqueue::DrainResult drained = outbox.drain();
+        TEST_ASSERT_EQUAL_UINT16(1, drained.attempts);
+        TEST_ASSERT_EQUAL_UINT16(1, drained.sent);
+        TEST_ASSERT_EQUAL_UINT16(0, drained.dropped);
+        TEST_ASSERT_FALSE(drained.queueError);
+        TEST_ASSERT_FALSE(drained.sendError);
+        TEST_ASSERT_EQUAL_UINT16(1, succeeding.calls);
+        TEST_ASSERT_EQUAL_STRING("outbox-reboot-payload", succeeding.lastPayload.c_str());
+        TEST_ASSERT_EQUAL_UINT8(1, succeeding.lastAttempts);
+        TEST_ASSERT_EQUAL_UINT32(0, outbox.stats().count);
+    }
+    completeSlowTest();
+}
+
 void test_churn_without_reboot() {
     cleanLittleFs();
     pqueue::Queue queue(queueConfig(32, 24));
@@ -524,6 +621,8 @@ SlowTest nextSlowTest(SlowTest test) {
     case SlowTest::RecordSizeMismatchFailsSafely:
         return SlowTest::CapacityMismatchFailsSafely;
     case SlowTest::CapacityMismatchFailsSafely:
+        return SlowTest::OutboxRebootDrain;
+    case SlowTest::OutboxRebootDrain:
         return SlowTest::Churn;
     case SlowTest::Churn:
     case SlowTest::Done:
@@ -579,6 +678,9 @@ void runSlowTest(SlowTest test) {
         break;
     case SlowTest::CapacityMismatchFailsSafely:
         RUN_TEST(test_reboot_capacity_mismatch_fails_safely);
+        break;
+    case SlowTest::OutboxRebootDrain:
+        RUN_TEST(test_reboot_outbox_drain);
         break;
     case SlowTest::Churn:
         RUN_TEST(test_churn_without_reboot);

@@ -90,7 +90,6 @@ using ResponseCallback = void (*)(void* context, const RequestEnvelope& request,
 enum class DropReason {
     DecodeFailed,
     ClassifiedDrop,
-    MaxAttempts,
 };
 
 using DropCallback = void (*)(
@@ -130,7 +129,7 @@ public:
 
     pqueue::SubmitResult submitPost(const std::string& path, const std::string& body);
     pqueue::DrainResult drain();
-    pqueue::DrainResult drainBurst(std::uint16_t maxAttempts);
+    pqueue::DrainResult drainUpTo(std::uint16_t maxDrainAttempts);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 

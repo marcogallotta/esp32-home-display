@@ -37,10 +37,11 @@ using OutboxPayloadValidator = bool (*)(void* context, const std::string& payloa
 // Retry attempt count is persisted in the envelope; retry cooldown timing is RAM-only.
 struct OutboxConfig {
     // Retryable sends are retried indefinitely. attempts is retained only as a saturated diagnostic counter.
-    // TODO: replace/remove maxAttempts after adding explicit max-age and per-failure policy controls.
-    std::uint8_t maxAttempts = 5;
     std::uint16_t maxDrainAttemptsPerSecond = 5;
     std::uint32_t retryDelayMs = 10000;
+    // Proven-corrupt front records may be skipped so one bad slot does not brick the outbox.
+    // 0 disables automatic corrupt-record dropping; the default stops after a small cluster.
+    std::uint16_t maxCorruptDropsPerLifetime = 3;
     EventOptions events;
     // TODO: make CRC configurable once the envelope has a published compatibility policy.
     // TODO: consider burst drain/backoff strategies after the strict FIFO v1 settles.
@@ -63,7 +64,6 @@ struct DrainResult {
     std::uint16_t attempts = 0;
     std::uint16_t sent = 0;
     std::uint16_t dropped = 0;
-    std::uint16_t droppedMaxAttempts = 0;
     std::uint16_t corruptDropped = 0;
     bool rateLimited = false;
     bool notDue = false;
@@ -88,7 +88,7 @@ public:
 
     SubmitResult submit(const std::string& payload);
     DrainResult drain();
-    DrainResult drainBurst(std::uint16_t maxAttempts);
+    DrainResult drainUpTo(std::uint16_t maxDrainAttempts);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 
@@ -117,7 +117,11 @@ private:
     );
     bool frontIsCoolingDown(std::uint64_t nowMs) const;
     bool drainRateAllows(std::uint64_t nowMs) const;
-    std::uint64_t drainIntervalMs() const;
+    void recordDrainAttempt(std::uint64_t nowMs);
+    std::uint32_t drainRateRemainingMs(std::uint64_t nowMs) const;
+    bool canDropCorruptFrontRecord() const;
+    DrainResult dropCorruptFrontRecord(Status corruptStatus);
+    std::uint16_t maxDrainAttemptsPerSecond() const;
 
     Queue queue_;
     OutboxConfig config_;
@@ -125,10 +129,12 @@ private:
     void* sendContext_ = nullptr;
     ClockCallback clock_ = nullptr;
     void* clockContext_ = nullptr;
-    std::uint64_t lastDrainAttemptMs_ = 0;
-    bool hasDrainAttempt_ = false;
+    std::uint64_t drainWindowStartMs_ = 0;
+    std::uint16_t drainAttemptsInWindow_ = 0;
+    bool hasDrainWindow_ = false;
     std::uint64_t frontNextAttemptMs_ = 0;
     bool hasFrontCooldown_ = false;
+    std::uint16_t corruptDropsThisLifetime_ = 0;
 };
 
 } // namespace pqueue
