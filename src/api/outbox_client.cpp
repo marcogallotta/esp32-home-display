@@ -601,19 +601,30 @@ WriteResult OutboxClient::send(ApiRequest request) {
                 response.body
             );
 
-        case pqueue::SubmitStatus::Queued:
+        case pqueue::SubmitStatus::Queued: {
+            const auto stats = pqueue_->outbox.stats();
+            if (stats.count == 0) {
+                return makeWriteResult(
+                    WriteStatus::FailedTemporary,
+                    BackendWriteResult::Failed,
+                    response.statusCode,
+                    response.body
+                );
+            }
+
             logLine(
                 LogLevel::Debug,
                 "Queued API request in pqueue: " +
-                std::to_string(pqueue_->outbox.stats().count) + " queued"
+                std::to_string(stats.count) + " queued"
             );
             return makeWriteResult(
                 WriteStatus::Queued,
                 BackendWriteResult::Failed,
                 response.statusCode,
                 response.body,
-                pqueue_->outbox.stats().count > 1 ? WriteQueueReason::BacklogPresent : WriteQueueReason::RetryableFailure
+                stats.count > 1 ? WriteQueueReason::BacklogPresent : WriteQueueReason::RetryableFailure
             );
+        }
 
         case pqueue::SubmitStatus::Dropped:
             return makeWriteResult(
@@ -629,14 +640,14 @@ WriteResult OutboxClient::send(ApiRequest request) {
 
         case pqueue::SubmitStatus::SendError:
             return makeWriteResult(
-                classifySubmitSendError(submitResult.detail.code),
+                WriteStatus::FailedTemporary,
                 BackendWriteResult::Failed,
                 response.statusCode,
                 response.body
             );
     }
 
-    return makeWriteResult(WriteStatus::FailedTemporary);
+    return makeWriteResult(WriteStatus::DroppedPermanent);
 }
 
 OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
