@@ -85,6 +85,27 @@ Queue::~Queue() {
     releaseLock();
 }
 
+class Queue::ScopedLock {
+public:
+    explicit ScopedLock(Queue& queue) : queue_(queue), status_(queue_.acquireLock()), acquired_(status_.ok()) {}
+
+    ~ScopedLock() {
+        if (acquired_) {
+            queue_.releaseLock();
+        }
+    }
+
+    ScopedLock(const ScopedLock&) = delete;
+    ScopedLock& operator=(const ScopedLock&) = delete;
+
+    const Status& status() const { return status_; }
+
+private:
+    Queue& queue_;
+    Status status_;
+    bool acquired_ = false;
+};
+
 Status Queue::emit(Event event) const {
     config_.events.emit(event);
     return event.status;
@@ -134,24 +155,20 @@ void Queue::releaseLock() {
     lockHeld_ = false;
 }
 
-Status Queue::ensureLoaded() {
-    if (loaded_) {
-        return Status::success();
-    }
-    Status st = acquireLock();
+Status Queue::loadLatestIndex() {
+    const Status st = store_.readIndexFromDisk(index_);
     if (!st.ok()) {
-        return st;
+        return diagnostic(Severity::Error, st, "loadLatestIndex");
     }
-    st = store_.readIndex(index_);
-    if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "ensureLoaded");
-    }
-    loaded_ = true;
     return Status::success();
 }
 
 Status Queue::enqueue(const std::string& record) {
-    Status st = ensureLoaded();
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
     if (!st.ok()) {
         return st;
     }
@@ -187,7 +204,11 @@ Status Queue::enqueue(const std::string& record) {
 }
 
 Status Queue::peek(std::string& out) {
-    Status st = ensureLoaded();
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
     if (!st.ok()) {
         return st;
     }
@@ -198,7 +219,11 @@ Status Queue::peek(std::string& out) {
 }
 
 Status Queue::pop() {
-    Status st = ensureLoaded();
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
     if (!st.ok()) {
         return st;
     }
@@ -222,7 +247,11 @@ Status Queue::pop() {
 }
 
 Status Queue::rewriteFront(const std::string& record) {
-    Status st = ensureLoaded();
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
     if (!st.ok()) {
         return st;
     }
@@ -237,7 +266,11 @@ Status Queue::rewriteFront(const std::string& record) {
 
 
 Status Queue::visitRecords(RecordVisitor visitor, void* context) {
-    Status st = ensureLoaded();
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
     if (!st.ok()) {
         return st;
     }
@@ -263,7 +296,12 @@ Status Queue::visitRecords(RecordVisitor visitor, void* context) {
 ValidationResult Queue::validate(const ValidationOptions& options) {
     ValidationResult result;
 
-    Status st = ensureLoaded();
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, lock.status().message));
+        return result;
+    }
+    Status st = loadLatestIndex();
     if (!st.ok()) {
         addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message));
         return result;
@@ -288,14 +326,27 @@ ValidationResult Queue::validate(const ValidationOptions& options) {
     return result;
 }
 
-Stats Queue::stats() {
-    Stats out;
-    if (!ensureLoaded().ok()) {
-        return out;
+StatsResult Queue::statsResult() {
+    StatsResult result;
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        result.status = lock.status();
+        return result;
     }
-    out.count = index_.count;
-    out.freeBytes = store_.freeBytes();
-    return out;
+
+    const Status st = loadLatestIndex();
+    if (!st.ok()) {
+        result.status = st;
+        return result;
+    }
+
+    result.stats.count = index_.count;
+    result.stats.freeBytes = store_.freeBytes();
+    return result;
+}
+
+Stats Queue::stats() {
+    return statsResult().stats;
 }
 
 } // namespace pqueue

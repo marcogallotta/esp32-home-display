@@ -10,6 +10,7 @@
 #include <memory>
 #include <random>
 #include <vector>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -25,6 +26,14 @@ void cleanSpool() {
 void capturePqueueEvent(const pqueue::Event& event, void* user) {
     auto* events = static_cast<std::vector<pqueue::Event>*>(user);
     events->push_back(event);
+}
+
+void writeActiveLockFile() {
+    std::filesystem::create_directories(kSpoolDir);
+    std::ofstream lock(kSpoolDir / ".pqueue.lock", std::ios::binary | std::ios::trunc);
+    lock << "pqueue-lock-v1\n";
+    lock << "pid=" << static_cast<long>(::getpid()) << "\n";
+    lock << "token=active-test-lock\n";
 }
 
 std::uint64_t testRecordRegionOffset(const pqueue::Config& config) {
@@ -83,6 +92,36 @@ TEST_CASE("pqueue preserves FIFO order") {
     CHECK_EQ(out, "second");
     REQUIRE(queue.pop().ok());
     CHECK_FALSE(queue.peek(out).ok());
+#endif
+}
+
+
+TEST_CASE("pqueue supports multiple live Queue objects on the same base path") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config;
+    config.basePath = kSpoolDir.string();
+
+    pqueue::Queue first(config);
+    pqueue::Queue second(config);
+
+    REQUIRE(first.enqueue("first").ok());
+    REQUIRE(second.enqueue("second").ok());
+
+    CHECK_EQ(first.stats().count, 2U);
+    CHECK_EQ(second.stats().count, 2U);
+
+    std::string out;
+    REQUIRE(second.peek(out).ok());
+    CHECK_EQ(out, "first");
+    REQUIRE(second.pop().ok());
+
+    REQUIRE(first.peek(out).ok());
+    CHECK_EQ(out, "second");
+    REQUIRE(first.pop().ok());
+
+    CHECK_EQ(first.stats().count, 0U);
+    CHECK_EQ(second.stats().count, 0U);
 #endif
 }
 
@@ -285,7 +324,7 @@ TEST_CASE("pqueue matches std::deque over deterministic random operations") {
 #endif
 }
 
-TEST_CASE("pqueue lock prevents two active queues using the same spool") {
+TEST_CASE("pqueue active lock file prevents queue operation") {
 #ifndef ARDUINO
     cleanSpool();
 
@@ -294,17 +333,17 @@ TEST_CASE("pqueue lock prevents two active queues using the same spool") {
     config.recordSizeBytes = 32;
     config.reservedBytes = 160;
 
-    pqueue::Queue first(config);
-    REQUIRE(first.enqueue("held").ok());
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("before").ok());
+    }
 
-    pqueue::Queue second(config);
-    const auto status = second.enqueue("blocked");
+    writeActiveLockFile();
+
+    pqueue::Queue blocked(config);
+    const auto status = blocked.enqueue("blocked");
     CHECK_FALSE(status.ok());
     CHECK(status.code == pqueue::StatusCode::LockTimeout);
-
-    std::string out;
-    REQUIRE(first.peek(out).ok());
-    CHECK_EQ(out, "held");
 #endif
 }
 
@@ -319,11 +358,15 @@ TEST_CASE("pqueue lock timeout emits a clear diagnostic event") {
     config.reservedBytes = 160;
     config.events = {capturePqueueEvent, &events};
 
-    pqueue::Queue first(config);
-    REQUIRE(first.enqueue("held").ok());
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("before").ok());
+    }
 
-    pqueue::Queue second(config);
-    const auto status = second.enqueue("blocked");
+    writeActiveLockFile();
+
+    pqueue::Queue blocked(config);
+    const auto status = blocked.enqueue("blocked");
     REQUIRE_FALSE(status.ok());
     CHECK(status.code == pqueue::StatusCode::LockTimeout);
 
@@ -369,7 +412,7 @@ TEST_CASE("pqueue recovers stale POSIX pid lock") {
 #endif
 }
 
-TEST_CASE("pqueue releases lock when queue is destroyed") {
+TEST_CASE("pqueue releases lock after each operation") {
 #ifndef ARDUINO
     cleanSpool();
 
@@ -497,7 +540,7 @@ TEST_CASE("pqueue validate caps reported errors") {
 #endif
 }
 
-TEST_CASE("pqueue validate fails when another queue owns the lock") {
+TEST_CASE("pqueue validate fails when active lock file exists") {
 #ifndef ARDUINO
     cleanSpool();
     pqueue::Config config;
@@ -505,8 +548,12 @@ TEST_CASE("pqueue validate fails when another queue owns the lock") {
     config.recordSizeBytes = 32;
     config.reservedBytes = 512;
 
-    pqueue::Queue first(config);
-    REQUIRE(first.enqueue("held").ok());
+    {
+        pqueue::Queue queue(config);
+        REQUIRE(queue.enqueue("held").ok());
+    }
+
+    writeActiveLockFile();
 
     pqueue::Queue second(config);
     const auto result = second.validate();

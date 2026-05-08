@@ -66,8 +66,45 @@ Status ensureDirectory(const std::string& path) {
 
 #if defined(ESP32)
 
-SemaphoreHandle_t littleFsMutex() {
+struct NamedLittleFsMutex {
+    std::string key;
+    SemaphoreHandle_t mutex = nullptr;
+};
+
+std::vector<NamedLittleFsMutex>& littleFsMutexes() {
+    static auto* mutexes = new std::vector<NamedLittleFsMutex>();
+    return *mutexes;
+}
+
+SemaphoreHandle_t littleFsMutexRegistryLock() {
     static SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    return mutex;
+}
+
+SemaphoreHandle_t littleFsMutexForKey(const std::string& key) {
+    SemaphoreHandle_t registryLock = littleFsMutexRegistryLock();
+    if (registryLock == nullptr) {
+        return nullptr;
+    }
+
+    if (xSemaphoreTake(registryLock, portMAX_DELAY) != pdTRUE) {
+        return nullptr;
+    }
+
+    auto& mutexes = littleFsMutexes();
+    for (const auto& entry : mutexes) {
+        if (entry.key == key) {
+            xSemaphoreGive(registryLock);
+            return entry.mutex;
+        }
+    }
+
+    SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    if (mutex != nullptr) {
+        mutexes.push_back(NamedLittleFsMutex{key, mutex});
+    }
+
+    xSemaphoreGive(registryLock);
     return mutex;
 }
 
@@ -76,7 +113,7 @@ public:
     explicit LittleFsMutexLock(std::string basePath) : basePath_(std::move(basePath)) {}
 
     Status acquire(const std::string& name, const std::string&) override {
-        SemaphoreHandle_t mutex = littleFsMutex();
+        SemaphoreHandle_t mutex = littleFsMutexForKey(path(name));
         if (mutex == nullptr) {
             return Status::failure(StatusCode::LockTimeout, "failed to create LittleFS queue mutex");
         }
@@ -86,6 +123,7 @@ public:
         }
 
         acquired_ = true;
+        acquiredMutex_ = mutex;
 
         removeLegacyLockPath(name);
         removeLegacyLockPath("pqueue.lock");
@@ -99,7 +137,8 @@ public:
         }
 
         acquired_ = false;
-        xSemaphoreGive(littleFsMutex());
+        xSemaphoreGive(acquiredMutex_);
+        acquiredMutex_ = nullptr;
         return Status::success();
     }
 
@@ -150,6 +189,7 @@ private:
 
     std::string basePath_;
     bool acquired_ = false;
+    SemaphoreHandle_t acquiredMutex_ = nullptr;
 };
 
 #else

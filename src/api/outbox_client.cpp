@@ -105,6 +105,38 @@ WriteResult makeWriteResult(
     return result;
 }
 
+WriteStatus classifySubmitSendError(pqueue::StatusCode code) {
+    switch (code) {
+        case pqueue::StatusCode::EncodeFailed:
+        case pqueue::StatusCode::InvalidArgument:
+        case pqueue::StatusCode::RecordTooLarge:
+        case pqueue::StatusCode::Dropped:
+            return WriteStatus::DroppedPermanent;
+
+        case pqueue::StatusCode::QueueFull:
+            return WriteStatus::DroppedQueueFull;
+
+        case pqueue::StatusCode::Ok:
+        case pqueue::StatusCode::BackendUnavailable:
+        case pqueue::StatusCode::MountFailed:
+        case pqueue::StatusCode::ReadFailed:
+        case pqueue::StatusCode::WriteFailed:
+        case pqueue::StatusCode::RenameFailed:
+        case pqueue::StatusCode::RemoveFailed:
+        case pqueue::StatusCode::ListFailed:
+        case pqueue::StatusCode::InvalidIndex:
+        case pqueue::StatusCode::InvalidRecord:
+        case pqueue::StatusCode::CrcMismatch:
+        case pqueue::StatusCode::QueueEmpty:
+        case pqueue::StatusCode::LockTimeout:
+        case pqueue::StatusCode::DecodeFailed:
+        case pqueue::StatusCode::SendFailed:
+            return WriteStatus::FailedTemporary;
+    }
+
+    return WriteStatus::FailedTemporary;
+}
+
 std::string diagnosticMac(const ApiRequest& request) {
     const std::string marker = "\"mac\":\"";
     const auto start = request.payload.find(marker);
@@ -596,10 +628,15 @@ WriteResult OutboxClient::send(ApiRequest request) {
             return makeWriteResult(WriteStatus::DroppedQueueFull);
 
         case pqueue::SubmitStatus::SendError:
-            return makeWriteResult(WriteStatus::DroppedPermanent);
+            return makeWriteResult(
+                classifySubmitSendError(submitResult.detail.code),
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body
+            );
     }
 
-    return makeWriteResult(WriteStatus::DroppedPermanent);
+    return makeWriteResult(WriteStatus::FailedTemporary);
 }
 
 OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {

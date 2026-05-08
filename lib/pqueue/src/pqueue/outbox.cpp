@@ -126,8 +126,12 @@ SubmitResult Outbox::submit(const std::string& payload) {
         return submitResult(SubmitStatus::SendError, st);
     }
 
-    if (queue_.stats().count > 0) {
+    const StatsResult queueStats = queue_.statsResult();
+    if (queueStats.status.ok() && queueStats.stats.count > 0) {
         return enqueueRecord(payload, 0);
+    }
+    if (!queueStats.status.ok()) {
+        emitDiagnostic(Severity::Warning, queueStats.status, "submit_queue_stats_failed_live_send_fallback");
     }
 
     const SendResult result = send_(sendContext_, payload, RetryState{});

@@ -168,6 +168,7 @@ const char* writeStatusName(api::WriteStatus status) {
         case api::WriteStatus::Queued: return "queued";
         case api::WriteStatus::DroppedPermanent: return "dropped_permanent";
         case api::WriteStatus::DroppedQueueFull: return "dropped_queue_full";
+        case api::WriteStatus::FailedTemporary: return "failed_temporary";
     }
     return "unknown";
 }

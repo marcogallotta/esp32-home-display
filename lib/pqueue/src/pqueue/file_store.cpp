@@ -675,7 +675,8 @@ Status FileStore::readIndexFromDisk(FileStoreIndex& out) {
     if (!state.foundCheckpoint) {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing"), "readIndexFromDisk");
     }
-    out = state.index;
+    setRuntime(runtime_, layout, state);
+    out = runtime_.index;
     return Status::success();
 }
 

@@ -141,6 +141,29 @@ TEST_CASE("pqueue outbox queues retryable fresh send failure") {
 #endif
 }
 
+
+TEST_CASE("pqueue outbox supports multiple live objects on the same base path") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender firstSender;
+    firstSender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeSender secondSender;
+    FakeClock clock;
+
+    auto first = makeOutbox(firstSender, clock);
+    auto second = makeOutbox(secondSender, clock);
+
+    REQUIRE(first.submit("first").status == pqueue::SubmitStatus::Queued);
+    CHECK_EQ(first.stats().count, 1U);
+
+    const auto secondSubmit = second.submit("second");
+    CHECK(secondSubmit.status == pqueue::SubmitStatus::Queued);
+    CHECK(secondSender.payloads.empty());
+    CHECK_EQ(first.stats().count, 2U);
+    CHECK_EQ(second.stats().count, 2U);
+#endif
+}
+
 TEST_CASE("pqueue outbox preserves FIFO when backlog exists") {
 #ifndef ARDUINO
     cleanOutboxSpool();
@@ -616,5 +639,174 @@ TEST_CASE("pqueue outbox drainUpTo stops when front request asks to retry") {
     CHECK_EQ(outbox.stats().count, 3U);
     REQUIRE_EQ(sender.payloads.size(), 2U);
     CHECK_EQ(sender.payloads[1], "one");
+#endif
+}
+
+TEST_CASE("pqueue outbox reports send error when sender is not configured") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    std::vector<pqueue::Event> events;
+    FakeClock clock;
+
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kOutboxSpoolDir.string();
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.events = {capturePqueueEvent, &events};
+
+    pqueue::Outbox outbox(queueConfig, config, nullptr, nullptr, fakeClockNow, &clock);
+
+    const auto submitted = outbox.submit("fresh");
+    CHECK(submitted.status == pqueue::SubmitStatus::SendError);
+    CHECK(submitted.detail.code == pqueue::StatusCode::SendFailed);
+
+    const auto drained = outbox.drain();
+    CHECK(drained.sendError);
+    CHECK(drained.detail.code == pqueue::StatusCode::SendFailed);
+
+    REQUIRE_GE(events.size(), 2U);
+    CHECK(events[0].kind == pqueue::EventKind::Diagnostic);
+    CHECK(events[0].severity == pqueue::Severity::Error);
+    CHECK(events[0].status.code == pqueue::StatusCode::SendFailed);
+#endif
+}
+
+TEST_CASE("pqueue outbox reports send error when clock is not configured") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kOutboxSpoolDir.string();
+    pqueue::Outbox outbox(queueConfig, testOutboxConfig(), fakeSend, &sender, nullptr, nullptr);
+
+    const auto submitted = outbox.submit("fresh");
+    CHECK(submitted.status == pqueue::SubmitStatus::SendError);
+    CHECK(submitted.detail.code == pqueue::StatusCode::SendFailed);
+    CHECK(sender.payloads.empty());
+
+    const auto drained = outbox.drain();
+    CHECK(drained.sendError);
+    CHECK(drained.detail.code == pqueue::StatusCode::SendFailed);
+#endif
+}
+
+TEST_CASE("pqueue outbox returns QueueFull when retry enqueue cannot fit") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kOutboxSpoolDir.string();
+    queueConfig.recordSizeBytes = 32;
+    queueConfig.reservedBytes = pqueue::storage_detail::kRecordHeaderBytes + queueConfig.recordSizeBytes;
+
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+
+    pqueue::Outbox outbox(queueConfig, config, fakeSend, &sender, fakeClockNow, &clock);
+
+    const auto first = outbox.submit("one");
+    REQUIRE(first.status == pqueue::SubmitStatus::Queued);
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    const auto second = outbox.submit("two");
+    CHECK(second.status == pqueue::SubmitStatus::QueueFull);
+    CHECK(second.detail.code == pqueue::StatusCode::QueueFull);
+    CHECK_EQ(outbox.stats().count, 1U);
+    CHECK_EQ(sender.payloads.size(), 1U);
+#endif
+}
+
+TEST_CASE("pqueue outbox reports SendError when retry enqueue fails for non-full reason") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kOutboxSpoolDir.string();
+    queueConfig.recordSizeBytes = 32;
+    queueConfig.reservedBytes = 1;
+
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+
+    pqueue::Outbox outbox(queueConfig, config, fakeSend, &sender, fakeClockNow, &clock);
+    const auto result = outbox.submit("one");
+
+    CHECK(result.status == pqueue::SubmitStatus::SendError);
+    CHECK(result.detail.code == pqueue::StatusCode::InvalidArgument);
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("pqueue outbox treats zero drain rate cap as one attempt per second") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+    config.maxDrainAttemptsPerSecond = 0;
+
+    auto outbox = makeOutbox(sender, clock, config);
+    REQUIRE(outbox.submit("one").status == pqueue::SubmitStatus::Queued);
+    REQUIRE(outbox.submit("two").status == pqueue::SubmitStatus::Queued);
+
+    const auto first = outbox.drainUpTo(2);
+    CHECK_EQ(first.attempts, 1U);
+    CHECK_EQ(first.sent, 1U);
+    CHECK(first.rateLimited);
+    CHECK_EQ(outbox.stats().count, 1U);
+#endif
+}
+
+TEST_CASE("pqueue outbox drainUpTo zero still performs one drain attempt") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+
+    auto outbox = makeOutbox(sender, clock, config);
+    REQUIRE(outbox.submit("queued").status == pqueue::SubmitStatus::Queued);
+
+    const auto drain = outbox.drainUpTo(0);
+    CHECK_EQ(drain.attempts, 1U);
+    CHECK_EQ(drain.sent, 1U);
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("pqueue outbox handles unknown send decisions as send errors") {
+#ifndef ARDUINO
+    cleanOutboxSpool();
+    FakeSender sender;
+    sender.decisions.push_back(static_cast<pqueue::SendDecision>(255));
+    FakeClock clock;
+
+    auto outbox = makeOutbox(sender, clock);
+    const auto submitted = outbox.submit("fresh");
+    CHECK(submitted.status == pqueue::SubmitStatus::SendError);
+    CHECK(submitted.detail.code == pqueue::StatusCode::SendFailed);
+
+    cleanOutboxSpool();
+    FakeSender drainSender;
+    drainSender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    auto drainOutbox = makeOutbox(drainSender, clock);
+    REQUIRE(drainOutbox.submit("queued").status == pqueue::SubmitStatus::Queued);
+
+    drainSender.decisions.push_back(static_cast<pqueue::SendDecision>(255));
+    clock.nowMs += 1000;
+    const auto drained = drainOutbox.drain();
+    CHECK(drained.sendError);
+    CHECK(drained.detail.code == pqueue::StatusCode::SendFailed);
+    CHECK_EQ(drainOutbox.stats().count, 1U);
 #endif
 }
