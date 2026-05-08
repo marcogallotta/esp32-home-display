@@ -251,11 +251,15 @@ uint32_t rangeStartIndex(const Metadata& metadata, const SyncRequest& request) {
         return metadata.endIndex >= 6 ? metadata.endIndex - 6 : 0;
     }
 
-    return pageStartForIndex(indexForEpochCeil(
+    // For explicit time-window syncs, start at the exact first wanted index.
+    // Rounding down to a 6-sample page boundary shifts the whole page sequence
+    // earlier; near the device tail that can make the final request spill past
+    // metadata.endIndex, which SwitchBot rejects with a one-byte 0x02 response.
+    return indexForEpochCeil(
         metadata.startEpoch,
         request.startEpoch,
         metadata.intervalSeconds
-    ));
+    );
 }
 
 uint32_t rangeEndExclusiveIndex(const Metadata& metadata, const SyncRequest& request) {
@@ -425,30 +429,49 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     const uint32_t totalProgressSamples = progressTotalSamples(result.metadata, request, endExclusive);
     uint32_t keptSamples = 0;
     uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
+    bool haveLastKeptIndex = false;
+    uint32_t lastKeptIndex = 0;
 
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += 6) {
         delay(50);
 
-        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(pageIndex, 6), request.commandTimeoutMs, response)) {
+        uint32_t requestPageIndex = pageIndex;
+        if (requestPageIndex + 6U > result.metadata.endIndex) {
+            if (result.metadata.endIndex < 6U) {
+                break;
+            }
+            // The device rejects page reads that extend past the metadata
+            // endIndex cursor with a one-byte 0x02 response. For a partial
+            // final window, read the last full page and trim/skip duplicates
+            // locally instead of asking the device for an invalid tail page.
+            requestPageIndex = result.metadata.endIndex - 6U;
+        }
+
+        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(requestPageIndex, 6), request.commandTimeoutMs, response)) {
             cleanup();
             return fail(SyncStatus::Timeout, "page command timed out or write failed");
         }
 
         const std::vector<Sample> samples = decodePageResponse(
             response,
-            pageIndex,
+            requestPageIndex,
             result.metadata.startEpoch,
             result.metadata.intervalSeconds
         );
         if (samples.empty()) {
             logBytes("bad-page", response);
             cleanup();
-            return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
+            return fail(SyncStatus::BadPage, badPageMessage(requestPageIndex, response));
         }
 
         for (const Sample& sample : samples) {
             if (keepSample(sample, request, endExclusive)) {
+                if (haveLastKeptIndex && sample.index <= lastKeptIndex) {
+                    continue;
+                }
                 result.samples.push_back(sample);
+                haveLastKeptIndex = true;
+                lastKeptIndex = sample.index;
                 ++keptSamples;
                 if (nextProgressAt != 0 && keptSamples >= nextProgressAt) {
                     logProgress(request.progressLabel.empty() ? mac : request.progressLabel, keptSamples, totalProgressSamples);
