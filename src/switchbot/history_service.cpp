@@ -2,11 +2,16 @@
 
 #ifdef ARDUINO
 #include "history_backend.h"
+#include "history_sync.h"
 
 #include "../log.h"
 
+#include <Arduino.h>
+
+#include <algorithm>
 #include <cstdint>
 #include <ctime>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -22,7 +27,15 @@ struct PlanTotals {
     std::uint32_t windows = 0;
     std::uint32_t plannedPoints = 0;
     std::uint32_t cappedSensors = 0;
+    std::uint32_t syncedWindows = 0;
+    std::uint32_t syncFailures = 0;
+    std::uint32_t selectedReadings = 0;
+    std::uint32_t uploadedReadings = 0;
+    std::uint32_t uploadFailures = 0;
+    std::uint32_t uploadRowErrors = 0;
 };
+
+void addTotals(PlanTotals& total, const PlanTotals& add);
 
 std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
     if (!sensor.name.empty()) {
@@ -222,12 +235,232 @@ PlanTotals logSensorPlan(const BackendSensorInfo& sensor,
     return totals;
 }
 
+std::uint32_t absDistance(std::uint32_t a, std::uint32_t b) {
+    return a > b ? a - b : b - a;
+}
+
+std::uint32_t expandedStartEpoch(const PlannedHistoryWindow& window, std::uint32_t deviceIntervalSeconds) {
+    if (deviceIntervalSeconds == 0) {
+        return window.startEpoch;
+    }
+    if (window.startEpoch <= deviceIntervalSeconds) {
+        return 0;
+    }
+    return window.startEpoch - deviceIntervalSeconds;
+}
+
+std::uint32_t expandedEndEpoch(const PlannedHistoryWindow& window, std::uint32_t deviceIntervalSeconds) {
+    if (deviceIntervalSeconds == 0) {
+        return window.endEpoch;
+    }
+    if (window.endEpoch > std::numeric_limits<std::uint32_t>::max() - deviceIntervalSeconds) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
+    return window.endEpoch + deviceIntervalSeconds;
+}
+
+std::vector<BulkHistoryReading> selectAlignedReadings(const std::vector<Sample>& samples,
+                                                      const PlannedHistoryWindow& window,
+                                                      std::uint32_t sampleIntervalSeconds,
+                                                      std::uint32_t deviceIntervalSeconds) {
+    std::vector<BulkHistoryReading> out;
+    if (window.pointCount == 0 || sampleIntervalSeconds == 0 || samples.empty()) {
+        return out;
+    }
+
+    out.reserve(window.pointCount);
+    const std::uint32_t tolerance = std::max<std::uint32_t>(1, deviceIntervalSeconds / 2);
+    std::size_t searchFrom = 0;
+
+    for (std::uint32_t target = window.firstPointEpoch;
+         target <= window.lastPointEpoch;
+         target += sampleIntervalSeconds) {
+        std::size_t bestIndex = samples.size();
+        std::uint32_t bestDistance = std::numeric_limits<std::uint32_t>::max();
+
+        while (searchFrom < samples.size() && samples[searchFrom].epoch + tolerance < target) {
+            ++searchFrom;
+        }
+
+        for (std::size_t i = searchFrom; i < samples.size(); ++i) {
+            const std::uint32_t distance = absDistance(samples[i].epoch, target);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+            if (samples[i].epoch > target && distance > tolerance) {
+                break;
+            }
+        }
+
+        if (bestIndex != samples.size() && bestDistance <= tolerance) {
+            BulkHistoryReading reading;
+            reading.timestampEpoch = target;
+            reading.temperatureC = samples[bestIndex].temperatureC;
+            reading.humidityPct = samples[bestIndex].humidityPct;
+            out.push_back(reading);
+        }
+
+        if (target > std::numeric_limits<std::uint32_t>::max() - sampleIntervalSeconds) {
+            break;
+        }
+    }
+
+    return out;
+}
+
+std::uint32_t uploadBatchLimit(const HistoryServiceOptions& options) {
+    if (options.bulkBatchLimit == 0) {
+        return 100;
+    }
+    return std::min<std::uint32_t>(options.bulkBatchLimit, 1000U);
+}
+
+void logBulkErrors(const std::string& label, const BulkUploadResult& result) {
+    for (const BulkUploadError& error : result.errors) {
+        logLine(
+            LogLevel::Warn,
+            "SwitchBot history upload row error: " + label +
+            " index=" + std::to_string(error.index) +
+            " code=" + error.code +
+            " message=" + error.message
+        );
+    }
+}
+
+PlanTotals uploadReadings(const Config& config,
+                          const std::string& label,
+                          const std::string& sensorId,
+                          const std::vector<BulkHistoryReading>& readings,
+                          const HistoryServiceOptions& options) {
+    PlanTotals totals;
+    const std::uint32_t limit = uploadBatchLimit(options);
+
+    for (std::size_t offset = 0; offset < readings.size(); offset += limit) {
+        const std::size_t end = std::min<std::size_t>(readings.size(), offset + limit);
+        std::vector<BulkHistoryReading> batch(readings.begin() + offset, readings.begin() + end);
+
+        const BulkUploadResult upload = postBulkUpload(config, sensorId, batch);
+        if (!upload.ok) {
+            ++totals.uploadFailures;
+            logLine(
+                LogLevel::Error,
+                "SwitchBot history upload failed: " + label +
+                " http=" + std::to_string(upload.httpStatusCode) +
+                "; " + upload.error
+            );
+            continue;
+        }
+
+        totals.uploadedReadings += static_cast<std::uint32_t>(batch.size());
+        totals.uploadRowErrors += static_cast<std::uint32_t>(upload.errors.size());
+        logLine(
+            LogLevel::Info,
+            "SwitchBot history upload complete: " + label +
+            " readings=" + std::to_string(batch.size()) +
+            " row_errors=" + std::to_string(upload.errors.size())
+        );
+        logBulkErrors(label, upload);
+    }
+
+    return totals;
+}
+
+PlanTotals syncAndUploadWindow(const Config& config,
+                               const std::string& label,
+                               const BackendSensorInfo& sensor,
+                               const PlannedHistoryWindow& window,
+                               std::uint32_t nowEpoch,
+                               const HistoryServiceOptions& options) {
+    PlanTotals totals;
+
+    SyncRequest request;
+    request.startEpoch = expandedStartEpoch(window, 60);
+    request.endEpoch = expandedEndEpoch(window, 60);
+    request.timeSyncEpoch = nowEpoch;
+    request.commandTimeoutMs = options.commandTimeoutMs;
+    request.progressLabel = label + " " + window.source;
+
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history sync window: " + label +
+        " source=" + window.source +
+        " targets=" + std::to_string(window.pointCount) +
+        " from=" + formatIsoUtc(window.firstPointEpoch) +
+        " to=" + formatIsoUtc(window.lastPointEpoch)
+    );
+
+    const SyncResult sync = syncSensorHistory(sensor.mac, request);
+    if (!sync.ok()) {
+        ++totals.syncFailures;
+        logLine(
+            LogLevel::Warn,
+            "SwitchBot history sync failed: " + label +
+            " source=" + window.source +
+            " status=" + syncStatusName(sync.status) +
+            "; " + sync.message
+        );
+        return totals;
+    }
+
+    ++totals.syncedWindows;
+    const std::uint32_t deviceInterval = sync.metadata.intervalSeconds == 0 ? 60U : sync.metadata.intervalSeconds;
+    std::vector<BulkHistoryReading> selected = selectAlignedReadings(
+        sync.samples,
+        window,
+        options.sampleIntervalSeconds,
+        deviceInterval
+    );
+    totals.selectedReadings += static_cast<std::uint32_t>(selected.size());
+
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history selected readings: " + label +
+        " source=" + window.source +
+        " raw=" + std::to_string(sync.samples.size()) +
+        " selected=" + std::to_string(selected.size()) +
+        " target=" + std::to_string(window.pointCount)
+    );
+
+    if (selected.empty()) {
+        return totals;
+    }
+
+    addTotals(totals, uploadReadings(config, label, sensor.sensorId, selected, options));
+    return totals;
+}
+
+PlanTotals syncAndUploadSensor(const Config& config,
+                               const BackendSensorInfo& sensor,
+                               const std::map<std::string, std::string>& labelsByMac,
+                               std::uint32_t nowEpoch,
+                               const HistoryServiceOptions& options) {
+    PlanTotals totals;
+    const std::string label = labelForMac(labelsByMac, sensor.mac);
+    const auto windows = planHistoryWindows(sensor, nowEpoch, planningOptions(options));
+
+    for (const PlannedHistoryWindow& window : windows) {
+        addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options));
+        if (options.delayBetweenSensorsMs > 0) {
+            delay(options.delayBetweenSensorsMs);
+        }
+    }
+
+    return totals;
+}
+
 void addTotals(PlanTotals& total, const PlanTotals& add) {
     total.sensors += add.sensors;
     total.sensorsWithWindows += add.sensorsWithWindows;
     total.windows += add.windows;
     total.plannedPoints += add.plannedPoints;
     total.cappedSensors += add.cappedSensors;
+    total.syncedWindows += add.syncedWindows;
+    total.syncFailures += add.syncFailures;
+    total.selectedReadings += add.selectedReadings;
+    total.uploadedReadings += add.uploadedReadings;
+    total.uploadFailures += add.uploadFailures;
+    total.uploadRowErrors += add.uploadRowErrors;
 }
 
 }  // namespace
@@ -237,8 +470,6 @@ void maybeRunStartupHistorySync(const Config& config,
                                 bool hasValidTime,
                                 HistoryServiceState& state,
                                 const HistoryServiceOptions& options) {
-    (void)scanner;
-
     if (state.startupSyncDone || !hasValidTime) {
         return;
     }
@@ -267,7 +498,7 @@ void maybeRunStartupHistorySync(const Config& config,
 
     logLine(
         LogLevel::Info,
-        "SwitchBot history planning started: lookup-only mode; sensors=" +
+        "SwitchBot history sync started: sensors=" +
         std::to_string(macs.size()) +
         "; target interval=" + formatDuration(effective.sampleIntervalSeconds) +
         "; new sensor window=" + formatDuration(effective.startupWindowSeconds) +
@@ -312,6 +543,26 @@ void maybeRunStartupHistorySync(const Config& config,
         "; windows=" + std::to_string(totals.windows) +
         "; target_readings=" + std::to_string(totals.plannedPoints) +
         "; capped_sensors=" + std::to_string(totals.cappedSensors)
+    );
+
+    if (totals.windows == 0) {
+        return;
+    }
+
+    scanner.stop();
+    for (const BackendSensorInfo& sensor : lookup.sensors) {
+        addTotals(totals, syncAndUploadSensor(config, sensor, labelsByMac, nowEpoch, effective));
+    }
+    scanner.start();
+
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history sync done: windows=" + std::to_string(totals.syncedWindows) +
+        "; sync_failures=" + std::to_string(totals.syncFailures) +
+        "; selected_readings=" + std::to_string(totals.selectedReadings) +
+        "; uploaded_readings=" + std::to_string(totals.uploadedReadings) +
+        "; upload_failures=" + std::to_string(totals.uploadFailures) +
+        "; upload_row_errors=" + std::to_string(totals.uploadRowErrors)
     );
 }
 

@@ -401,6 +401,95 @@ SensorLookupResult postSensorLookup(const Config& config, const std::vector<std:
     return parseSensorLookupResponse(response.body, response.statusCode);
 }
 
+std::string makeBulkUploadPayload(const std::string& sensorId, const std::vector<BulkHistoryReading>& readings) {
+    DynamicJsonDocument doc(256 + readings.size() * 96);
+    doc["sensor_id"] = sensorId;
+    JsonArray out = doc.createNestedArray("readings");
+
+    for (const BulkHistoryReading& reading : readings) {
+        JsonObject item = out.createNestedObject();
+        item["timestamp"] = formatIsoUtc(reading.timestampEpoch);
+        item["temperature_c"] = reading.temperatureC;
+        item["humidity_pct"] = reading.humidityPct;
+    }
+
+    std::string payload;
+    serializeJson(doc, payload);
+    return payload;
+}
+
+BulkUploadResult parseBulkUploadResponse(const std::string& body, int httpStatusCode) {
+    BulkUploadResult result;
+    result.ok = true;
+    result.httpStatusCode = httpStatusCode;
+
+    if (body.empty()) {
+        return result;
+    }
+
+    DynamicJsonDocument doc(4096);
+    const DeserializationError err = deserializeJson(doc, body);
+    if (err) {
+        result.ok = false;
+        result.error = std::string("JSON parse failed: ") + err.c_str();
+        return result;
+    }
+
+    const JsonArrayConst errors = doc["errors"].as<JsonArrayConst>();
+    if (!errors.isNull()) {
+        for (JsonObjectConst item : errors) {
+            BulkUploadError error;
+            error.index = item["index"] | 0U;
+            error.code = item["code"] | "";
+            error.message = item["message"] | "";
+            result.errors.push_back(std::move(error));
+        }
+    }
+
+    return result;
+}
+
+BulkUploadResult postBulkUpload(const Config& config,
+                                const std::string& sensorId,
+                                const std::vector<BulkHistoryReading>& readings) {
+    if (sensorId.empty()) {
+        BulkUploadResult result;
+        result.error = "missing sensor_id";
+        return result;
+    }
+    if (readings.empty()) {
+        BulkUploadResult result;
+        result.ok = true;
+        return result;
+    }
+
+    const std::string payload = makeBulkUploadPayload(sensorId, readings);
+    const network::Headers headers{{"x-api-key", config.api.apiKey}};
+    const network::HttpResponse response = network::platform(config.wifi).httpPost(
+        apiUrl(config, "/switchbot/bulk"),
+        payload,
+        config.api.pem,
+        "application/json",
+        headers
+    );
+
+    if (response.transport != network::TransportResult::Ok) {
+        BulkUploadResult result;
+        result.httpStatusCode = response.statusCode;
+        result.error = "transport_error: " + response.error;
+        return result;
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+        BulkUploadResult result;
+        result.httpStatusCode = response.statusCode;
+        result.error = "HTTP " + std::to_string(response.statusCode) + ": " + response.body;
+        return result;
+    }
+
+    return parseBulkUploadResponse(response.body, response.statusCode);
+}
+
 std::vector<PlannedHistoryWindow> planHistoryWindows(const BackendSensorInfo& sensor,
                                                      std::uint32_t nowEpoch,
                                                      const HistoryPlanningOptions& options) {

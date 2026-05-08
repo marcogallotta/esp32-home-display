@@ -36,6 +36,25 @@ struct SensorLookupResult {
     std::vector<std::string> warnings;
 };
 
+struct BulkHistoryReading {
+    std::uint32_t timestampEpoch = 0;
+    double temperatureC = 0.0;
+    std::uint8_t humidityPct = 0;
+};
+
+struct BulkUploadError {
+    std::uint32_t index = 0;
+    std::string code;
+    std::string message;
+};
+
+struct BulkUploadResult {
+    bool ok = false;
+    int httpStatusCode = 0;
+    std::string error;
+    std::vector<BulkUploadError> errors;
+};
+
 struct PlannedHistoryWindow {
     std::string source;
     std::uint32_t startEpoch = 0;
@@ -60,6 +79,10 @@ std::string formatIsoUtc(std::uint32_t epoch);
 std::string makeSensorLookupPayload(const std::vector<std::string>& normalizedMacs);
 SensorLookupResult parseSensorLookupResponse(const std::string& body, int httpStatusCode = 200);
 SensorLookupResult postSensorLookup(const Config& config, const std::vector<std::string>& normalizedMacs);
+
+std::string makeBulkUploadPayload(const std::string& sensorId, const std::vector<BulkHistoryReading>& readings);
+BulkUploadResult parseBulkUploadResponse(const std::string& body, int httpStatusCode = 200);
+BulkUploadResult postBulkUpload(const Config& config, const std::string& sensorId, const std::vector<BulkHistoryReading>& readings);
 
 std::vector<PlannedHistoryWindow> planHistoryWindows(const BackendSensorInfo& sensor,
                                                      std::uint32_t nowEpoch,

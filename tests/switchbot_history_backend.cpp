@@ -169,3 +169,33 @@ TEST_CASE("switchbot history backend plans new sensor default window") {
     CHECK_EQ(windows[0].lastPointEpoch, *switchbot::history::parseIsoUtcEpoch("2026-05-08T15:15:00Z"));
     CHECK_EQ(windows[0].pointCount, 24U);
 }
+
+TEST_CASE("switchbot history backend builds bulk upload payload") {
+    std::vector<switchbot::history::BulkHistoryReading> readings;
+    switchbot::history::BulkHistoryReading reading;
+    reading.timestampEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T15:00:00Z");
+    reading.temperatureC = 20.3;
+    reading.humidityPct = 43;
+    readings.push_back(reading);
+
+    const std::string payload = switchbot::history::makeBulkUploadPayload("sensor-uuid", readings);
+    CHECK(payload.find("\"sensor_id\":\"sensor-uuid\"") != std::string::npos);
+    CHECK(payload.find("\"timestamp\":\"2026-05-08T15:00:00Z\"") != std::string::npos);
+    CHECK(payload.find("\"temperature_c\"") != std::string::npos);
+    CHECK(payload.find("\"humidity_pct\":43") != std::string::npos);
+}
+
+TEST_CASE("switchbot history backend parses bulk upload row errors") {
+    const std::string body = R"json({
+        "errors": [
+            {"index": 2, "code": "conflict", "message": "existing row preserved"}
+        ]
+    })json";
+
+    const auto parsed = switchbot::history::parseBulkUploadResponse(body, 200);
+    REQUIRE(parsed.ok);
+    REQUIRE_EQ(parsed.errors.size(), 1U);
+    CHECK_EQ(parsed.errors[0].index, 2U);
+    CHECK_EQ(parsed.errors[0].code, "conflict");
+    CHECK_EQ(parsed.errors[0].message, "existing row preserved");
+}
