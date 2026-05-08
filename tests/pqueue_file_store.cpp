@@ -1,12 +1,3 @@
-#include "pqueue/file_store.h"
-#include "pqueue/outbox.h"
-#include "pqueue/queue.h"
-#include "pqueue/storage_common.h"
-
-#include "doctest/doctest.h"
-
-#ifndef ARDUINO
-
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -14,6 +5,18 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#define private public
+#include "pqueue/file_store.h"
+#undef private
+
+#include "pqueue/outbox.h"
+#include "pqueue/queue.h"
+#include "pqueue/storage_common.h"
+
+#include "doctest/doctest.h"
+
+#ifndef ARDUINO
 
 namespace {
 
@@ -55,6 +58,9 @@ public:
     pqueue::Status readAt(const std::string& name, std::uint64_t offset, std::size_t size, std::string& out) override {
         if (failReadOnce.consume()) {
             return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake readAt failed");
+        }
+        if (targetedReadAtOnce.consume(name, offset)) {
+            return pqueue::Status::failure(pqueue::StatusCode::ReadFailed, "fake targeted readAt failed");
         }
         const auto it = files.find(name);
         if (it == files.end() || offset + size > it->second.size()) {
@@ -163,6 +169,7 @@ public:
     void failNextRemove() { failRemoveOnce.arm(); }
     void failNextRename() { failRenameOnce.arm(); }
     void partialNextWriteAt(std::size_t bytes) { partialWriteAtOnce.arm(bytes); }
+    void failNextReadAt(const std::string& name, std::uint64_t offset) { targetedReadAtOnce.arm(name, offset); }
 
     void setCapacityBytes(std::size_t bytes) { capacityBytes = bytes; }
 
@@ -222,6 +229,26 @@ private:
         std::size_t bytes = 0;
     };
 
+    struct TargetedReadAtFailure {
+        void arm(const std::string& targetName, std::uint64_t targetOffset) {
+            armed = true;
+            name = targetName;
+            offset = targetOffset;
+        }
+
+        bool consume(const std::string& actualName, std::uint64_t actualOffset) {
+            if (!armed || name != actualName || offset != actualOffset) {
+                return false;
+            }
+            armed = false;
+            return true;
+        }
+
+        bool armed = false;
+        std::string name;
+        std::uint64_t offset = 0;
+    };
+
     std::size_t usedBytes() const {
         std::size_t out = 0;
         for (const auto& entry : files) {
@@ -236,6 +263,7 @@ private:
     OneShotFailure failRemoveOnce;
     OneShotFailure failRenameOnce;
     OneShotPartialWrite partialWriteAtOnce;
+    TargetedReadAtFailure targetedReadAtOnce;
     std::size_t capacityBytes = std::numeric_limits<std::size_t>::max();
 };
 
@@ -331,7 +359,131 @@ std::size_t spoolSize(std::uint32_t reservedBytes = 160, std::size_t recordSizeB
            slots * slotSize(recordSizeBytes);
 }
 
+std::size_t checkpointOffset(std::uint32_t slot) {
+    return slot * pqueue::storage_detail::kCheckpointRecordBytes;
+}
+
+std::size_t journalOffset(std::uint32_t journalEntryIndex) {
+    return pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes +
+           journalEntryIndex * pqueue::storage_detail::kJournalEntryBytes;
+}
+
+std::size_t activeSlotOffset(std::uint32_t sequence, std::uint32_t reservedBytes = 160, std::size_t recordSizeBytes = 32, std::uint32_t journalBytes = 4096) {
+    const auto slots = reservedBytes / slotSize(recordSizeBytes);
+    return pqueue::storage_detail::kCheckpointSlots * pqueue::storage_detail::kCheckpointRecordBytes +
+           journalBytes +
+           (sequence % slots) * slotSize(recordSizeBytes);
+}
+
+bool hasErrorCode(const pqueue::ValidationResult& result, pqueue::ValidationIssueCode code) {
+    return std::any_of(result.errors.begin(), result.errors.end(), [code](const pqueue::ValidationIssue& issue) {
+        return issue.code == code;
+    });
+}
+
 } // namespace
+
+
+TEST_CASE("FileStore validate detects config mismatch") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32);
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    }
+
+    auto changedConfig = makeStore(fileSystem, {}, 160, 58);
+    const auto result = changedConfig.validateUnlocked();
+
+    REQUIRE_FALSE(result.ok);
+    CHECK(hasErrorCode(result, pqueue::ValidationIssueCode::ConfigMismatch));
+}
+
+TEST_CASE("FileStore validate detects missing spool") {
+    auto fileSystem = makeFakeFileSystem();
+    auto store = makeStore(fileSystem);
+
+    const auto result = store.validateUnlocked();
+
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SpoolMissing);
+}
+
+TEST_CASE("FileStore validate detects wrong spool size") {
+    auto fileSystem = makeFakeFileSystem();
+    fileSystem->files["pqueue.spool"] = std::string(17, '\0');
+    auto store = makeStore(fileSystem);
+
+    const auto result = store.validateUnlocked();
+
+    REQUIRE_FALSE(result.ok);
+    REQUIRE_FALSE(result.errors.empty());
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SpoolSizeMismatch);
+}
+
+TEST_CASE("FileStore validate stops early when corrupt checkpoints exceed max errors") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 1);
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+        REQUIRE(store.writeIndex({0, 2, 2}).ok());
+        REQUIRE(store.writeIndex({0, 3, 3}).ok());
+    }
+
+    for (std::uint32_t slot = 0; slot < pqueue::storage_detail::kCheckpointSlots; ++slot) {
+        fileSystem->files["pqueue.spool"][checkpointOffset(slot)] ^= static_cast<char>(0xff);
+    }
+
+    pqueue::ValidationOptions options;
+    options.maxErrors = 1;
+    auto store = makeStore(fileSystem, {}, 160, 32, 1);
+    const auto result = store.validateUnlocked(options);
+
+    REQUIRE_FALSE(result.ok);
+    CHECK(result.stoppedEarly);
+    CHECK_EQ(result.errors.size(), 1U);
+    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::MetadataCorrupt);
+}
+
+TEST_CASE("FileStore validate detects non-contiguous journal entry") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 64);
+        REQUIRE(store.writeRecord(0, "one").ok());
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+        REQUIRE(store.writeRecord(1, "two").ok());
+        REQUIRE(store.writeIndex({0, 2, 2}).ok());
+    }
+
+    std::string bytes = fileSystem->files["pqueue.spool"].substr(journalOffset(1), pqueue::storage_detail::kJournalEntryBytes);
+    pqueue::storage_detail::JournalEntry entry;
+    REQUIRE(pqueue::storage_detail::parseJournalEntry(bytes, entry));
+    entry.generation += 1;
+    entry.crc = pqueue::storage_detail::journalCrc(entry);
+    fileSystem->files["pqueue.spool"].replace(journalOffset(1), pqueue::storage_detail::kJournalEntryBytes, pqueue::storage_detail::serializeJournalEntry(entry));
+
+    auto store = makeStore(fileSystem, {}, 160, 32, 64);
+    const auto result = store.validateUnlocked();
+
+    REQUIRE_FALSE(result.ok);
+    CHECK(hasErrorCode(result, pqueue::ValidationIssueCode::JournalCorrupt));
+}
+
+TEST_CASE("FileStore validate detects active slot read failure") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem);
+        REQUIRE(store.writeRecord(0, "payload").ok());
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+    }
+
+    fileSystem->failNextReadAt("pqueue.spool", activeSlotOffset(0));
+    auto store = makeStore(fileSystem);
+    const auto result = store.validateUnlocked();
+
+    REQUIRE_FALSE(result.ok);
+    CHECK(hasErrorCode(result, pqueue::ValidationIssueCode::SlotReadFailed));
+}
 
 TEST_CASE("FileStore mounts and preallocates one spool file") {
     auto fileSystem = makeFakeFileSystem();
