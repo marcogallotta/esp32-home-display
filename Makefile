@@ -88,6 +88,7 @@ TEST_SRC := \
 	tests/pqueue_http_outbox.cpp \
 	tests/pqueue_http_request_envelope.cpp \
 	tests/pqueue_outbox.cpp \
+	tests/pqueue_queue_edges.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
