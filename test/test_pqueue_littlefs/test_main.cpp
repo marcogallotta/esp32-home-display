@@ -509,18 +509,20 @@ void test_lock_released_after_queue_destroyed() {
     TEST_ASSERT_EQUAL_UINT32(2, second.stats().count);
 }
 
-void test_littlefs_lock_is_global_across_base_paths() {
+void test_littlefs_locks_are_independent_across_base_paths() {
     cleanLittleFs();
 
     pqueue::Queue first(queueConfigForBase(kBasePath));
     const auto firstStatus = first.enqueue("first");
-    dbgStatus("global lock first enqueue", firstStatus);
+    dbgStatus("independent lock first enqueue", firstStatus);
     TEST_ASSERT_TRUE(firstStatus.ok());
 
     pqueue::Queue second(queueConfigForBase(kOtherBasePath));
-    const pqueue::Status status = second.enqueue("other-base");
-    dbgStatus("global lock second enqueue", status);
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(pqueue::StatusCode::LockTimeout), static_cast<int>(status.code));
+    const pqueue::Status secondStatus = second.enqueue("other-base");
+    dbgStatus("independent lock second enqueue", secondStatus);
+    TEST_ASSERT_TRUE(secondStatus.ok());
+    TEST_ASSERT_EQUAL_UINT32(1, first.stats().count);
+    TEST_ASSERT_EQUAL_UINT32(1, second.stats().count);
 }
 
 void test_legacy_lock_file_is_removed_and_does_not_block() {
@@ -740,7 +742,7 @@ void setup() {
     RUN_TEST(test_record_size_boundary);
     RUN_TEST(test_lock_conflict);
     RUN_TEST(test_lock_released_after_queue_destroyed);
-    RUN_TEST(test_littlefs_lock_is_global_across_base_paths);
+    RUN_TEST(test_littlefs_locks_are_independent_across_base_paths);
     RUN_TEST(test_legacy_lock_file_is_removed_and_does_not_block);
     RUN_TEST(test_legacy_lock_directory_is_removed_and_does_not_block);
     RUN_TEST(test_legacy_alt_lock_directory_is_removed_and_does_not_block);
