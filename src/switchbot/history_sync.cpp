@@ -54,11 +54,6 @@ const NimBLEUUID kNotifyCharacteristicUuid("cba20003-224d-11e6-9fb8-0002a5d5c51b
 
 constexpr uint32_t kScanDurationMs = 15000;
 
-#if defined(SWITCHBOT_HISTORY_TEST_DEBUG) && SWITCHBOT_HISTORY_TEST_DEBUG
-#define HISTORY_DBG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#else
-#define HISTORY_DBG_PRINTF(...)
-#endif
 
 struct NotifyState {
     NotifyState()
@@ -101,10 +96,12 @@ void drainNotifications(NotifyState& state) {
 
 void logBytes(const char* label, const std::vector<uint8_t>& bytes) {
 #if defined(SWITCHBOT_HISTORY_TEST_DEBUG) && SWITCHBOT_HISTORY_TEST_DEBUG
-    Serial.printf("[switchbot history debug] %s len=%u hex=%s\n",
-                  label,
-                  static_cast<unsigned>(bytes.size()),
-                  bytesToHex(bytes).c_str());
+    logLine(
+        LogLevel::Debug,
+        std::string("switchbot_history_bytes,label=") + label +
+        ",len=" + std::to_string(bytes.size()) +
+        ",hex=" + bytesToHex(bytes)
+    );
 #else
     (void)label;
     (void)bytes;
@@ -149,8 +146,6 @@ void logProgress(const std::string& label, uint32_t done, uint32_t total) {
 bool waitForNotify(NotifyState& state, uint32_t timeoutMs, std::vector<uint8_t>& out) {
     const TickType_t timeoutTicks = pdMS_TO_TICKS(timeoutMs);
     if (state.ready == nullptr || xSemaphoreTake(state.ready, timeoutTicks) != pdTRUE) {
-        HISTORY_DBG_PRINTF("[switchbot history debug] notify timeout after %lu ms\n",
-                           static_cast<unsigned long>(timeoutMs));
         return false;
     }
 
@@ -170,7 +165,6 @@ bool writeAndWait(NimBLERemoteCharacteristic& writeChar,
     logBytes(label, command);
 
     if (!writeChar.writeValue(command.data(), command.size(), true)) {
-        HISTORY_DBG_PRINTF("[switchbot history debug] write failed label=%s\n", label);
         return false;
     }
 
@@ -180,15 +174,10 @@ bool writeAndWait(NimBLERemoteCharacteristic& writeChar,
 const NimBLEAdvertisedDevice* findAdvertisedDeviceByMac(const std::string& mac) {
     NimBLEScan* scan = NimBLEDevice::getScan();
     if (scan == nullptr) {
-        HISTORY_DBG_PRINTF("[switchbot history debug] NimBLEDevice::getScan returned null\n");
         return nullptr;
     }
 
     const std::string wanted = normalizedMac(mac);
-    HISTORY_DBG_PRINTF("[switchbot history debug] scanning for mac=%s duration_ms=%lu\n",
-                       wanted.c_str(),
-                       static_cast<unsigned long>(kScanDurationMs));
-
     scan->clearResults();
     scan->setActiveScan(true);
     scan->setInterval(100);
@@ -197,8 +186,6 @@ const NimBLEAdvertisedDevice* findAdvertisedDeviceByMac(const std::string& mac) 
 
     NimBLEScanResults results = scan->getResults(kScanDurationMs, false);
     const int count = results.getCount();
-    HISTORY_DBG_PRINTF("[switchbot history debug] scan complete count=%d\n", count);
-
     for (int i = 0; i < count; ++i) {
         const NimBLEAdvertisedDevice* device = results.getDevice(static_cast<uint32_t>(i));
         if (device == nullptr) {
@@ -208,15 +195,6 @@ const NimBLEAdvertisedDevice* findAdvertisedDeviceByMac(const std::string& mac) 
         const NimBLEAddress& address = device->getAddress();
         const std::string seen = normalizedMac(address.toString());
         const bool match = seen == wanted;
-        HISTORY_DBG_PRINTF(
-            "[switchbot history debug] scan[%d] addr=%s type=%u rssi=%d connectable=%u match=%u\n",
-            i,
-            seen.c_str(),
-            static_cast<unsigned>(device->getAddressType()),
-            device->getRSSI(),
-            static_cast<unsigned>(device->isConnectable()),
-            static_cast<unsigned>(match));
-
         if (match) {
             return device;
         }
@@ -353,20 +331,10 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         return fail(SyncStatus::ConnectFailed, "device not found during scan");
     }
 
-    HISTORY_DBG_PRINTF("[switchbot history debug] connecting addr=%s type=%u\n",
-                       device->getAddress().toString().c_str(),
-                       static_cast<unsigned>(device->getAddressType()));
-
     if (!client->connect(device)) {
-        HISTORY_DBG_PRINTF("[switchbot history debug] connect failed last_error=%d\n", client->getLastError());
         cleanup();
         return fail(SyncStatus::ConnectFailed, "connect failed");
     }
-
-    HISTORY_DBG_PRINTF("[switchbot history debug] connected peer=%s rssi=%d mtu=%u\n",
-                       client->getPeerAddress().toString().c_str(),
-                       client->getRssi(),
-                       static_cast<unsigned>(client->getMTU()));
 
     NimBLERemoteService* service = client->getService(kSwitchbotServiceUuid);
     if (service == nullptr) {
@@ -446,15 +414,6 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     const uint32_t endExclusive = requestedRange.endExclusiveIndex;
     const uint32_t totalProgressSamples = requestedRange.progressTotalSamples;
 
-    HISTORY_DBG_PRINTF(
-        "[switchbot history debug] range start_index=%lu end_exclusive=%lu interval=%u start_epoch=%lu end_epoch=%lu progress_total=%lu\n",
-        static_cast<unsigned long>(firstPage),
-        static_cast<unsigned long>(endExclusive),
-        static_cast<unsigned>(result.metadata.intervalSeconds),
-        static_cast<unsigned long>(result.metadata.startEpoch),
-        static_cast<unsigned long>(result.metadata.endEpoch),
-        static_cast<unsigned long>(totalProgressSamples)
-    );
     uint32_t keptSamples = 0;
     uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
     bool haveLastKeptIndex = false;
