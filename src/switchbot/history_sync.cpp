@@ -95,17 +95,12 @@ void drainNotifications(NotifyState& state) {
 }
 
 void logBytes(const char* label, const std::vector<uint8_t>& bytes) {
-#if defined(SWITCHBOT_HISTORY_TEST_DEBUG) && SWITCHBOT_HISTORY_TEST_DEBUG
     logLine(
         LogLevel::Debug,
         std::string("switchbot_history_bytes,label=") + label +
         ",len=" + std::to_string(bytes.size()) +
         ",hex=" + bytesToHex(bytes)
     );
-#else
-    (void)label;
-    (void)bytes;
-#endif
 }
 
 std::string responseSummary(const std::vector<uint8_t>& response) {

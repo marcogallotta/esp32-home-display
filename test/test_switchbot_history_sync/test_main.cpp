@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "platform.h"
+#include "log.h"
 #include "switchbot/history_sync.h"
 
 #ifndef SWITCHBOT_HISTORY_TEST_START_EPOCH
@@ -22,51 +23,29 @@
 #define SWITCHBOT_HISTORY_TEST_COMMAND_TIMEOUT_MS 5000
 #endif
 
-#ifndef SWITCHBOT_HISTORY_TEST_DEBUG
-#define SWITCHBOT_HISTORY_TEST_DEBUG 0
-#endif
-
-#if SWITCHBOT_HISTORY_TEST_DEBUG
-#define DBG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#define DBG_PRINTLN(x) Serial.println(x)
-#else
-#define DBG_PRINTF(...)
-#define DBG_PRINTLN(x)
-#endif
-
 namespace {
 
 void dbgMetadata(const SwitchbotSensorConfig& sensor, const switchbot::history::SyncResult& result) {
-#if SWITCHBOT_HISTORY_TEST_DEBUG
-    Serial.printf(
-        "[switchbot history test debug] %s metadata start=%lu end=%lu end_index=%lu interval=%u samples=%u\n",
-        sensor.name.c_str(),
-        static_cast<unsigned long>(result.metadata.startEpoch),
-        static_cast<unsigned long>(result.metadata.endEpoch),
-        static_cast<unsigned long>(result.metadata.endIndex),
-        static_cast<unsigned>(result.metadata.intervalSeconds),
-        static_cast<unsigned>(result.samples.size())
+    logLine(
+        LogLevel::Debug,
+        std::string("switchbot_history_test,") + sensor.name +
+        ",metadata_start=" + std::to_string(static_cast<unsigned long>(result.metadata.startEpoch)) +
+        ",metadata_end=" + std::to_string(static_cast<unsigned long>(result.metadata.endEpoch)) +
+        ",end_index=" + std::to_string(static_cast<unsigned long>(result.metadata.endIndex)) +
+        ",interval=" + std::to_string(static_cast<unsigned>(result.metadata.intervalSeconds)) +
+        ",samples=" + std::to_string(static_cast<unsigned>(result.samples.size()))
     );
-#else
-    (void)sensor;
-    (void)result;
-#endif
 }
 
 void dbgSample(const SwitchbotSensorConfig& sensor, const switchbot::history::Sample& sample) {
-#if SWITCHBOT_HISTORY_TEST_DEBUG
-    Serial.printf(
-        "[switchbot history test debug] %s sample index=%lu epoch=%lu temp=%.1f humidity=%u\n",
-        sensor.name.c_str(),
-        static_cast<unsigned long>(sample.index),
-        static_cast<unsigned long>(sample.epoch),
-        static_cast<double>(sample.temperatureC),
-        static_cast<unsigned>(sample.humidityPct)
+    logLine(
+        LogLevel::Debug,
+        std::string("switchbot_history_test,") + sensor.name +
+        ",sample_index=" + std::to_string(static_cast<unsigned long>(sample.index)) +
+        ",epoch=" + std::to_string(static_cast<unsigned long>(sample.epoch)) +
+        ",temp_c=" + std::to_string(static_cast<double>(sample.temperatureC)) +
+        ",humidity=" + std::to_string(static_cast<unsigned>(sample.humidityPct))
     );
-#else
-    (void)sensor;
-    (void)sample;
-#endif
 }
 
 bool validateResult(const SwitchbotSensorConfig& sensor,
@@ -145,7 +124,7 @@ void test_switchbot_history_sync_for_configured_sensors() {
     std::string failures;
 
     for (const SwitchbotSensorConfig& sensor : config.switchbot.sensors) {
-        DBG_PRINTF("[switchbot history test debug] syncing %s %s\n", sensor.name.c_str(), sensor.mac.c_str());
+        logLine(LogLevel::Debug, "switchbot_history_test,syncing=" + sensor.name + ",mac=" + sensor.mac);
 
         const switchbot::history::SyncResult result =
             switchbot::history::syncSensorHistory(sensor.mac, request);
