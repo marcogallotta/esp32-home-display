@@ -291,6 +291,32 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("switchbot is not an object");
     }
 
+    SwitchbotHistoryConfig switchbotHistoryConfig = config.switchbot.history;
+    const JsonObject switchbotHistory = switchbot["history"];
+    if (!switchbot["history"].isNull() && switchbotHistory.isNull()) {
+        return fail("switchbot.history is not an object");
+    }
+    if (!switchbotHistory.isNull() &&
+        (!readOptionalUint32(switchbotHistory, "sample_interval_seconds", switchbotHistoryConfig.sampleIntervalSeconds, "switchbot.history.sample_interval_seconds") ||
+         !readOptionalUint32(switchbotHistory, "new_sensor_window_seconds", switchbotHistoryConfig.newSensorWindowSeconds, "switchbot.history.new_sensor_window_seconds") ||
+         !readOptionalUint32(switchbotHistory, "history_limit_seconds", switchbotHistoryConfig.historyLimitSeconds, "switchbot.history.history_limit_seconds") ||
+         !readOptionalUint32(switchbotHistory, "bulk_batch_limit", switchbotHistoryConfig.bulkBatchLimit, "switchbot.history.bulk_batch_limit"))) {
+        return false;
+    }
+
+    if (switchbotHistoryConfig.sampleIntervalSeconds == 0) {
+        return fail("switchbot.history.sample_interval_seconds must be > 0");
+    }
+    if (switchbotHistoryConfig.newSensorWindowSeconds == 0) {
+        return fail("switchbot.history.new_sensor_window_seconds must be > 0");
+    }
+    if (switchbotHistoryConfig.historyLimitSeconds == 0) {
+        return fail("switchbot.history.history_limit_seconds must be > 0");
+    }
+    if (switchbotHistoryConfig.bulkBatchLimit == 0) {
+        return fail("switchbot.history.bulk_batch_limit must be > 0");
+    }
+
     const JsonArray sensors = switchbot["sensors"];
     if (!switchbot["sensors"].isNull() && sensors.isNull()) {
         return fail("switchbot.sensors is not an array");
@@ -390,6 +416,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.salah.dstRule = dstRuleStr;
     config.salah.asrMakruhMinutes = asrMakruhMinutes;
     config.salah.hanafiAsr = hanafiAsr;
+
+    config.switchbot.history = switchbotHistoryConfig;
 
     config.xiaomi.updateIntervalMinutes = xiaomiUpdateIntervalMinutes;
 

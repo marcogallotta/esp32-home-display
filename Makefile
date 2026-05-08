@@ -58,6 +58,7 @@ COMMON_SRC := \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
+	src/switchbot/history_backend.cpp \
 	src/switchbot/history_protocol.cpp \
 	src/switchbot/history_sync.cpp \
 	src/switchbot/protocol.cpp \
@@ -94,6 +95,7 @@ TEST_SRC := \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
 	tests/switchbot_ble.cpp \
+	tests/switchbot_history_backend.cpp \
 	tests/switchbot_history_protocol.cpp \
 	tests/switchbot_protocol.cpp \
 	tests/timing.cpp \

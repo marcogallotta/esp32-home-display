@@ -29,6 +29,7 @@ struct ApiConfig {
     std::string baseUrl;
     std::string apiKey;
     std::string pemFile;
+    std::string pem;
     ApiOutboxConfig outbox;
     SensorWritePolicyConfig sensorWritePolicy;
 };
@@ -63,9 +64,19 @@ struct SwitchbotSensorConfig {
     std::uint8_t addressType = 0;
 };
 
+struct SwitchbotHistoryConfig {
+    // Client-side planning only. SwitchBot device history interval comes from device metadata.
+    std::uint32_t sampleIntervalSeconds = 15U * 60U;
+    std::uint32_t newSensorWindowSeconds = 6U * 60U * 60U;
+    std::uint32_t historyLimitSeconds = 68U * 24U * 60U * 60U;
+    // TODO: test increasing this up to backend max 1000 when bulk upload is enabled.
+    std::uint32_t bulkBatchLimit = 100;
+};
+
 struct SwitchbotConfig {
     // Up to 4 sensors supported on ESP32 due to screen space limitations.
     std::vector<SwitchbotSensorConfig> sensors;
+    SwitchbotHistoryConfig history;
 };
 
 struct WifiConfig {
