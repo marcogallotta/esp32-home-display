@@ -113,6 +113,16 @@ def build_time_sync_command(epoch: int | None = None) -> bytes:
     return bytes.fromhex("570005030d00000000") + epoch.to_bytes(4, "big")
 
 
+def resolve_time_sync_epoch(args: argparse.Namespace) -> int | None:
+    supplied = [
+        value for value in (args.epoch, args.time_sync_epoch, args.time_sync_iso)
+        if value is not None
+    ]
+    if len(supplied) > 1:
+        raise ValueError("use only one of --epoch, --time-sync-epoch, or --time-sync-iso")
+    return supplied[0] if supplied else None
+
+
 def build_start_command() -> bytes:
     return bytes.fromhex("570f3a")
 
@@ -321,7 +331,12 @@ async def run(args: argparse.Namespace) -> None:
             await probe.start_notify()
 
             if args.time_sync:
-                await probe.write_and_wait("time-sync", build_time_sync_command(args.epoch))
+                sync_epoch = resolve_time_sync_epoch(args)
+                command = build_time_sync_command(sync_epoch)
+                effective_epoch = sync_epoch if sync_epoch is not None else int.from_bytes(command[-4:], "big")
+                print(f"time_sync_epoch: {effective_epoch}  {utc_iso(effective_epoch)}")
+                print(f"time_sync_command: {command.hex()}")
+                await probe.write_and_wait("time-sync", command)
                 await asyncio.sleep(args.delay_ms / 1000)
 
             start_response = await probe.write_and_wait("start", build_start_command())
@@ -456,7 +471,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--no-time-sync", dest="time_sync", action="store_false", help="skip observed time-sync command")
     parser.set_defaults(time_sync=True)
-    parser.add_argument("--epoch", type=parse_int, help="epoch to use for time-sync; default is current time")
+    parser.add_argument("--epoch", type=parse_time_arg, help="epoch/ISO time to use for time-sync; default is current time")
+    parser.add_argument("--time-sync-epoch", type=parse_int, help="Unix epoch to use for time-sync")
+    parser.add_argument("--time-sync-iso", type=parse_time_arg, help="ISO datetime with timezone to use for time-sync, e.g. 2026-05-07T03:30:00Z")
 
     parser.add_argument("--delay-ms", type=int, default=50, help="delay between commands")
     parser.add_argument("--timeout", type=float, default=5.0, help="notification wait timeout")

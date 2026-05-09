@@ -239,13 +239,13 @@ uint32_t chooseTimeSyncEpoch(const SyncRequest& request) {
         return request.timeSyncEpoch;
     }
 
+    if (request.endEpoch != 0) {
+        return request.endEpoch;
+    }
+
     const time_t now = std::time(nullptr);
     if (now > 1700000000) {
         return static_cast<uint32_t>(now);
-    }
-
-    if (request.endEpoch != 0) {
-        return request.endEpoch;
     }
 
     return 0;
