@@ -1,7 +1,7 @@
 CXX := g++
 CXXFLAGS_COMMON := -Wall -Wextra -Wpedantic -O2 -MMD -MP \
-            -Isrc -Ilib/pqueue/src -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src \
-			-Ithird_party/doctest -Itests \
+            -Isrc -Ipqueue/src -Ithird_party/PrayerTimes/src -Ithird_party/ArduinoJson/src \
+			-Ithird_party/doctest -Itests -Ipqueue/tests \
 			$(shell pkg-config --cflags sdbus-c++)
 CXXFLAGS := -std=c++17 $(CXXFLAGS_COMMON)
 CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
@@ -27,18 +27,18 @@ COV_TEST_TARGET := $(COV_BUILD_DIR)/tests
 # --- COMMON SOURCES ---
 
 PQUEUE_SRC := \
-	lib/pqueue/src/pqueue/envelope.cpp \
-	lib/pqueue/src/pqueue/http/esp32_arduino_transport.cpp \
-	lib/pqueue/src/pqueue/http/outbox.cpp \
-	lib/pqueue/src/pqueue/http/posix_curl_transport.cpp \
-	lib/pqueue/src/pqueue/http/request_envelope.cpp \
-	lib/pqueue/src/pqueue/file_store.cpp \
-	lib/pqueue/src/pqueue/diagnostics.cpp \
-	lib/pqueue/src/pqueue/storage_common.cpp \
-	lib/pqueue/src/pqueue/storage_posix.cpp \
-	lib/pqueue/src/pqueue/storage_littlefs.cpp \
-	lib/pqueue/src/pqueue/outbox.cpp \
-	lib/pqueue/src/pqueue/queue.cpp
+	pqueue/src/pqueue/envelope.cpp \
+	pqueue/src/pqueue/http/esp32_arduino_transport.cpp \
+	pqueue/src/pqueue/http/outbox.cpp \
+	pqueue/src/pqueue/http/posix_curl_transport.cpp \
+	pqueue/src/pqueue/http/request_envelope.cpp \
+	pqueue/src/pqueue/file_store.cpp \
+	pqueue/src/pqueue/diagnostics.cpp \
+	pqueue/src/pqueue/storage_common.cpp \
+	pqueue/src/pqueue/storage_posix.cpp \
+	pqueue/src/pqueue/storage_littlefs.cpp \
+	pqueue/src/pqueue/outbox.cpp \
+	pqueue/src/pqueue/queue.cpp
 
 COMMON_SRC := \
 	third_party/PrayerTimes/src/PrayerTimes.cpp \
@@ -86,14 +86,14 @@ TEST_SRC := \
 	tests/api_sync.cpp \
 	tests/config.cpp \
 	tests/main.cpp \
-	tests/pqueue.cpp \
-	tests/pqueue_envelope.cpp \
-	tests/pqueue_file_store.cpp \
-	tests/pqueue_diagnostics.cpp \
-	tests/pqueue_http_outbox.cpp \
-	tests/pqueue_http_request_envelope.cpp \
-	tests/pqueue_outbox.cpp \
-	tests/pqueue_queue_edges.cpp \
+	pqueue/tests/posix/pqueue.cpp \
+	pqueue/tests/posix/pqueue_envelope.cpp \
+	pqueue/tests/posix/pqueue_file_store.cpp \
+	pqueue/tests/posix/pqueue_diagnostics.cpp \
+	pqueue/tests/posix/pqueue_http_outbox.cpp \
+	pqueue/tests/posix/pqueue_http_request_envelope.cpp \
+	pqueue/tests/posix/pqueue_outbox.cpp \
+	pqueue/tests/posix/pqueue_queue_edges.cpp \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
@@ -108,7 +108,7 @@ TEST_SRC := \
 	$(COMMON_SRC)
 
 PQUEUE_PROFILING_SRC := \
-	tools/pqueue_profiling.cpp \
+	pqueue/tools/pqueue_profiling.cpp \
 	$(PQUEUE_SRC)
 
 # --- OBJECT CONVERSION ---
@@ -125,7 +125,7 @@ COV_TEST_OBJ := $(call make_objs,$(TEST_SRC),$(COV_OBJ_DIR))
 
 # --- RULES ---
 
-.PHONY: all clean clean-coverage run run-test-api tests run-tests coverage pqueue-profiling
+.PHONY: all clean clean-coverage run run-test-api test tests run-tests coverage pqueue-profiling pqueue-tests
 
 all: $(MAIN_TARGET)
 
@@ -136,6 +136,8 @@ $(MAIN_TARGET): $(MAIN_OBJ)
 $(MAIN_TEST_API_TARGET): $(MAIN_TEST_API_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $^ -o $@ $(LDFLAGS)
+
+test: tests
 
 tests: $(TEST_TARGET)
 $(TEST_TARGET): $(TEST_OBJ)
@@ -155,12 +157,17 @@ run-test-api: $(MAIN_TEST_API_TARGET)
 run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
-pqueue-profiling: $(PQUEUE_PROFILING_TARGET)
+pqueue-profiling:
+	@test -f pqueue/tools/pqueue_profiling.cpp || { echo "missing pqueue/tools/pqueue_profiling.cpp"; exit 1; }
+	$(MAKE) $(PQUEUE_PROFILING_TARGET)
 	./$(PQUEUE_PROFILING_TARGET) all
+
+pqueue-tests:
+	$(MAKE) -C pqueue run-tests
 
 coverage: $(COV_TEST_TARGET)
 	./$(COV_TEST_TARGET)
-	gcovr -r . --object-directory $(COV_OBJ_DIR) --exclude 'third_party/.*' --exclude 'tests/.*' --html --html-details -o $(COV_BUILD_DIR)/coverage.html
+	gcovr -r . --object-directory $(COV_OBJ_DIR) --exclude 'third_party/.*' --exclude 'tests/.*' --exclude 'pqueue/tests/.*' --html --html-details -o $(COV_BUILD_DIR)/coverage.html
 
 $(COV_TEST_TARGET): $(COV_TEST_OBJ)
 	@mkdir -p $(COV_BUILD_DIR)
