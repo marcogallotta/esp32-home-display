@@ -470,6 +470,18 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     uint32_t lastKeptIndex = 0;
 
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
+        if (pageIndex + kSamplesPerPage > result.metadata.endIndex) {
+            logLine(
+                LogLevel::Debug,
+                "switchbot_history_drop_partial_metadata_page," + requestLabel(mac, request) +
+                ",page_index=" + std::to_string(pageIndex) +
+                ",page_end=" + std::to_string(pageIndex + kSamplesPerPage) +
+                ",metadata_end_index=" + std::to_string(result.metadata.endIndex) +
+                ",end_exclusive=" + std::to_string(endExclusive)
+            );
+            break;
+        }
+
         delay(50);
 
         const uint8_t requestSampleCount = kSamplesPerPage;
