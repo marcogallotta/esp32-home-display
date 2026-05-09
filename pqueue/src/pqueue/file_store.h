@@ -17,12 +17,14 @@ enum class StorageBackend {
     LittleFS,
 };
 
-struct FileStoreConfig {
 #ifdef ARDUINO
-    std::string basePath = "/pqueue_spool";
+inline constexpr const char* kDefaultBasePath = "/pqueue_spool";
 #else
-    std::string basePath = "pqueue_spool";
+inline constexpr const char* kDefaultBasePath = "build/pqueue-spools/pqueue_spool";
 #endif
+
+struct FileStoreConfig {
+    std::string basePath = kDefaultBasePath;
     StorageBackend backend = StorageBackend::Default;
     std::shared_ptr<FileSystem> fileSystem;
     std::uint32_t reservedBytes = 128 * 1024;
@@ -36,6 +38,12 @@ struct FileStoreIndex {
     std::uint32_t head = 0;
     std::uint32_t tail = 0;
     std::uint32_t count = 0;
+};
+
+enum class ValidationRepairAction {
+    None,
+    Format,
+    DropFrontIfCorrupt,
 };
 
 enum class ValidationIssueCode {
@@ -65,6 +73,7 @@ struct ValidationIssue {
     bool hasSlotIndex = false;
     bool hasExpectedSequence = false;
     bool hasActualSequence = false;
+    ValidationRepairAction repairAction = ValidationRepairAction::None;
 };
 
 struct ValidationResult {
@@ -114,6 +123,7 @@ public:
 
     Status tryAcquireLockFile(const std::string& name, const std::string& contents);
     Status releaseLockFile(const std::string& name, const std::string& expectedContents);
+    Status recoverStaleLockFile(const std::string& name, const std::string& currentContents);
 
     std::uint64_t freeBytes() const;
 
@@ -124,6 +134,7 @@ private:
     Status diagnostic(Severity severity, Status status, const char* operation, std::uint32_t sequence = kNoSequence, const char* path = "") const;
     ValidationResult validateUnlocked(const ValidationOptions& options = ValidationOptions{});
     Status readIndexFromDisk(FileStoreIndex& out);
+    Status format();
 
     FileStoreConfig config_;
     mutable std::shared_ptr<FileSystem> fileSystem_;

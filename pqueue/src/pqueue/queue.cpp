@@ -1,6 +1,8 @@
 #include "queue.h"
+#include "internal/lock_owner.h"
 #include "storage_common.h"
 
+#include <cstdint>
 #include <utility>
 
 #ifdef ARDUINO
@@ -23,12 +25,15 @@ constexpr int kLockRetryDelayMs = 10;
 
 std::string makeLockContents(const void* owner) {
     std::ostringstream out;
-    out << "pqueue-lock-v1\n";
+    out << "pqueue-lock-v2\n";
+    out << "owner=queue\n";
 #ifdef ARDUINO
     out << "pid=0\n";
+    out << "boot_id=" << lock_detail::currentBootId() << "\n";
     out << "token=" << reinterpret_cast<std::uintptr_t>(owner) << "-" << millis() << "\n";
 #else
     out << "pid=" << static_cast<long>(::getpid()) << "\n";
+    out << "boot_id=" << lock_detail::currentBootId() << "\n";
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     out << "token=" << reinterpret_cast<std::uintptr_t>(owner) << "-" << now << "\n";
 #endif
@@ -53,15 +58,60 @@ void addQueueValidationError(ValidationResult& result, const ValidationOptions& 
     }
 }
 
-ValidationIssue makeQueueIssue(ValidationIssueCode code, std::string message) {
+ValidationIssue makeQueueIssue(ValidationIssueCode code, std::string message, ValidationRepairAction repairAction = ValidationRepairAction::None) {
     ValidationIssue issue;
     issue.code = code;
     issue.message = std::move(message);
+    issue.repairAction = repairAction;
     return issue;
+}
+
+bool isFormatRepairIssue(ValidationIssueCode code) {
+    switch (code) {
+        case ValidationIssueCode::MetadataMissing:
+        case ValidationIssueCode::MetadataCorrupt:
+        case ValidationIssueCode::JournalCorrupt:
+        case ValidationIssueCode::ConfigMismatch:
+        case ValidationIssueCode::SpoolMissing:
+        case ValidationIssueCode::SpoolSizeMismatch:
+        case ValidationIssueCode::InvalidRingState:
+        case ValidationIssueCode::QueueLoadFailed:
+        case ValidationIssueCode::QueueIndexMismatch:
+            return true;
+        case ValidationIssueCode::InvalidConfig:
+        case ValidationIssueCode::SlotReadFailed:
+        case ValidationIssueCode::SlotHeaderInvalid:
+        case ValidationIssueCode::SlotCrcMismatch:
+        case ValidationIssueCode::OutboxEnvelopeInvalid:
+        case ValidationIssueCode::HttpRequestEnvelopeInvalid:
+            return false;
+    }
+    return false;
+}
+
+void addRepairHints(ValidationResult& result, std::uint32_t head) {
+    for (auto& issue : result.errors) {
+        if (issue.repairAction != ValidationRepairAction::None) {
+            continue;
+        }
+        if (isFormatRepairIssue(issue.code)) {
+            issue.repairAction = ValidationRepairAction::Format;
+            continue;
+        }
+        if ((issue.code == ValidationIssueCode::SlotHeaderInvalid || issue.code == ValidationIssueCode::SlotCrcMismatch) &&
+            issue.hasExpectedSequence && issue.expectedSequence == head) {
+            issue.repairAction = ValidationRepairAction::DropFrontIfCorrupt;
+        }
+    }
 }
 
 bool sameIndex(const FileStoreIndex& lhs, const FileStoreIndex& rhs) {
     return lhs.head == rhs.head && lhs.tail == rhs.tail && lhs.count == rhs.count;
+}
+
+
+bool isCorruptRecordStatus(StatusCode code) {
+    return code == StatusCode::InvalidRecord || code == StatusCode::CrcMismatch;
 }
 
 } // namespace
@@ -153,6 +203,20 @@ void Queue::releaseLock() {
     }
     store_.releaseLockFile(kLockFileName, lockContents_);
     lockHeld_ = false;
+}
+
+Status Queue::recoverStaleLock() {
+    if (lockHeld_) {
+        return Status::failure(StatusCode::InvalidArgument, "queue already holds the lock");
+    }
+    if (lockContents_.empty()) {
+        lockContents_ = makeLockContents(this);
+    }
+    Status st = store_.recoverStaleLockFile(kLockFileName, lockContents_);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "recoverStaleLock");
+    }
+    return Status::success();
 }
 
 Status Queue::loadLatestIndex() {
@@ -265,6 +329,59 @@ Status Queue::rewriteFront(const std::string& record) {
 }
 
 
+
+
+Status Queue::dropFrontIfCorrupt() {
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+
+    Status st = loadLatestIndex();
+    if (!st.ok()) {
+        return st;
+    }
+    if (index_.count == 0) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
+    }
+
+    std::string ignored;
+    st = store_.readRecord(index_.head, ignored);
+    if (st.ok()) {
+        return Status::failure(StatusCode::InvalidArgument, "front record is not corrupt");
+    }
+    if (!isCorruptRecordStatus(st.code)) {
+        return st;
+    }
+
+    const std::uint32_t corruptHead = index_.head;
+    FileStoreIndex next = index_;
+    next.head += 1;
+    next.count -= 1;
+
+    st = store_.writeIndex(next);
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "dropFrontIfCorrupt");
+    }
+
+    index_ = next;
+    store_.removeRecord(corruptHead);
+    return Status::success();
+}
+
+Status Queue::format() {
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = store_.format();
+    if (!st.ok()) {
+        return diagnostic(Severity::Error, st, "format");
+    }
+    index_ = FileStoreIndex{};
+    return Status::success();
+}
+
 Status Queue::visitRecords(RecordVisitor visitor, void* context) {
     ScopedLock lock(*this);
     if (!lock.status().ok()) {
@@ -303,11 +420,12 @@ ValidationResult Queue::validate(const ValidationOptions& options) {
     }
     Status st = loadLatestIndex();
     if (!st.ok()) {
-        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message));
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message, ValidationRepairAction::Format));
         return result;
     }
 
     result = store_.validateUnlocked(options);
+    addRepairHints(result, index_.head);
     if (result.stoppedEarly || result.errors.size() >= options.maxErrors) {
         return result;
     }
@@ -315,12 +433,12 @@ ValidationResult Queue::validate(const ValidationOptions& options) {
     FileStoreIndex diskIndex;
     st = store_.readIndexFromDisk(diskIndex);
     if (!st.ok()) {
-        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message));
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message, ValidationRepairAction::Format));
         return result;
     }
 
     if (!sameIndex(index_, diskIndex)) {
-        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueIndexMismatch, "queue cached index does not match storage metadata"));
+        addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueIndexMismatch, "queue cached index does not match storage metadata", ValidationRepairAction::Format));
     }
 
     return result;

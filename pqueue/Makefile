@@ -1,11 +1,15 @@
 CXX := g++
+CLI11_INCLUDE ?= third_party/CLI11/include
+DOCTEST_INCLUDE ?= ../third_party/doctest
+
 CXXFLAGS := -std=c++17 -Wall -Wextra -Wpedantic -O2 -MMD -MP \
-	-Isrc -Itests -I../third_party/doctest
+	-Isrc -Itests -I$(DOCTEST_INCLUDE) -I$(CLI11_INCLUDE)
 LDFLAGS := -lcurl
 
 BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj
 TEST_TARGET := $(BUILD_DIR)/pqueue-tests
+REPAIR_TOOL_TARGET := $(BUILD_DIR)/pqueue-repair-tool
 
 PQUEUE_SRC := \
 	src/pqueue/envelope.cpp \
@@ -14,6 +18,7 @@ PQUEUE_SRC := \
 	src/pqueue/http/posix_curl_transport.cpp \
 	src/pqueue/http/request_envelope.cpp \
 	src/pqueue/file_store.cpp \
+	src/pqueue/internal/lock_owner.cpp \
 	src/pqueue/diagnostics.cpp \
 	src/pqueue/storage_common.cpp \
 	src/pqueue/storage_posix.cpp \
@@ -30,14 +35,15 @@ TEST_SRC := \
 	tests/posix/pqueue_http_outbox.cpp \
 	tests/posix/pqueue_http_request_envelope.cpp \
 	tests/posix/pqueue_outbox.cpp \
+	tests/posix/pqueue_repair.cpp \
 	tests/posix/pqueue_queue_edges.cpp \
 	$(PQUEUE_SRC)
 
 OBJ := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(TEST_SRC))
 
-.PHONY: all test tests run-tests clean
+.PHONY: all test tests run-tests repair-tool clean
 
-all: $(TEST_TARGET)
+all: test
 
 test: run-tests
 
@@ -45,6 +51,12 @@ tests: run-tests
 
 run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
+
+repair-tool: $(REPAIR_TOOL_TARGET)
+
+$(REPAIR_TOOL_TARGET): tools/pqueue_repair_tool.cpp $(PQUEUE_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(TEST_TARGET): $(OBJ)
 	@mkdir -p $(dir $@)
