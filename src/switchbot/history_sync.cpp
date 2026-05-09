@@ -4,6 +4,7 @@
 #include <cctype>
 #include <ctime>
 #include <string>
+#include <utility>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -138,6 +139,41 @@ void logProgress(const std::string& label, uint32_t done, uint32_t total) {
     );
 }
 
+std::string requestLabel(const std::string& mac, const SyncRequest& request) {
+    return request.progressLabel.empty() ? mac : request.progressLabel;
+}
+
+std::string pageDiagnosticFields(const std::string& mac,
+                                 const SyncRequest& request,
+                                 const Metadata& metadata,
+                                 uint32_t pageIndex,
+                                 uint32_t endExclusive,
+                                 uint8_t requestSampleCount,
+                                 const char* reason) {
+    const uint32_t pageEnd = pageIndex + requestSampleCount;
+    return requestLabel(mac, request) +
+        ",reason=" + reason +
+        ",page_index=" + std::to_string(pageIndex) +
+        ",count=" + std::to_string(requestSampleCount) +
+        ",page_end=" + std::to_string(pageEnd) +
+        ",end_exclusive=" + std::to_string(endExclusive) +
+        ",metadata_end_index=" + std::to_string(metadata.endIndex) +
+        ",aligned=" + ((pageIndex % kSamplesPerPage) == 0 ? "yes" : "no");
+}
+
+void logPageRequest(const std::string& mac,
+                    const SyncRequest& request,
+                    const Metadata& metadata,
+                    uint32_t pageIndex,
+                    uint32_t endExclusive,
+                    uint8_t requestSampleCount) {
+    logLine(
+        LogLevel::Debug,
+        "switchbot_history_page_request," +
+        pageDiagnosticFields(mac, request, metadata, pageIndex, endExclusive, requestSampleCount, "request")
+    );
+}
+
 bool waitForNotify(NotifyState& state, uint32_t timeoutMs, std::vector<uint8_t>& out) {
     const TickType_t timeoutTicks = pdMS_TO_TICKS(timeoutMs);
     if (state.ready == nullptr || xSemaphoreTake(state.ready, timeoutTicks) != pdTRUE) {
@@ -223,15 +259,15 @@ uint32_t rangeStartIndex(const Metadata& metadata, const SyncRequest& request) {
         return metadata.endIndex >= kSamplesPerPage ? metadata.endIndex - kSamplesPerPage : 0;
     }
 
-    // For explicit time-window syncs, start at the exact first wanted index.
-    // Rounding down to a 6-sample page boundary shifts the whole page sequence
-    // earlier; near the device tail that can make the final request spill past
-    // metadata.endIndex, which SwitchBot rejects with a one-byte 0x02 response.
-    return indexForEpochCeil(
+    const uint32_t firstWantedIndex = indexForEpochCeil(
         metadata.startEpoch,
         request.startEpoch,
         metadata.intervalSeconds
     );
+
+    // Page reads should start on a six-sample page boundary; samples before the
+    // requested window are trimmed locally.
+    return pageStartForIndex(firstWantedIndex);
 }
 
 uint32_t rangeEndExclusiveIndex(const Metadata& metadata, const SyncRequest& request) {
@@ -250,6 +286,28 @@ struct RequestedSampleRange {
     uint32_t endExclusiveIndex = 0;
     uint32_t progressTotalSamples = 0;
 };
+
+void logPagePlan(const std::string& mac,
+                 const SyncRequest& request,
+                 const Metadata& metadata,
+                 const RequestedSampleRange& range) {
+    const bool explicitWindow = request.startEpoch != 0 || request.endEpoch != 0;
+    logLine(
+        LogLevel::Debug,
+        "switchbot_history_plan," + requestLabel(mac, request) +
+        ",request_start=" + std::to_string(request.startEpoch) +
+        ",request_end=" + std::to_string(request.endEpoch) +
+        ",metadata_start=" + std::to_string(metadata.startEpoch) +
+        ",metadata_end_index=" + std::to_string(metadata.endIndex) +
+        ",metadata_end_epoch=" + std::to_string(epochForIndex(metadata.startEpoch, metadata.endIndex, metadata.intervalSeconds)) +
+        ",interval=" + std::to_string(metadata.intervalSeconds) +
+        ",first_page=" + std::to_string(range.firstRequestIndex) +
+        ",end_exclusive=" + std::to_string(range.endExclusiveIndex) +
+        ",progress_total=" + std::to_string(range.progressTotalSamples) +
+        ",explicit_window=" + (explicitWindow ? "yes" : "no") +
+        ",first_page_aligned=" + ((range.firstRequestIndex % kSamplesPerPage) == 0 ? "yes" : "no")
+    );
+}
 
 uint32_t progressTotalSamples(const Metadata& metadata,
                               const SyncRequest& request,
@@ -289,12 +347,57 @@ bool keepSample(const Sample& sample, const SyncRequest& request, uint32_t endEx
 
 }  // namespace
 
-SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request) {
-    if ((request.startEpoch == 0) != (request.endEpoch == 0)) {
-        return fail(SyncStatus::InvalidRequest, "startEpoch and endEpoch must both be set or both be zero");
+struct SensorHistorySessionImpl {
+    explicit SensorHistorySessionImpl(std::string sensorMac)
+        : mac(std::move(sensorMac)) {}
+
+    ~SensorHistorySessionImpl() {
+        cleanup();
     }
-    if (request.startEpoch != 0 && request.startEpoch >= request.endEpoch) {
-        return fail(SyncStatus::InvalidRequest, "startEpoch must be before endEpoch");
+
+    void cleanup() {
+        if (client != nullptr) {
+            if (client->isConnected()) {
+                client->disconnect();
+            }
+            NimBLEDevice::deleteClient(client);
+            client = nullptr;
+        }
+        writeChar = nullptr;
+        metadata = Metadata{};
+        opened = false;
+    }
+
+    std::string mac;
+    NotifyState notifyState;
+    NimBLEClient* client = nullptr;
+    NimBLERemoteCharacteristic* writeChar = nullptr;
+    Metadata metadata;
+    bool opened = false;
+};
+
+SensorHistorySession::SensorHistorySession(std::string mac)
+    : impl_(new SensorHistorySessionImpl(std::move(mac))) {}
+
+SensorHistorySession::~SensorHistorySession() = default;
+
+bool SensorHistorySession::isOpen() const {
+    return impl_ != nullptr && impl_->opened;
+}
+
+const Metadata& SensorHistorySession::metadata() const {
+    return impl_->metadata;
+}
+
+SyncResult SensorHistorySession::open(const SyncRequest& request) {
+    if (impl_ == nullptr || !impl_->notifyState.valid()) {
+        return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
+    }
+
+    if (impl_->opened) {
+        SyncResult result;
+        result.metadata = impl_->metadata;
+        return result;
     }
 
     static bool nimbleInitialised = false;
@@ -303,147 +406,156 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         nimbleInitialised = true;
     }
 
-    NotifyState notifyState;
-    if (!notifyState.valid()) {
-        return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
-    }
-
-    NimBLEClient* client = NimBLEDevice::createClient();
-    if (client == nullptr) {
+    impl_->client = NimBLEDevice::createClient();
+    if (impl_->client == nullptr) {
         return fail(SyncStatus::ConnectFailed, "NimBLEDevice::createClient failed");
     }
 
-    auto cleanup = [&]() {
-        if (client->isConnected()) {
-            client->disconnect();
-        }
-        NimBLEDevice::deleteClient(client);
-    };
-
-    const NimBLEAdvertisedDevice* device = findAdvertisedDeviceByMac(mac);
+    const NimBLEAdvertisedDevice* device = findAdvertisedDeviceByMac(impl_->mac);
     if (device == nullptr) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::ConnectFailed, "device not found during scan");
     }
 
-    if (!client->connect(device)) {
-        cleanup();
+    if (!impl_->client->connect(device)) {
+        impl_->cleanup();
         return fail(SyncStatus::ConnectFailed, "connect failed");
     }
 
-    NimBLERemoteService* service = client->getService(kSwitchbotServiceUuid);
+    NimBLERemoteService* service = impl_->client->getService(kSwitchbotServiceUuid);
     if (service == nullptr) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::ServiceNotFound, "SwitchBot service not found");
     }
 
-    NimBLERemoteCharacteristic* writeChar = service->getCharacteristic(kWriteCharacteristicUuid);
+    impl_->writeChar = service->getCharacteristic(kWriteCharacteristicUuid);
     NimBLERemoteCharacteristic* notifyChar = service->getCharacteristic(kNotifyCharacteristicUuid);
-    if (writeChar == nullptr || notifyChar == nullptr) {
-        cleanup();
+    if (impl_->writeChar == nullptr || notifyChar == nullptr) {
+        impl_->cleanup();
         return fail(SyncStatus::CharacteristicNotFound, "write or notify characteristic not found");
     }
 
     const bool subscribed = notifyChar->subscribe(
         true,
-        [&notifyState](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
-            notifyState.value.assign(data, data + length);
-            if (notifyState.ready != nullptr) {
-                xSemaphoreGive(notifyState.ready);
+        [state = &impl_->notifyState](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
+            state->value.assign(data, data + length);
+            if (state->ready != nullptr) {
+                xSemaphoreGive(state->ready);
             }
         }
     );
     if (!subscribed) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::SubscribeFailed, "notify subscribe failed");
     }
 
     std::vector<uint8_t> response;
     const uint32_t timeSyncEpoch = chooseTimeSyncEpoch(request);
     if (timeSyncEpoch == 0) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::InvalidRequest, "no valid time for time sync");
     }
 
-    if (!writeAndWait(*writeChar, notifyState, "time-sync", buildTimeSyncCommand(timeSyncEpoch), request.commandTimeoutMs, response)) {
-        cleanup();
+    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "time-sync", buildTimeSyncCommand(timeSyncEpoch), request.commandTimeoutMs, response)) {
+        impl_->cleanup();
         return fail(SyncStatus::Timeout, "time sync command timed out or write failed");
     }
     if (response.size() != 1 || response[0] != 0x01) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::BadAck, badAckMessage("time-sync", response, "01"));
     }
 
-    delay(50);
-
-    if (!writeAndWait(*writeChar, notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
-        cleanup();
+    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
+        impl_->cleanup();
         return fail(SyncStatus::Timeout, "start command timed out or write failed");
     }
     // Observed devices return different 0x01-prefixed start ACK variants.
     // Keep metadata parsing as the strict validation gate for the history session.
     if (response.empty() || response[0] != 0x01) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed ack"));
     }
 
-    delay(50);
-
-    if (!writeAndWait(*writeChar, notifyState, "metadata", buildMetadataCommand(), request.commandTimeoutMs, response)) {
-        cleanup();
+    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "metadata", buildMetadataCommand(), request.commandTimeoutMs, response)) {
+        impl_->cleanup();
         return fail(SyncStatus::Timeout, "metadata command timed out or write failed");
     }
 
-    const auto metadata = parseMetadataResponse(response);
-    if (!metadata.has_value()) {
+    const auto parsedMetadata = parseMetadataResponse(response);
+    if (!parsedMetadata.has_value()) {
         logBytes("bad-metadata", response);
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::BadMetadata, badDecodeMessage("metadata response decode failed", response));
     }
 
+    impl_->metadata = *parsedMetadata;
+    impl_->opened = true;
+
     SyncResult result;
-    result.metadata = *metadata;
+    result.metadata = impl_->metadata;
+    return result;
+}
+
+SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
+    if ((request.startEpoch == 0) != (request.endEpoch == 0)) {
+        return fail(SyncStatus::InvalidRequest, "startEpoch and endEpoch must both be set or both be zero");
+    }
+    if (request.startEpoch != 0 && request.startEpoch >= request.endEpoch) {
+        return fail(SyncStatus::InvalidRequest, "startEpoch must be before endEpoch");
+    }
+    if (!isOpen() || impl_->writeChar == nullptr) {
+        return fail(SyncStatus::ConnectFailed, "history session is not open");
+    }
+
+    SyncResult result;
+    result.metadata = impl_->metadata;
 
     const RequestedSampleRange requestedRange = planRequestedSampleRange(result.metadata, request);
     const uint32_t firstPage = requestedRange.firstRequestIndex;
     const uint32_t endExclusive = requestedRange.endExclusiveIndex;
     const uint32_t totalProgressSamples = requestedRange.progressTotalSamples;
 
+    logPagePlan(impl_->mac, request, result.metadata, requestedRange);
+
     uint32_t keptSamples = 0;
     uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
     bool haveLastKeptIndex = false;
     uint32_t lastKeptIndex = 0;
+    std::vector<uint8_t> response;
 
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
-        delay(50);
-
-        uint32_t requestPageIndex = pageIndex;
-        if (requestPageIndex + kSamplesPerPage > result.metadata.endIndex) {
-            if (result.metadata.endIndex < kSamplesPerPage) {
-                break;
-            }
-            // The device rejects page reads that extend past the metadata
-            // endIndex cursor with a one-byte 0x02 response. For a partial
-            // final window, read the last full page and trim/skip duplicates
-            // locally instead of asking the device for an invalid tail page.
-            requestPageIndex = result.metadata.endIndex - kSamplesPerPage;
+        if (pageIndex + kSamplesPerPage > result.metadata.endIndex) {
+            logLine(
+                LogLevel::Debug,
+                "switchbot_history_drop_partial_metadata_page," +
+                pageDiagnosticFields(impl_->mac, request, result.metadata, pageIndex, endExclusive, kSamplesPerPage, "metadata_tail_partial")
+            );
+            break;
         }
 
-        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(requestPageIndex, kSamplesPerPage), request.commandTimeoutMs, response)) {
-            cleanup();
+        const uint8_t requestSampleCount = kSamplesPerPage;
+
+        logPageRequest(impl_->mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount);
+
+        if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "page", buildPageCommand(pageIndex), request.commandTimeoutMs, response)) {
             return fail(SyncStatus::Timeout, "page command timed out or write failed");
         }
 
         const auto samples = decodePageResponse(
             response,
-            requestPageIndex,
+            pageIndex,
             result.metadata.startEpoch,
             result.metadata.intervalSeconds
         );
         if (!samples.has_value()) {
+            logLine(
+                LogLevel::Warn,
+                "switchbot_history_page_diag," +
+                pageDiagnosticFields(impl_->mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount, "bad_page") +
+                "," + responseSummary(response)
+            );
             logBytes("bad-page", response);
-            cleanup();
-            return fail(SyncStatus::BadPage, badPageMessage(requestPageIndex, response));
+            return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
         }
 
         for (const Sample& sample : *samples) {
@@ -456,7 +568,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
                 lastKeptIndex = sample.index;
                 ++keptSamples;
                 if (nextProgressAt != 0 && keptSamples >= nextProgressAt) {
-                    logProgress(request.progressLabel.empty() ? mac : request.progressLabel, keptSamples, totalProgressSamples);
+                    logProgress(request.progressLabel.empty() ? impl_->mac : request.progressLabel, keptSamples, totalProgressSamples);
                     nextProgressAt += 60;
                     if (nextProgressAt > totalProgressSamples) {
                         nextProgressAt = totalProgressSamples > keptSamples ? totalProgressSamples : 0;
@@ -466,9 +578,18 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         }
     }
 
-    cleanup();
     return result;
 }
+
+SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request) {
+    SensorHistorySession session(mac);
+    SyncResult open = session.open(request);
+    if (!open.ok()) {
+        return open;
+    }
+    return session.fetch(request);
+}
+
 
 #endif  // ARDUINO
 
