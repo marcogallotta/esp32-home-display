@@ -1,5 +1,6 @@
 #include "pqueue/outbox.h"
 #include "pqueue/storage_common.h"
+#include "support/pqueue_file_store_support.h"
 
 #include "doctest/doctest.h"
 
@@ -68,6 +69,15 @@ pqueue::Outbox makeOutbox(
 ) {
     pqueue::Config queueConfig;
     queueConfig.basePath = kOutboxSpoolDir.string();
+    return pqueue::Outbox(queueConfig, outboxConfig, fakeSend, &sender, fakeClockNow, &clock);
+}
+
+pqueue::Outbox makeOutbox(
+    const pqueue::Config& queueConfig,
+    FakeSender& sender,
+    FakeClock& clock,
+    pqueue::OutboxConfig outboxConfig
+) {
     return pqueue::Outbox(queueConfig, outboxConfig, fakeSend, &sender, fakeClockNow, &clock);
 }
 
@@ -740,6 +750,78 @@ TEST_CASE("pqueue outbox reports SendError when retry enqueue fails for non-full
     CHECK(result.status == pqueue::SubmitStatus::SendError);
     CHECK(result.detail.code == pqueue::StatusCode::InvalidArgument);
     CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+
+TEST_CASE("pqueue outbox reports SendError when retry enqueue cannot acquire queue lock") {
+#ifndef ARDUINO
+    auto fileSystem = pqueue_test::makeFakeFileSystem();
+    fileSystem->files[".pqueue.lock"] = "owned by another queue";
+
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+
+    auto queueConfig = pqueue_test::makeQueueConfig(fileSystem, 4096, 512);
+    auto outbox = makeOutbox(queueConfig, sender, clock, testOutboxConfig());
+
+    const auto result = outbox.submit("retry-later");
+
+    CHECK(result.status == pqueue::SubmitStatus::SendError);
+    CHECK(result.detail.code == pqueue::StatusCode::LockTimeout);
+    REQUIRE_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "retry-later");
+#endif
+}
+
+TEST_CASE("pqueue outbox reports SendError when retry enqueue hits storage write failure") {
+#ifndef ARDUINO
+    auto fileSystem = pqueue_test::makeFakeFileSystem();
+    FakeSender sender;
+    FakeClock clock;
+
+    auto queueConfig = pqueue_test::makeQueueConfig(fileSystem, 4096, 512);
+    auto outbox = makeOutbox(queueConfig, sender, clock, testOutboxConfig());
+    REQUIRE_EQ(outbox.stats().count, 0U);
+
+    fileSystem->failNextWrite();
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+
+    const auto result = outbox.submit("retry-later");
+
+    CHECK(result.status == pqueue::SubmitStatus::SendError);
+    CHECK(result.detail.code == pqueue::StatusCode::WriteFailed);
+    REQUIRE_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "retry-later");
+    CHECK_EQ(outbox.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("pqueue outbox reports queueError when sent queued request cannot be popped") {
+#ifndef ARDUINO
+    auto fileSystem = pqueue_test::makeFakeFileSystem();
+    FakeSender sender;
+    sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+    FakeClock clock;
+    pqueue::OutboxConfig config = testOutboxConfig();
+    config.retryDelayMs = 0;
+
+    auto queueConfig = pqueue_test::makeQueueConfig(fileSystem, 4096, 512);
+    auto outbox = makeOutbox(queueConfig, sender, clock, config);
+    REQUIRE(outbox.submit("queued").status == pqueue::SubmitStatus::Queued);
+
+    fileSystem->failNextWrite();
+    sender.decisions.push_back(pqueue::SendDecision::Sent);
+
+    const auto drain = outbox.drain();
+
+    CHECK_EQ(drain.attempts, 1U);
+    CHECK_EQ(drain.sent, 0U);
+    CHECK(drain.queueError);
+    CHECK(drain.detail.code == pqueue::StatusCode::WriteFailed);
+    REQUIRE_GE(sender.payloads.size(), 2U);
+    CHECK_EQ(sender.payloads[1], "queued");
 #endif
 }
 
