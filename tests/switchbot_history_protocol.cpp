@@ -11,6 +11,26 @@ std::vector<std::uint8_t> bytes(std::initializer_list<std::uint8_t> values) {
     return std::vector<std::uint8_t>(values);
 }
 
+constexpr std::uint8_t kSuccess = 0x01;
+constexpr std::uint8_t kStartStatus = 0x55;
+constexpr std::uint8_t kHeader = 0x57;
+constexpr std::uint8_t kHistoryGroup = 0x0f;
+constexpr std::uint8_t kMetadataCommand = 0x3b;
+constexpr std::uint8_t kPageCommand = 0x3c;
+
+std::uint32_t readU32BE(const std::vector<std::uint8_t>& values, std::size_t offset) {
+    return (static_cast<std::uint32_t>(values[offset]) << 24) |
+           (static_cast<std::uint32_t>(values[offset + 1]) << 16) |
+           (static_cast<std::uint32_t>(values[offset + 2]) << 8) |
+           static_cast<std::uint32_t>(values[offset + 3]);
+}
+
+std::vector<std::uint8_t> startResponse(std::initializer_list<std::uint8_t> banks) {
+    std::vector<std::uint8_t> response{kSuccess, kStartStatus};
+    response.insert(response.end(), banks.begin(), banks.end());
+    return response;
+}
+
 } // namespace
 
 TEST_CASE("switchbot history builds known commands") {
@@ -26,6 +46,46 @@ TEST_CASE("switchbot history builds known commands") {
     }));
 }
 
+TEST_CASE("switchbot history builds bank metadata command") {
+    const std::uint8_t bank = 0x04;
+    const auto command = switchbot::history::buildBankMetadataCommand(bank);
+
+    REQUIRE_EQ(command.size(), 4U);
+    CHECK_EQ(command[0], kHeader);
+    CHECK_EQ(command[1], kHistoryGroup);
+    CHECK_EQ(command[2], kMetadataCommand);
+    CHECK_EQ(command[3], bank);
+}
+
+TEST_CASE("switchbot history builds bank page command") {
+    const std::uint8_t bank = 0x04;
+    const std::uint32_t bankLocalIndex = 0x00012d04;
+    const std::uint8_t sampleCount = switchbot::history::kSamplesPerPage;
+    const auto command = switchbot::history::buildBankPageCommand(bank, bankLocalIndex, sampleCount);
+
+    REQUIRE_EQ(command.size(), 9U);
+    CHECK_EQ(command[0], kHeader);
+    CHECK_EQ(command[1], kHistoryGroup);
+    CHECK_EQ(command[2], kPageCommand);
+    CHECK_EQ(command[3], bank);
+    CHECK_EQ(readU32BE(command, 4), bankLocalIndex);
+    CHECK_EQ(command[8], sampleCount);
+}
+
+TEST_CASE("switchbot history parses start bank list") {
+    const auto start = switchbot::history::parseStartResponse(startResponse({0x02, 0x01, 0x00, 0x04, 0x03}));
+
+    REQUIRE(start.has_value());
+    CHECK_EQ(start->status, kStartStatus);
+    CHECK(start->banks == bytes({0x02, 0x01, 0x00, 0x04, 0x03}));
+}
+
+TEST_CASE("switchbot history rejects malformed start response") {
+    CHECK_FALSE(switchbot::history::parseStartResponse({}).has_value());
+    CHECK_FALSE(switchbot::history::parseStartResponse(bytes({0x02, kStartStatus, 0x00})).has_value());
+    CHECK_FALSE(switchbot::history::parseStartResponse(bytes({kSuccess, kStartStatus})).has_value());
+}
+
 TEST_CASE("switchbot history parses metadata response") {
     const auto metadata = switchbot::history::parseMetadataResponse(bytes({
         0x01,
@@ -36,10 +96,25 @@ TEST_CASE("switchbot history parses metadata response") {
     }));
 
     REQUIRE(metadata.has_value());
+    CHECK_EQ(metadata->bank, 0U);
     CHECK_EQ(metadata->startEpoch, 1773509970U);
     CHECK_EQ(metadata->endEpoch, 1778136390U);
     CHECK_EQ(metadata->endIndex, 77108U);
     CHECK_EQ(metadata->intervalSeconds, 60U);
+}
+
+TEST_CASE("switchbot history stores metadata bank id") {
+    const std::uint8_t bank = 0x04;
+    const auto metadata = switchbot::history::parseMetadataResponse(bytes({
+        0x01,
+        0x69, 0xb5, 0x9d, 0x52,
+        0x69, 0xfc, 0x35, 0x46,
+        0x00, 0x01, 0x2d, 0x34,
+        0x00, 0x3c,
+    }), bank);
+
+    REQUIRE(metadata.has_value());
+    CHECK_EQ(metadata->bank, bank);
 }
 
 TEST_CASE("switchbot history rejects malformed metadata") {

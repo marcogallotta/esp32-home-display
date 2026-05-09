@@ -186,29 +186,49 @@ std::vector<uint8_t> buildStartCommand() {
 }
 
 std::vector<uint8_t> buildMetadataCommand() {
+    return buildBankMetadataCommand(kReservedByte);
+}
+
+std::vector<uint8_t> buildBankMetadataCommand(uint8_t bank) {
     std::vector<uint8_t> out = buildHistoryCommand(kMetadataCommand);
-    out.push_back(kReservedByte);
+    out.push_back(bank);
     return out;
 }
 
 std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count) {
+    return buildBankPageCommand(kReservedByte, absoluteIndex, count);
+}
+
+std::vector<uint8_t> buildBankPageCommand(uint8_t bank, uint32_t bankLocalIndex, uint8_t count) {
     ByteWriter out;
     out.append(kCommandHeader);
     out.append(kHistoryCommandGroup);
     out.append(kPageCommand);
-    out.append(kReservedByte);
-    out.appendU32BE(absoluteIndex);
+    out.append(bank);
+    out.appendU32BE(bankLocalIndex);
     out.append(count == 0 ? kSamplesPerPage : count);
     return out.finish();
 }
 
-std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& response) {
+std::optional<StartResponse> parseStartResponse(const std::vector<uint8_t>& response) {
+    if (response.size() < 3 || response[0] != kSuccessResponse) {
+        return std::nullopt;
+    }
+
+    StartResponse start;
+    start.status = response[1];
+    start.banks.assign(response.begin() + 2, response.end());
+    return start;
+}
+
+std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& response, uint8_t bank) {
     if (!isSuccessResponse(response, kMetadataResponseBytes)) {
         return std::nullopt;
     }
 
     const ByteReader reader(response);
     Metadata metadata;
+    metadata.bank = bank;
     metadata.startEpoch = reader.u32BE(kMetadataStartEpochOffset);
     metadata.endEpoch = reader.u32BE(kMetadataEndEpochOffset);
     metadata.endIndex = reader.u32BE(kMetadataEndIndexOffset);

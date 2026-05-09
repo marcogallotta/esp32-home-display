@@ -11,7 +11,13 @@ namespace history {
 
 constexpr uint8_t kSamplesPerPage = 6;
 
+struct StartResponse {
+    uint8_t status = 0;
+    std::vector<uint8_t> banks;
+};
+
 struct Metadata {
+    uint8_t bank = 0;
     uint32_t startEpoch = 0;
     uint32_t endEpoch = 0;
     uint32_t endIndex = 0;
@@ -28,9 +34,12 @@ struct Sample {
 std::vector<uint8_t> buildTimeSyncCommand(uint32_t unixEpoch);
 std::vector<uint8_t> buildStartCommand();
 std::vector<uint8_t> buildMetadataCommand();
+std::vector<uint8_t> buildBankMetadataCommand(uint8_t bank);
 std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count = kSamplesPerPage);
+std::vector<uint8_t> buildBankPageCommand(uint8_t bank, uint32_t bankLocalIndex, uint8_t count = kSamplesPerPage);
 
-std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& response);
+std::optional<StartResponse> parseStartResponse(const std::vector<uint8_t>& response);
+std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& response, uint8_t bank = 0);
 std::optional<std::vector<Sample>> decodePageResponse(const std::vector<uint8_t>& response,
                                                        uint32_t pageStartIndex,
                                                        uint32_t startEpoch,
