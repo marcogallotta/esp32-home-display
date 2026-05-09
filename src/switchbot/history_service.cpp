@@ -441,9 +441,6 @@ PlanTotals syncAndUploadSensor(const Config& config,
 
     for (const PlannedHistoryWindow& window : windows) {
         addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options));
-        if (options.delayBetweenSensorsMs > 0) {
-            delay(options.delayBetweenSensorsMs);
-        }
     }
 
     return totals;

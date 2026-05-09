@@ -431,7 +431,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         return fail(SyncStatus::BadAck, badAckMessage("time-sync", response, "01"));
     }
 
-    delay(50);
+    delay(0);
 
     if (!writeAndWait(*writeChar, notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
         cleanup();
@@ -444,7 +444,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed ack"));
     }
 
-    delay(50);
+    delay(0);
 
     if (!writeAndWait(*writeChar, notifyState, "metadata", buildMetadataCommand(), request.commandTimeoutMs, response)) {
         cleanup();
@@ -483,7 +483,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
             break;
         }
 
-        delay(50);
+        delay(0);
 
         const uint8_t requestSampleCount = kSamplesPerPage;
 
