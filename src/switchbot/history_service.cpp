@@ -162,11 +162,14 @@ void logPlannedWindow(const std::string& label,
                       const PlannedHistoryWindow& window,
                       const HistoryServiceOptions& options) {
     logLine(
-        LogLevel::Info,
-        "SwitchBot history: " + label + " " + windowAction(window.source) + " " +
-        std::to_string(window.pointCount) + " target " + formatDuration(options.sampleIntervalSeconds) +
-        " readings from " + formatIsoUtc(window.startEpoch) + " to " +
-        formatIsoUtc(window.endEpoch)
+        LogLevel::Debug,
+        "SwitchBot history planned window: " + label +
+        " source=" + window.source +
+        " action=" + windowAction(window.source) +
+        " target_readings=" + std::to_string(window.pointCount) +
+        " interval=" + formatDuration(options.sampleIntervalSeconds) +
+        " from=" + formatIsoUtc(window.startEpoch) +
+        " to=" + formatIsoUtc(window.endEpoch)
     );
 
     if (window.pointCount > 0) {
@@ -202,17 +205,43 @@ PlanTotals logSensorPlan(const BackendSensorInfo& sensor,
         );
     }
 
+    std::uint32_t leadingWindows = 0;
+    std::uint32_t internalGapWindows = 0;
+    std::uint32_t trailingWindows = 0;
+    std::uint32_t newSensorWindows = 0;
+
     for (const PlannedHistoryWindow& window : windows) {
         ++totals.windows;
         totals.plannedPoints += window.pointCount;
+        if (window.source == "leading_backfill") {
+            ++leadingWindows;
+        } else if (window.source == "internal_gap") {
+            ++internalGapWindows;
+        } else if (window.source == "trailing") {
+            ++trailingWindows;
+        } else if (window.source == "new_sensor") {
+            ++newSensorWindows;
+        }
     }
     if (!windows.empty()) {
         totals.sensorsWithWindows = 1;
     }
 
     logLine(
-        LogLevel::Debug,
+        LogLevel::Info,
         "SwitchBot history sensor plan: " + label +
+        " windows=" + std::to_string(windows.size()) +
+        " target_readings=" + std::to_string(totals.plannedPoints) +
+        " leading=" + std::to_string(leadingWindows) +
+        " gaps=" + std::to_string(internalGapWindows) +
+        " trailing=" + std::to_string(trailingWindows) +
+        " new_sensor=" + std::to_string(newSensorWindows) +
+        " capped=" + yesNo(sensor.syncIntervalsCapped)
+    );
+
+    logLine(
+        LogLevel::Debug,
+        "SwitchBot history sensor backend detail: " + label +
         " stored_first=" + nullableTimestamp(sensor.firstTimestamp) +
         " stored_latest=" + nullableTimestamp(sensor.latestTimestamp) +
         " internal_gaps=" + std::to_string(sensor.syncIntervals.size()) +
@@ -382,7 +411,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
     request.progressLabel = label + " " + window.source;
 
     logLine(
-        LogLevel::Info,
+        LogLevel::Debug,
         "SwitchBot history sync window: " + label +
         " source=" + window.source +
         " targets=" + std::to_string(window.pointCount) +
@@ -414,7 +443,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
     totals.selectedReadings += static_cast<std::uint32_t>(selected.size());
 
     logLine(
-        LogLevel::Info,
+        LogLevel::Debug,
         "SwitchBot history selected readings: " + label +
         " source=" + window.source +
         " raw=" + std::to_string(sync.samples.size()) +
