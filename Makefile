@@ -8,13 +8,13 @@ CXXFLAGS_20 := -std=c++20 $(CXXFLAGS_COMMON)
 
 LDFLAGS := $(shell pkg-config --libs sdbus-c++) -lcurl
 
-BUILD_DIR := .build_desktop
+BUILD_DIR := build/desktop
 OBJ_DIR := $(BUILD_DIR)/obj/main
 MAIN_TEST_API_OBJ_DIR := $(BUILD_DIR)/obj/main-test-api
 TEST_OBJ_DIR := $(BUILD_DIR)/obj/tests
 PQUEUE_PROFILING_OBJ_DIR := $(BUILD_DIR)/obj/pqueue-profiling
 
-COV_BUILD_DIR := .build_coverage
+COV_BUILD_DIR := build/coverage
 COV_OBJ_DIR := $(COV_BUILD_DIR)/obj
 COV_FLAGS := -O0 -g --coverage
 
@@ -212,7 +212,7 @@ $(COV_OBJ_DIR)/%.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(COV_FLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) build/pqueue-spools build/spool
 
 clean-coverage:
 	rm -rf $(COV_BUILD_DIR)
