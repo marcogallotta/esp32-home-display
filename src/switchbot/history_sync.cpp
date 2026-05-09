@@ -97,7 +97,7 @@ void drainNotifications(NotifyState& state) {
 
 void logBytes(const char* label, const std::vector<uint8_t>& bytes) {
     logLine(
-        LogLevel::Debug,
+        LogLevel::Trace,
         std::string("switchbot_history_bytes,label=") + label +
         ",len=" + std::to_string(bytes.size()) +
         ",hex=" + bytesToHex(bytes)
@@ -132,7 +132,7 @@ void logProgress(const std::string& label, uint32_t done, uint32_t total) {
 
     const uint32_t percent = std::min<uint32_t>(100, (done * 100U) / total);
     logLine(
-        LogLevel::Info,
+        LogLevel::Trace,
         "switchbot_history_progress," + label + "," +
         std::to_string(done) + "/" + std::to_string(total) + "," +
         std::to_string(percent) + "%"
@@ -168,7 +168,7 @@ void logPageRequest(const std::string& mac,
                     uint32_t endExclusive,
                     uint8_t requestSampleCount) {
     logLine(
-        LogLevel::Debug,
+        LogLevel::Trace,
         "switchbot_history_page_request," +
         pageDiagnosticFields(mac, request, metadata, pageIndex, endExclusive, requestSampleCount, "request")
     );
@@ -293,7 +293,7 @@ void logPagePlan(const std::string& mac,
                  const RequestedSampleRange& range) {
     const bool explicitWindow = request.startEpoch != 0 || request.endEpoch != 0;
     logLine(
-        LogLevel::Debug,
+        LogLevel::Trace,
         "switchbot_history_plan," + requestLabel(mac, request) +
         ",request_start=" + std::to_string(request.startEpoch) +
         ",request_end=" + std::to_string(request.endEpoch) +
@@ -547,7 +547,7 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
         for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
             if (pageIndex + kSamplesPerPage > bank.metadata.endIndex) {
                 logLine(
-                    LogLevel::Debug,
+                    LogLevel::Trace,
                     "switchbot_history_drop_partial_metadata_page," +
                     pageDiagnosticFields(impl_->mac, request, bank.metadata, pageIndex, endExclusive, kSamplesPerPage, "metadata_tail_partial") +
                     ",bank=" + std::to_string(bank.id)

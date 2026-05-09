@@ -44,6 +44,8 @@ const char* logLevelColour(LogLevel level) {
     }
 
     switch (level) {
+        case LogLevel::Trace:
+            return "\033[90m"; // bright black / grey
         case LogLevel::Debug:
             return "\033[36m"; // cyan
         case LogLevel::Info:
@@ -69,6 +71,8 @@ bool shouldLog(LogLevel level) {
 
 const char* logLevelName(LogLevel level) {
     switch (level) {
+        case LogLevel::Trace:
+            return "TRACE";
         case LogLevel::Debug:
             return "DEBUG";
         case LogLevel::Info:

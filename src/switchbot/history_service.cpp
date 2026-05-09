@@ -162,7 +162,7 @@ void logPlannedWindow(const std::string& label,
                       const PlannedHistoryWindow& window,
                       const HistoryServiceOptions& options) {
     logLine(
-        LogLevel::Debug,
+        LogLevel::Trace,
         "SwitchBot history planned window: " + label +
         " source=" + window.source +
         " action=" + windowAction(window.source) +
@@ -174,7 +174,7 @@ void logPlannedWindow(const std::string& label,
 
     if (window.pointCount > 0) {
         logLine(
-            LogLevel::Debug,
+            LogLevel::Trace,
             "SwitchBot history window detail: " + label +
             " source=" + window.source +
             " first_point=" + formatIsoUtc(window.firstPointEpoch) +
@@ -395,8 +395,57 @@ PlanTotals uploadReadings(const Config& config,
     return totals;
 }
 
+std::string windowResultReason(const PlannedHistoryWindow& window,
+                               const SyncResult& sync,
+                               const std::vector<BulkHistoryReading>& selected) {
+    if (window.pointCount == 0) {
+        return "no_targets";
+    }
+    if (!selected.empty()) {
+        return selected.size() >= window.pointCount ? "selected_all" : "selected_partial";
+    }
+    if (sync.metadata.intervalSeconds == 0 || sync.metadata.endIndex == 0) {
+        return "empty_metadata";
+    }
+
+    const std::uint32_t metadataEndEpoch =
+        sync.metadata.startEpoch + sync.metadata.endIndex * sync.metadata.intervalSeconds;
+    if (window.lastPointEpoch < sync.metadata.startEpoch) {
+        return "before_metadata";
+    }
+    if (window.firstPointEpoch >= metadataEndEpoch) {
+        return "after_metadata";
+    }
+    if (sync.samples.empty()) {
+        return "no_raw_overlap";
+    }
+    return "raw_without_target_match";
+}
+
+void logWindowResult(const std::string& label,
+                     const PlannedHistoryWindow& window,
+                     const SyncResult& sync,
+                     const std::vector<BulkHistoryReading>& selected) {
+    const std::uint32_t metadataEndEpoch = sync.metadata.intervalSeconds == 0
+        ? sync.metadata.startEpoch
+        : sync.metadata.startEpoch + sync.metadata.endIndex * sync.metadata.intervalSeconds;
+    logLine(
+        LogLevel::Debug,
+        "switchbot_history_window_result," + label +
+        ",source=" + window.source +
+        ",target=" + std::to_string(window.pointCount) +
+        ",raw=" + std::to_string(sync.samples.size()) +
+        ",selected=" + std::to_string(selected.size()) +
+        ",missing=" + std::to_string(window.pointCount > selected.size() ? window.pointCount - selected.size() : 0) +
+        ",reason=" + windowResultReason(window, sync, selected) +
+        ",window=" + formatIsoUtc(window.firstPointEpoch) + ".." + formatIsoUtc(window.lastPointEpoch) +
+        ",metadata=" + formatIsoUtc(sync.metadata.startEpoch) + ".." + formatIsoUtc(metadataEndEpoch) +
+        ",end_index=" + std::to_string(sync.metadata.endIndex) +
+        ",interval=" + std::to_string(sync.metadata.intervalSeconds) + "s"
+    );
+}
+
 PlanTotals syncAndUploadWindow(const Config& config,
-                               SensorHistorySession& session,
                                const std::string& label,
                                const BackendSensorInfo& sensor,
                                const PlannedHistoryWindow& window,
@@ -412,7 +461,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
     request.progressLabel = label + " " + window.source;
 
     logLine(
-        LogLevel::Debug,
+        LogLevel::Trace,
         "SwitchBot history sync window: " + label +
         " source=" + window.source +
         " targets=" + std::to_string(window.pointCount) +
@@ -420,7 +469,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
         " to=" + formatIsoUtc(window.lastPointEpoch)
     );
 
-    const SyncResult sync = session.fetch(request);
+    const SyncResult sync = syncSensorHistory(sensor.mac, request);
     if (!sync.ok()) {
         ++totals.syncFailures;
         logLine(
@@ -443,14 +492,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
     );
     totals.selectedReadings += static_cast<std::uint32_t>(selected.size());
 
-    logLine(
-        LogLevel::Debug,
-        "SwitchBot history selected readings: " + label +
-        " source=" + window.source +
-        " raw=" + std::to_string(sync.samples.size()) +
-        " selected=" + std::to_string(selected.size()) +
-        " target=" + std::to_string(window.pointCount)
-    );
+    logWindowResult(label, window, sync, selected);
 
     if (selected.empty()) {
         return totals;
@@ -469,30 +511,8 @@ PlanTotals syncAndUploadSensor(const Config& config,
     const std::string label = labelForMac(labelsByMac, sensor.mac);
     const auto windows = planHistoryWindows(sensor, nowEpoch, planningOptions(options));
 
-    if (windows.empty()) {
-        return totals;
-    }
-
-    SensorHistorySession session(sensor.mac);
-    SyncRequest setupRequest;
-    setupRequest.timeSyncEpoch = nowEpoch;
-    setupRequest.commandTimeoutMs = options.commandTimeoutMs;
-    setupRequest.progressLabel = label;
-
-    const SyncResult opened = session.open(setupRequest);
-    if (!opened.ok()) {
-        ++totals.syncFailures;
-        logLine(
-            LogLevel::Warn,
-            "SwitchBot history session failed: " + label +
-            " status=" + syncStatusName(opened.status) +
-            "; " + opened.message
-        );
-        return totals;
-    }
-
     for (const PlannedHistoryWindow& window : windows) {
-        addTotals(totals, syncAndUploadWindow(config, session, label, sensor, window, nowEpoch, options));
+        addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options));
     }
 
     return totals;
