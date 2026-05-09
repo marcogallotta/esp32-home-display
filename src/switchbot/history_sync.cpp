@@ -142,30 +142,34 @@ std::string requestLabel(const std::string& mac, const SyncRequest& request) {
     return request.progressLabel.empty() ? mac : request.progressLabel;
 }
 
+std::string pageDiagnosticFields(const std::string& mac,
+                                 const SyncRequest& request,
+                                 const Metadata& metadata,
+                                 uint32_t pageIndex,
+                                 uint32_t endExclusive,
+                                 uint8_t requestSampleCount,
+                                 const char* reason) {
+    const uint32_t pageEnd = pageIndex + requestSampleCount;
+    return requestLabel(mac, request) +
+        ",reason=" + reason +
+        ",page_index=" + std::to_string(pageIndex) +
+        ",count=" + std::to_string(requestSampleCount) +
+        ",page_end=" + std::to_string(pageEnd) +
+        ",end_exclusive=" + std::to_string(endExclusive) +
+        ",metadata_end_index=" + std::to_string(metadata.endIndex) +
+        ",aligned=" + ((pageIndex % kSamplesPerPage) == 0 ? "yes" : "no");
+}
+
 void logPageRequest(const std::string& mac,
                     const SyncRequest& request,
                     const Metadata& metadata,
                     uint32_t pageIndex,
                     uint32_t endExclusive,
                     uint8_t requestSampleCount) {
-    const uint32_t pageEnd = pageIndex + requestSampleCount;
-    const bool shortRequest = requestSampleCount < kSamplesPerPage;
-    const char* shortReason = "none";
-    if (shortRequest) {
-        shortReason = pageEnd == metadata.endIndex ? "metadata_tail" : "window_tail";
-    }
-
     logLine(
         LogLevel::Debug,
-        "switchbot_history_page_request," + requestLabel(mac, request) +
-        ",page_index=" + std::to_string(pageIndex) +
-        ",count=" + std::to_string(requestSampleCount) +
-        ",page_end=" + std::to_string(pageEnd) +
-        ",end_exclusive=" + std::to_string(endExclusive) +
-        ",metadata_end_index=" + std::to_string(metadata.endIndex) +
-        ",aligned=" + ((pageIndex % kSamplesPerPage) == 0 ? "yes" : "no") +
-        ",short=" + (shortRequest ? "yes" : "no") +
-        ",short_reason=" + shortReason
+        "switchbot_history_page_request," +
+        pageDiagnosticFields(mac, request, metadata, pageIndex, endExclusive, requestSampleCount, "request")
     );
 }
 
@@ -473,11 +477,8 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         if (pageIndex + kSamplesPerPage > result.metadata.endIndex) {
             logLine(
                 LogLevel::Debug,
-                "switchbot_history_drop_partial_metadata_page," + requestLabel(mac, request) +
-                ",page_index=" + std::to_string(pageIndex) +
-                ",page_end=" + std::to_string(pageIndex + kSamplesPerPage) +
-                ",metadata_end_index=" + std::to_string(result.metadata.endIndex) +
-                ",end_exclusive=" + std::to_string(endExclusive)
+                "switchbot_history_drop_partial_metadata_page," +
+                pageDiagnosticFields(mac, request, result.metadata, pageIndex, endExclusive, kSamplesPerPage, "metadata_tail_partial")
             );
             break;
         }
@@ -500,6 +501,12 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
             result.metadata.intervalSeconds
         );
         if (!samples.has_value()) {
+            logLine(
+                LogLevel::Warn,
+                "switchbot_history_page_diag," +
+                pageDiagnosticFields(mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount, "bad_page") +
+                "," + responseSummary(response)
+            );
             logBytes("bad-page", response);
             cleanup();
             return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
