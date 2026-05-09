@@ -100,18 +100,6 @@ bool isSuccessResponse(const std::vector<uint8_t>& response, size_t expectedSize
     return response.size() == expectedSize && response[0] == kSuccessResponse;
 }
 
-uint8_t normalizePageSampleCount(uint8_t count) {
-    if (count == 0 || count > kSamplesPerPage) {
-        return kSamplesPerPage;
-    }
-    return count;
-}
-
-size_t pageResponseBytesForSampleCount(uint8_t sampleCount) {
-    const size_t groups = (static_cast<size_t>(sampleCount) + 1U) / 2U;
-    return kPagePayloadOffset + groups * kPackedSampleGroupBytes;
-}
-
 PackedSampleGroup readPackedSampleGroup(const ByteReader& reader, size_t groupNumber) {
     const size_t offset = kPagePayloadOffset + groupNumber * kPackedSampleGroupBytes;
     return PackedSampleGroup{
@@ -210,7 +198,7 @@ std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count) {
     out.append(kPageCommand);
     out.append(kReservedByte);
     out.appendU32BE(absoluteIndex);
-    out.append(normalizePageSampleCount(count));
+    out.append(count == 0 ? kSamplesPerPage : count);
     return out.finish();
 }
 
@@ -235,24 +223,18 @@ std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& respon
 std::optional<std::vector<Sample>> decodePageResponse(const std::vector<uint8_t>& response,
                                                        uint32_t pageStartIndex,
                                                        uint32_t startEpoch,
-                                                       uint16_t intervalSeconds,
-                                                       uint8_t expectedSamples) {
-    const uint8_t sampleCount = normalizePageSampleCount(expectedSamples);
-    if (!isSuccessResponse(response, pageResponseBytesForSampleCount(sampleCount)) || intervalSeconds == 0) {
+                                                       uint16_t intervalSeconds) {
+    if (!isSuccessResponse(response, kPageResponseBytes) || intervalSeconds == 0) {
         return std::nullopt;
     }
 
     const ByteReader reader(response);
     std::vector<Sample> out;
-    out.reserve(sampleCount);
+    out.reserve(kSamplesPerPage);
 
     uint32_t nextIndex = pageStartIndex;
-    const size_t groups = (static_cast<size_t>(sampleCount) + 1U) / 2U;
-    for (size_t group = 0; group < groups; ++group) {
+    for (size_t group = 0; group < kPackedSampleGroupsPerPage; ++group) {
         appendDecodedGroup(out, readPackedSampleGroup(reader, group), nextIndex, startEpoch, intervalSeconds);
-    }
-    if (out.size() > sampleCount) {
-        out.resize(sampleCount);
     }
     return out;
 }

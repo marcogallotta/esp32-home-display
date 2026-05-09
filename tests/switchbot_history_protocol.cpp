@@ -26,21 +26,6 @@ TEST_CASE("switchbot history builds known commands") {
     }));
 }
 
-TEST_CASE("switchbot history page command supports short final pages") {
-    const auto command = switchbot::history::buildPageCommand(0x00012d04, 3);
-
-    REQUIRE(command.size() == 9U);
-    CHECK(command[0] == 0x57); // command header
-    CHECK(command[1] == 0x0f); // history command group
-    CHECK(command[2] == 0x3c); // page command
-    CHECK(command[3] == 0x00); // reserved byte
-    CHECK(command[4] == 0x00); // absolute index, big endian
-    CHECK(command[5] == 0x01);
-    CHECK(command[6] == 0x2d);
-    CHECK(command[7] == 0x04);
-    CHECK(command[8] == 0x03); // requested sample count
-}
-
 TEST_CASE("switchbot history parses metadata response") {
     const auto metadata = switchbot::history::parseMetadataResponse(bytes({
         0x01,

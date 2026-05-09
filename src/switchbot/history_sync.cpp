@@ -472,17 +472,11 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
         delay(50);
 
-        const uint32_t remainingSamples = endExclusive - pageIndex;
-        const uint8_t requestSampleCount = static_cast<uint8_t>(
-            std::min<uint32_t>(kSamplesPerPage, remainingSamples)
-        );
-        if (requestSampleCount == 0) {
-            break;
-        }
+        const uint8_t requestSampleCount = kSamplesPerPage;
 
         logPageRequest(mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount);
 
-        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(pageIndex, requestSampleCount), request.commandTimeoutMs, response)) {
+        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(pageIndex), request.commandTimeoutMs, response)) {
             cleanup();
             return fail(SyncStatus::Timeout, "page command timed out or write failed");
         }
@@ -491,8 +485,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
             response,
             pageIndex,
             result.metadata.startEpoch,
-            result.metadata.intervalSeconds,
-            requestSampleCount
+            result.metadata.intervalSeconds
         );
         if (!samples.has_value()) {
             logBytes("bad-page", response);
