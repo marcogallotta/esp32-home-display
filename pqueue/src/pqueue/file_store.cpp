@@ -113,6 +113,28 @@ bool regionHasNonZero(FileSystem& fs, const Layout& layout, std::uint32_t startO
     return false;
 }
 
+bool spoolIsAllZero(FileSystem& fs, const Layout& layout) {
+    constexpr std::size_t kReadChunkBytes = 256;
+
+    std::uint64_t offset = 0;
+    while (offset < layout.spoolBytes) {
+        const auto remaining = static_cast<std::size_t>(layout.spoolBytes - offset);
+        const std::size_t bytesToRead = std::min(kReadChunkBytes, remaining);
+
+        std::string bytes;
+        if (!fs.readAt(kSpoolName, offset, bytesToRead, bytes).ok()) {
+            return false;
+        }
+        if (!bytesAllZero(bytes)) {
+            return false;
+        }
+
+        offset += bytesToRead;
+    }
+
+    return true;
+}
+
 void addValidationError(ValidationResult& result, const ValidationOptions& options, ValidationIssue issue) {
     result.ok = false;
     if (result.errors.size() < options.maxErrors) {
@@ -460,6 +482,16 @@ Status FileStore::mount() {
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue storage config changed; delete or reformat queue files to continue"), "mount");
     }
     if (!state.foundCheckpoint) {
+        if (spoolIsAllZero(*fs, layout)) {
+            constexpr std::uint32_t kInitialGeneration = 1;
+            st = writeCheckpoint(*fs, layout, FileStoreIndex{}, kInitialGeneration);
+            if (!st.ok()) {
+                return diagnostic(Severity::Error, st, "mount", kNoSequence, kSpoolName);
+            }
+            setRuntimeFresh(runtime_, layout, kInitialGeneration);
+            return Status::success();
+        }
+
         return diagnostic(Severity::Error, Status::failure(StatusCode::InvalidIndex, "pqueue checkpoint metadata is corrupt or missing; delete or repair queue files to continue"), "mount");
     }
     setRuntime(runtime_, layout, state);

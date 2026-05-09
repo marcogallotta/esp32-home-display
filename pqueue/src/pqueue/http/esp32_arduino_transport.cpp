@@ -103,7 +103,8 @@ Response Esp32ArduinoTransport::post(
     }
 
     WiFiClientSecure client;
-    if (!configureTlsClient(client)) {
+    std::string caCertStorage;
+    if (!configureTlsClient(client, caCertStorage)) {
         emitTransportEvent(
             config_.common,
             Severity::Error,
@@ -197,18 +198,18 @@ TransportError Esp32ArduinoTransport::mapHttpClientError(int code) const {
     }
 }
 
-bool Esp32ArduinoTransport::configureTlsClient(WiFiClientSecure& client) const {
+bool Esp32ArduinoTransport::configureTlsClient(WiFiClientSecure& client, std::string& caCertStorage) const {
     if (config_.common.allowInsecureTls) {
         client.setInsecure();
         return true;
     }
 
-    const std::string caCert = readFileToString(config_.caCertFileSystem, config_.caCertPath);
-    if (caCert.empty()) {
+    caCertStorage = readFileToString(config_.caCertFileSystem, config_.caCertPath);
+    if (caCertStorage.empty()) {
         return false;
     }
 
-    client.setCACert(caCert.c_str());
+    client.setCACert(caCertStorage.c_str());
     return true;
 }
 

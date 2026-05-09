@@ -20,6 +20,9 @@
 #include "salah/types.h"
 #include "state.h"
 #include "switchbot/ble.h"
+#ifdef ARDUINO
+#include "switchbot/history_service.h"
+#endif
 #include "timing.h"
 #include "ui/display.h"
 #include "ui/state.h"
@@ -61,6 +64,10 @@ struct AppContext {
 
     TimingState timing;
     bool hasValidTime = false;
+
+#ifdef ARDUINO
+    switchbot::history::HistoryServiceState historyServiceState;
+#endif
 
     State currentState;
     State previousState;
@@ -420,6 +427,14 @@ void tick(AppContext& app) {
 
     app.bleScanner.poll();
     updateDomainState(app, now);
+#ifdef ARDUINO
+    switchbot::history::maybeRunStartupHistorySync(
+        app.config,
+        app.bleScanner,
+        app.hasValidTime,
+        app.historyServiceState
+    );
+#endif
     syncOutputs(app, now);
     sleepUntilNextDue(app);
 }

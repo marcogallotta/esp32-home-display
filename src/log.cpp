@@ -61,6 +61,10 @@ const char* resetColour() {
     return kUseAnsiColours ? "\033[0m" : "";
 }
 
+bool shouldLog(LogLevel level) {
+    return static_cast<int>(level) >= LOG_LEVEL;
+}
+
 } // namespace
 
 const char* logLevelName(LogLevel level) {
@@ -103,7 +107,7 @@ void setLogMuted(bool muted) {
 }
 
 void logLine(LogLevel level, const std::string& msg) {
-    if (gLogMuted) {
+    if (gLogMuted || !shouldLog(level)) {
         return;
     }
 
@@ -122,6 +126,10 @@ void rateLimitedLog(
     const std::string& msg,
     std::uint64_t intervalMs
 ) {
+    if (gLogMuted || !shouldLog(level)) {
+        return;
+    }
+
     RateLimitedLogSlot* slot = findRateLimitedLogSlot(level, key);
     const std::uint64_t nowMs = platform::millis();
 

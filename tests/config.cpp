@@ -119,6 +119,10 @@ void checkDefaults(const Config& config) {
     CHECK_EQ(config.salah.dstRule, defaults.salah.dstRule);
     CHECK_EQ(config.salah.asrMakruhMinutes, defaults.salah.asrMakruhMinutes);
     CHECK_EQ(config.salah.hanafiAsr, defaults.salah.hanafiAsr);
+    CHECK_EQ(config.switchbot.history.sampleIntervalSeconds, defaults.switchbot.history.sampleIntervalSeconds);
+    CHECK_EQ(config.switchbot.history.newSensorWindowSeconds, defaults.switchbot.history.newSensorWindowSeconds);
+    CHECK_EQ(config.switchbot.history.historyLimitSeconds, defaults.switchbot.history.historyLimitSeconds);
+    CHECK_EQ(config.switchbot.history.bulkBatchLimit, defaults.switchbot.history.bulkBatchLimit);
     CHECK_EQ(config.xiaomi.updateIntervalMinutes, defaults.xiaomi.updateIntervalMinutes);
     CHECK(config.switchbot.sensors.empty());
     CHECK(config.xiaomi.sensors.empty());
@@ -362,7 +366,33 @@ TEST_CASE("config validates switchbot sensors") {
         removePath(doc, "switchbot", "sensors");
         expectValid(doc);
     }
-}
+
+    SUBCASE("history config parses") {
+        auto doc = exampleConfig();
+        JsonObject history = doc["switchbot"].createNestedObject("history");
+        history["sample_interval_seconds"] = 900;
+        history["new_sensor_window_seconds"] = 21600;
+        history["history_limit_seconds"] = 5875200;
+        history["bulk_batch_limit"] = 100;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.switchbot.history.sampleIntervalSeconds, 900U);
+        CHECK_EQ(config.switchbot.history.newSensorWindowSeconds, 21600U);
+        CHECK_EQ(config.switchbot.history.historyLimitSeconds, 5875200U);
+        CHECK_EQ(config.switchbot.history.bulkBatchLimit, 100U);
+    }
+
+    SUBCASE("history config values must be positive") {
+        for (const char* key : {"sample_interval_seconds", "new_sensor_window_seconds", "history_limit_seconds", "bulk_batch_limit"}) {
+            CAPTURE(key);
+            auto doc = exampleConfig();
+            JsonObject history = doc["switchbot"].createNestedObject("history");
+            history[key] = 0;
+            expectInvalid(doc);
+        }
+    }
+ }
 
 TEST_CASE("config validates xiaomi values") {
     SUBCASE("interval must be an int") {

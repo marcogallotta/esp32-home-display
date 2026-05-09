@@ -277,7 +277,8 @@ inline pqueue::FileStore makeStore(
     const std::shared_ptr<FakeFileSystem>& fileSystem,
     pqueue::EventOptions events = {},
     std::uint32_t reservedBytes = 160,
-    std::size_t recordSizeBytes = 32
+    std::size_t recordSizeBytes = 32,
+    std::uint32_t checkpointEveryOps = 64
 ) {
     pqueue::FileStoreConfig config;
     config.basePath = "/fake-pqueue";

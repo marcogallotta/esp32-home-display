@@ -54,7 +54,7 @@ struct Scanner::Impl {
         UpdateCallback cb;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            sensors[addr] = std::move(out);
+            sensors.insert_or_assign(addr, std::move(out));
             cb = callback_;
         }
 

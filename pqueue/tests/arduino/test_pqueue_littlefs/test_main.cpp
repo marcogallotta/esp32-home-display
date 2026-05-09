@@ -12,6 +12,7 @@
 #include "pqueue/status.h"
 #include "pqueue/storage_common.h"
 #include "pqueue/types.h"
+#include "log.h"
 
 namespace {
 
@@ -30,41 +31,25 @@ constexpr std::uint8_t kRebootPhaseFailed = 99;
 
 std::uint64_t g_nowMs = 0;
 
-#ifndef PQUEUE_TEST_DEBUG
-#define PQUEUE_TEST_DEBUG 0
-#endif
-
-#if PQUEUE_TEST_DEBUG
-#define DBG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#define DBG_PRINTLN(x) Serial.println(x)
-#else
-#define DBG_PRINTF(...)
-#define DBG_PRINTLN(x)
-#endif
-
 void dbgStatus(const char* label, const pqueue::Status& status) {
-#if PQUEUE_TEST_DEBUG
-    Serial.printf(
-        "[pqueue test debug] %s: ok=%d code=%d message=%s backend=%d\n",
-        label,
-        status.ok() ? 1 : 0,
-        static_cast<int>(status.code),
-        status.message == nullptr ? "" : status.message,
-        status.backendCode
+    logLine(
+        LogLevel::Debug,
+        std::string("pqueue_test,") + label +
+        ",ok=" + std::to_string(status.ok() ? 1 : 0) +
+        ",code=" + std::to_string(static_cast<int>(status.code)) +
+        ",message=" + (status.message == nullptr ? "" : status.message) +
+        ",backend=" + std::to_string(status.backendCode)
     );
-#endif
 }
 
 void dbgStats(const char* label, pqueue::Queue& queue) {
-#if PQUEUE_TEST_DEBUG
     const auto stats = queue.stats();
-    Serial.printf(
-        "[pqueue test debug] %s: count=%u freeBytes=%llu\n",
-        label,
-        static_cast<unsigned>(stats.count),
-        static_cast<unsigned long long>(stats.freeBytes)
+    logLine(
+        LogLevel::Debug,
+        std::string("pqueue_test,") + label +
+        ",count=" + std::to_string(static_cast<unsigned>(stats.count)) +
+        ",free_bytes=" + std::to_string(static_cast<unsigned long long>(stats.freeBytes))
     );
-#endif
 }
 
 struct FakeSender {
@@ -400,7 +385,7 @@ void test_rewrite_front_persistence() {
 void test_capacity_full_behavior() {
     cleanLittleFs();
     {
-        DBG_PRINTLN("[pqueue test debug] capacity: create first queue");
+        logLine(LogLevel::Debug, "pqueue_test,capacity:create_first_queue");
         pqueue::Queue queue(queueConfig(16, 2));
 
         const auto one = queue.enqueue("one");
@@ -419,7 +404,7 @@ void test_capacity_full_behavior() {
         TEST_ASSERT_EQUAL_UINT32(2, queue.stats().count);
     }
 
-    DBG_PRINTLN("[pqueue test debug] capacity: create reopened queue");
+    logLine(LogLevel::Debug, "pqueue_test,capacity:create_reopened_queue");
     pqueue::Queue queue(queueConfig(16, 2));
     dbgStats("capacity after reopen", queue);
     TEST_ASSERT_EQUAL_UINT32(2, queue.stats().count);
@@ -428,7 +413,7 @@ void test_capacity_full_behavior() {
     const auto peekOne = queue.peek(out);
     dbgStatus("capacity peek one", peekOne);
     TEST_ASSERT_TRUE(peekOne.ok());
-    DBG_PRINTF("[pqueue test debug] capacity peek one payload=%s\n", out.c_str());
+    logLine(LogLevel::Debug, "pqueue_test,capacity_peek_one,payload=" + out);
     TEST_ASSERT_EQUAL_STRING("one", out.c_str());
 
     const auto popOne = queue.pop();
@@ -438,7 +423,7 @@ void test_capacity_full_behavior() {
     const auto peekTwo = queue.peek(out);
     dbgStatus("capacity peek two", peekTwo);
     TEST_ASSERT_TRUE(peekTwo.ok());
-    DBG_PRINTF("[pqueue test debug] capacity peek two payload=%s\n", out.c_str());
+    logLine(LogLevel::Debug, "pqueue_test,capacity_peek_two,payload=" + out);
     TEST_ASSERT_EQUAL_STRING("two", out.c_str());
 
     const auto popTwo = queue.pop();
