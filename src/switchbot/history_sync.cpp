@@ -138,6 +138,37 @@ void logProgress(const std::string& label, uint32_t done, uint32_t total) {
     );
 }
 
+std::string requestLabel(const std::string& mac, const SyncRequest& request) {
+    return request.progressLabel.empty() ? mac : request.progressLabel;
+}
+
+void logPageRequest(const std::string& mac,
+                    const SyncRequest& request,
+                    const Metadata& metadata,
+                    uint32_t pageIndex,
+                    uint32_t endExclusive,
+                    uint8_t requestSampleCount) {
+    const uint32_t pageEnd = pageIndex + requestSampleCount;
+    const bool shortRequest = requestSampleCount < kSamplesPerPage;
+    const char* shortReason = "none";
+    if (shortRequest) {
+        shortReason = pageEnd == metadata.endIndex ? "metadata_tail" : "window_tail";
+    }
+
+    logLine(
+        LogLevel::Debug,
+        "switchbot_history_page_request," + requestLabel(mac, request) +
+        ",page_index=" + std::to_string(pageIndex) +
+        ",count=" + std::to_string(requestSampleCount) +
+        ",page_end=" + std::to_string(pageEnd) +
+        ",end_exclusive=" + std::to_string(endExclusive) +
+        ",metadata_end_index=" + std::to_string(metadata.endIndex) +
+        ",aligned=" + ((pageIndex % kSamplesPerPage) == 0 ? "yes" : "no") +
+        ",short=" + (shortRequest ? "yes" : "no") +
+        ",short_reason=" + shortReason
+    );
+}
+
 bool waitForNotify(NotifyState& state, uint32_t timeoutMs, std::vector<uint8_t>& out) {
     const TickType_t timeoutTicks = pdMS_TO_TICKS(timeoutMs);
     if (state.ready == nullptr || xSemaphoreTake(state.ready, timeoutTicks) != pdTRUE) {
@@ -250,6 +281,28 @@ struct RequestedSampleRange {
     uint32_t endExclusiveIndex = 0;
     uint32_t progressTotalSamples = 0;
 };
+
+void logPagePlan(const std::string& mac,
+                 const SyncRequest& request,
+                 const Metadata& metadata,
+                 const RequestedSampleRange& range) {
+    const bool explicitWindow = request.startEpoch != 0 || request.endEpoch != 0;
+    logLine(
+        LogLevel::Debug,
+        "switchbot_history_plan," + requestLabel(mac, request) +
+        ",request_start=" + std::to_string(request.startEpoch) +
+        ",request_end=" + std::to_string(request.endEpoch) +
+        ",metadata_start=" + std::to_string(metadata.startEpoch) +
+        ",metadata_end_index=" + std::to_string(metadata.endIndex) +
+        ",metadata_end_epoch=" + std::to_string(epochForIndex(metadata.startEpoch, metadata.endIndex, metadata.intervalSeconds)) +
+        ",interval=" + std::to_string(metadata.intervalSeconds) +
+        ",first_page=" + std::to_string(range.firstRequestIndex) +
+        ",end_exclusive=" + std::to_string(range.endExclusiveIndex) +
+        ",progress_total=" + std::to_string(range.progressTotalSamples) +
+        ",explicit_window=" + (explicitWindow ? "yes" : "no") +
+        ",first_page_aligned=" + ((range.firstRequestIndex % kSamplesPerPage) == 0 ? "yes" : "no")
+    );
+}
 
 uint32_t progressTotalSamples(const Metadata& metadata,
                               const SyncRequest& request,
@@ -409,6 +462,8 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     const uint32_t endExclusive = requestedRange.endExclusiveIndex;
     const uint32_t totalProgressSamples = requestedRange.progressTotalSamples;
 
+    logPagePlan(mac, request, result.metadata, requestedRange);
+
     uint32_t keptSamples = 0;
     uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
     bool haveLastKeptIndex = false;
@@ -424,6 +479,8 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         if (requestSampleCount == 0) {
             break;
         }
+
+        logPageRequest(mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount);
 
         if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(pageIndex, requestSampleCount), request.commandTimeoutMs, response)) {
             cleanup();
