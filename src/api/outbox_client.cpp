@@ -345,7 +345,7 @@ std::string defaultQueueBasePath() {
 #ifdef ARDUINO
     return "/pqueue_api_spool";
 #else
-    return "pqueue_api_spool";
+    return "build/pqueue-spools/pqueue_api_spool";
 #endif
 }
 

@@ -23,7 +23,7 @@ constexpr std::size_t kMaxDroppedLogBytes = 256 * 1024;
 #ifdef ARDUINO
 constexpr const char* kDroppedLogPath = "/dropped_requests.jsonl";
 #else
-constexpr const char* kDroppedLogPath = "spool/dropped_requests.jsonl";
+constexpr const char* kDroppedLogPath = "build/spool/dropped_requests.jsonl";
 #endif
 
 struct UsageWarningState {
@@ -188,6 +188,9 @@ void appendLine(const std::string& line) {
         logLine(LogLevel::Warn, "Dropped request log full; discarding record");
         return;
     }
+
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(kDroppedLogPath).parent_path(), ec);
 
     std::ofstream out(kDroppedLogPath, std::ios::app);
     if (!out) {

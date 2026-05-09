@@ -17,12 +17,14 @@
 
 namespace {
 
-const std::filesystem::path kApiOutboxSpoolDir = "api_outbox_client_test_spool";
+const std::filesystem::path kApiOutboxSpoolDir = "build/pqueue-spools/api_outbox_client_test_spool";
+const std::filesystem::path kDroppedLogDir = "build/spool";
+const std::filesystem::path kDroppedLogPath = kDroppedLogDir / "dropped_requests.jsonl";
 
 void cleanTestFiles() {
     std::error_code ec;
     std::filesystem::remove_all(kApiOutboxSpoolDir, ec);
-    std::filesystem::remove_all("spool", ec);
+    std::filesystem::remove_all(kDroppedLogDir, ec);
 }
 
 struct FakeClock {
@@ -121,7 +123,7 @@ StaticJsonDocument<512> parseBody(const PostedRequest& request) {
 }
 
 std::string droppedLogText() {
-    std::ifstream in("spool/dropped_requests.jsonl");
+    std::ifstream in(kDroppedLogPath);
     if (!in) {
         return {};
     }
@@ -272,7 +274,7 @@ TEST_CASE("api outbox client drainPending respects drainRateCap per second") {
 
 TEST_CASE("api outbox client drops permanent backend rejection and writes dropped log") {
     cleanTestFiles();
-    std::filesystem::create_directories("spool");
+    std::filesystem::create_directories(kDroppedLogDir);
     const auto config = testConfig();
     FakeTransport transport;
     transport.responses.push_back({422, pqueue::http::TransportError::None, "{\"status\":\"error\"}"});

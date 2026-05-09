@@ -814,4 +814,117 @@ TEST_CASE("FileStore rejects index transition when journal append fails") {
 }
 
 
+
+TEST_CASE("FileStore ignores partially written journal entry after reboot") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 64);
+        REQUIRE(store.writeRecord(0, "one").ok());
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+
+        REQUIRE(store.writeRecord(1, "two").ok());
+        fileSystem->partialNextWriteAt(pqueue::storage_detail::kJournalEntryBytes / 2);
+        const auto status = store.writeIndex({0, 2, 2});
+        REQUIRE_FALSE(status.ok());
+        CHECK(status.code == pqueue::StatusCode::WriteFailed);
+    }
+
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 64);
+    pqueue::FileStoreIndex index;
+    REQUIRE(reopened.readIndex(index).ok());
+    CHECK_EQ(index.head, 0U);
+    CHECK_EQ(index.tail, 1U);
+    CHECK_EQ(index.count, 1U);
+
+    std::string out;
+    REQUIRE(reopened.readRecord(0, out).ok());
+    CHECK_EQ(out, "one");
+}
+
+TEST_CASE("FileStore ignores partially written checkpoint after reboot") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 1);
+        REQUIRE(store.writeRecord(0, "one").ok());
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+
+        REQUIRE(store.writeRecord(1, "two").ok());
+        fileSystem->partialNextWriteAt(pqueue::storage_detail::kCheckpointRecordBytes / 2);
+        const auto status = store.writeIndex({0, 2, 2});
+        REQUIRE_FALSE(status.ok());
+        CHECK(status.code == pqueue::StatusCode::WriteFailed);
+    }
+
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 1);
+    pqueue::FileStoreIndex index;
+    REQUIRE(reopened.readIndex(index).ok());
+    CHECK_EQ(index.head, 0U);
+    CHECK_EQ(index.tail, 1U);
+    CHECK_EQ(index.count, 1U);
+
+    std::string out;
+    REQUIRE(reopened.readRecord(0, out).ok());
+    CHECK_EQ(out, "one");
+}
+
+TEST_CASE("FileStore replays committed journal entries after reboot") {
+    auto fileSystem = makeFakeFileSystem();
+    {
+        auto store = makeStore(fileSystem, {}, 160, 32, 64);
+        REQUIRE(store.writeRecord(0, "one").ok());
+        REQUIRE(store.writeIndex({0, 1, 1}).ok());
+        REQUIRE(store.writeRecord(1, "two").ok());
+        REQUIRE(store.writeIndex({0, 2, 2}).ok());
+    }
+
+    auto reopened = makeStore(fileSystem, {}, 160, 32, 64);
+    pqueue::FileStoreIndex index;
+    REQUIRE(reopened.readIndex(index).ok());
+    CHECK_EQ(index.head, 0U);
+    CHECK_EQ(index.tail, 2U);
+    CHECK_EQ(index.count, 2U);
+
+    std::string out;
+    REQUIRE(reopened.readRecord(0, out).ok());
+    CHECK_EQ(out, "one");
+    REQUIRE(reopened.readRecord(1, out).ok());
+    CHECK_EQ(out, "two");
+}
+
+TEST_CASE("Outbox reports queue error and preserves record when pop fails after send") {
+    auto fileSystem = makeFakeFileSystem();
+    FakeClock clock;
+
+    {
+        FakeSender sender;
+        sender.decisions.push_back(pqueue::SendDecision::RetryLater);
+        auto outbox = makeOutbox(fileSystem, sender, clock);
+        REQUIRE(outbox.submit("maybe-duplicate").status == pqueue::SubmitStatus::Queued);
+    }
+
+    FakeSender sender;
+    auto outbox = makeOutbox(fileSystem, sender, clock);
+    fileSystem->failNextWrite();
+    const auto drain = outbox.drain();
+
+    CHECK_EQ(drain.attempts, 1U);
+    CHECK_EQ(drain.sent, 0U);
+    CHECK(drain.queueError);
+    CHECK(drain.detail.code == pqueue::StatusCode::WriteFailed);
+    REQUIRE_EQ(sender.payloads.size(), 1U);
+    CHECK_EQ(sender.payloads[0], "maybe-duplicate");
+    CHECK_EQ(outbox.stats().count, 1U);
+
+    FakeSender reopenedSender;
+    auto reopened = makeOutbox(fileSystem, reopenedSender, clock);
+    const auto retryDrain = reopened.drain();
+
+    CHECK_FALSE(retryDrain.queueError);
+    CHECK_EQ(retryDrain.sent, 1U);
+    REQUIRE_EQ(reopenedSender.payloads.size(), 1U);
+    CHECK_EQ(reopenedSender.payloads[0], "maybe-duplicate");
+    CHECK_EQ(reopened.stats().count, 0U);
+}
+
+
 #endif // !ARDUINO
