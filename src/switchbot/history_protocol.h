@@ -24,6 +24,12 @@ struct Metadata {
     uint16_t intervalSeconds = 0;
 };
 
+
+struct HistoryBank {
+    uint8_t id = 0;
+    Metadata metadata;
+};
+
 struct Sample {
     uint32_t index = 0;
     uint32_t epoch = 0;

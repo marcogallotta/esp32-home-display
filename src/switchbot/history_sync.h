@@ -38,6 +38,7 @@ struct SyncResult {
     SyncStatus status = SyncStatus::Ok;
     std::string message;
     Metadata metadata;
+    std::vector<HistoryBank> banks;
     std::vector<Sample> samples;
 
     bool ok() const { return status == SyncStatus::Ok; }
