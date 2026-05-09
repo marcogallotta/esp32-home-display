@@ -137,9 +137,10 @@ $(MAIN_TEST_API_TARGET): $(MAIN_TEST_API_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $^ -o $@ $(LDFLAGS)
 
-test: tests
+test: run-tests
 
-tests: $(TEST_TARGET)
+tests: run-tests
+
 $(TEST_TARGET): $(TEST_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $^ -o $@ $(LDFLAGS)
@@ -163,7 +164,7 @@ pqueue-profiling:
 	./$(PQUEUE_PROFILING_TARGET) all
 
 pqueue-tests:
-	$(MAKE) -C pqueue run-tests
+	$(MAKE) -C pqueue test
 
 coverage: $(COV_TEST_TARGET)
 	./$(COV_TEST_TARGET)
