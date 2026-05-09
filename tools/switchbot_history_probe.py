@@ -4,8 +4,8 @@ Probe SwitchBot Outdoor Meter history over BLE.
 
 This only replays commands observed from the official app:
   57 0f 3a
-  57 0f 3b 00
-  57 0f 3c 00 <index:u32_be> <count>
+  57 0f 3b <bank>
+  57 0f 3c <bank> <index:u32_be> <count>
 
 Default UUIDs match the common SwitchBot BLE service layout, but they are CLI-overridable.
 """
@@ -57,6 +57,26 @@ def parse_int(value: str) -> int:
     return int(value, 10)
 
 
+def parse_bank_list(value: str, start_response: bytes | None = None) -> list[int]:
+    raw = value.strip()
+    if not raw:
+        return []
+    if raw.lower() == "start":
+        if start_response is None or len(start_response) <= 2:
+            return []
+        return list(start_response[2:])
+
+    banks: list[int] = []
+    for part in raw.split(","):
+        if not part.strip():
+            continue
+        bank = parse_int(part)
+        if not 0 <= bank <= 0xFF:
+            raise ValueError("bank must fit uint8")
+        banks.append(bank)
+    return banks
+
+
 def parse_time_arg(value: str) -> int:
     raw = value.strip()
     lowered = raw.lower()
@@ -97,16 +117,20 @@ def build_start_command() -> bytes:
     return bytes.fromhex("570f3a")
 
 
-def build_metadata_command() -> bytes:
-    return bytes.fromhex("570f3b00")
+def build_metadata_command(bank: int = 0) -> bytes:
+    if not 0 <= bank <= 0xFF:
+        raise ValueError("bank must fit uint8")
+    return bytes.fromhex("570f3b") + bytes([bank])
 
 
-def build_page_command(index: int, count: int) -> bytes:
+def build_page_command(index: int, count: int, bank: int = 0) -> bytes:
     if not 0 <= index <= 0xFFFFFFFF:
         raise ValueError("index must fit uint32")
     if not 1 <= count <= 0xFF:
         raise ValueError("count must fit uint8 and be non-zero")
-    return bytes.fromhex("570f3c00") + index.to_bytes(4, "big") + bytes([count])
+    if not 0 <= bank <= 0xFF:
+        raise ValueError("bank must fit uint8")
+    return bytes.fromhex("570f3c") + bytes([bank]) + index.to_bytes(4, "big") + bytes([count])
 
 
 def parse_metadata(data: bytes) -> Metadata:
@@ -268,6 +292,21 @@ class Probe:
             return None
         return await asyncio.wait_for(self.queue.get(), timeout=self.timeout)
 
+
+def print_metadata(metadata: Metadata, *, prefix: str = "metadata") -> None:
+    print(f"{prefix}:")
+    print(f"  start_epoch: {metadata.start_epoch}  {utc_iso(metadata.start_epoch)}")
+    print(f"  end_epoch:   {metadata.end_epoch}  {utc_iso(metadata.end_epoch)}")
+    print(f"  end_index:   0x{metadata.end_index:08x} ({metadata.end_index})")
+    print(f"  interval:    {metadata.interval_seconds}s")
+
+
+def latest_full_page_index(metadata: Metadata, page_count: int) -> int | None:
+    if metadata.end_index < page_count:
+        return None
+    return metadata.end_index - page_count
+
+
 async def run(args: argparse.Namespace) -> None:
     raw_out_path = Path(args.raw_out) if args.raw_out else None
 
@@ -285,21 +324,56 @@ async def run(args: argparse.Namespace) -> None:
                 await probe.write_and_wait("time-sync", build_time_sync_command(args.epoch))
                 await asyncio.sleep(args.delay_ms / 1000)
 
-            await probe.write_and_wait("start", build_start_command())
+            start_response = await probe.write_and_wait("start", build_start_command())
             await asyncio.sleep(args.delay_ms / 1000)
 
-            meta_response = await probe.write_and_wait("metadata", build_metadata_command())
+            if start_response is None:
+                raise RuntimeError("no start response")
+            start_banks = parse_bank_list("start", start_response)
+            print(f"start_response: {start_response.hex()}")
+            if start_banks:
+                print("start_banks: " + ",".join(f"0x{bank:02x}" for bank in start_banks))
+
+            bank_probe_list = parse_bank_list(args.banks, start_response)
+            if bank_probe_list:
+                for bank in bank_probe_list:
+                    meta_response = await probe.write_and_wait(f"metadata-bank-0x{bank:02x}", build_metadata_command(bank))
+                    if meta_response is None:
+                        print(f"bank 0x{bank:02x}: no metadata response")
+                        continue
+                    try:
+                        bank_metadata = parse_metadata(meta_response)
+                    except ValueError as exc:
+                        print(f"bank 0x{bank:02x}: bad metadata: {exc}")
+                        continue
+
+                    print_metadata(bank_metadata, prefix=f"bank 0x{bank:02x} metadata")
+                    probe.log_raw("==", "metadata-parsed", b"", {"bank": bank, **bank_metadata.__dict__})
+
+                    if args.read_last_page:
+                        page_index = latest_full_page_index(bank_metadata, args.page_count)
+                        if page_index is None:
+                            print(f"bank 0x{bank:02x}: fewer than {args.page_count} samples; skipping last-page read")
+                            continue
+                        response = await probe.write_and_wait(
+                            f"page-bank-0x{bank:02x}-last",
+                            build_page_command(page_index, args.page_count, bank),
+                        )
+                        samples = decode_history_payload(response or b"", page_index, bank_metadata)
+                        print(f"bank 0x{bank:02x} last_page index={page_index} response={(response or b'').hex()} decoded={len(samples)}")
+                        for sample in samples:
+                            print(f"  {sample.index},{utc_iso(sample.epoch)},{sample.temperature_c:.1f},{sample.humidity_pct}")
+
+                return
+
+            meta_response = await probe.write_and_wait(f"metadata-bank-0x{args.bank:02x}", build_metadata_command(args.bank))
             if meta_response is None:
                 raise RuntimeError("no metadata response")
             metadata = parse_metadata(meta_response)
 
-            print("metadata:")
-            print(f"  start_epoch: {metadata.start_epoch}  {utc_iso(metadata.start_epoch)}")
-            print(f"  end_epoch:   {metadata.end_epoch}  {utc_iso(metadata.end_epoch)}")
-            print(f"  end_index:   0x{metadata.end_index:08x} ({metadata.end_index})")
-            print(f"  interval:    {metadata.interval_seconds}s")
+            print_metadata(metadata, prefix=f"bank 0x{args.bank:02x} metadata")
 
-            probe.log_raw("==", "metadata-parsed", b"", metadata.__dict__)
+            probe.log_raw("==", "metadata-parsed", b"", {"bank": args.bank, **metadata.__dict__})
 
             if args.metadata_only:
                 return
@@ -309,7 +383,7 @@ async def run(args: argparse.Namespace) -> None:
             decoded_samples: list[DecodedSample] = []
 
             for page_no, req in enumerate(requests):
-                command = build_page_command(req.index, req.count)
+                command = build_page_command(req.index, req.count, args.bank)
                 response = await probe.write_and_wait(f"page-{page_no}", command)
                 samples = decode_history_payload(response or b"", req.index, metadata)
                 decoded_samples.extend(samples)
@@ -319,6 +393,7 @@ async def run(args: argparse.Namespace) -> None:
                     b"",
                     {
                         "page_no": page_no,
+                        "bank": args.bank,
                         "index": req.index,
                         "count": req.count,
                         "decoded_samples": [sample.__dict__ for sample in samples],
@@ -370,6 +445,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--pages", type=int, default=5, help="number of history pages to request when no end is supplied")
     parser.add_argument("--page-count", type=int, default=6, help="record count byte in 3c page request")
+    parser.add_argument("--bank", type=parse_int, default=0, help="history bank byte for normal metadata/page reads")
+    parser.add_argument("--banks", default="", help="comma-separated bank bytes to probe, or 'start' to use bytes from start response")
+    parser.add_argument("--read-last-page", action="store_true", help="with --banks, read the last full page for each bank")
     parser.add_argument("--start-index", type=parse_int, help="first history index, decimal or 0xhex")
     parser.add_argument("--end-index", type=parse_int, help="exclusive end history index, decimal or 0xhex")
     parser.add_argument("--start", "--start-epoch", dest="start_epoch", type=parse_time_arg, help="first wanted time: Unix epoch or ISO datetime with timezone")
