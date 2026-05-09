@@ -34,7 +34,8 @@ std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& respon
 std::optional<std::vector<Sample>> decodePageResponse(const std::vector<uint8_t>& response,
                                                        uint32_t pageStartIndex,
                                                        uint32_t startEpoch,
-                                                       uint16_t intervalSeconds);
+                                                       uint16_t intervalSeconds,
+                                                       uint8_t expectedSamples = kSamplesPerPage);
 
 uint32_t indexForEpochFloor(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds);
 uint32_t indexForEpochCeil(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds);

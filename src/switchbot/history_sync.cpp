@@ -223,15 +223,15 @@ uint32_t rangeStartIndex(const Metadata& metadata, const SyncRequest& request) {
         return metadata.endIndex >= kSamplesPerPage ? metadata.endIndex - kSamplesPerPage : 0;
     }
 
-    // For explicit time-window syncs, start at the exact first wanted index.
-    // Rounding down to a 6-sample page boundary shifts the whole page sequence
-    // earlier; near the device tail that can make the final request spill past
-    // metadata.endIndex, which SwitchBot rejects with a one-byte 0x02 response.
-    return indexForEpochCeil(
+    const uint32_t firstWantedIndex = indexForEpochCeil(
         metadata.startEpoch,
         request.startEpoch,
         metadata.intervalSeconds
     );
+
+    // Page reads should start on a six-sample page boundary; samples before the
+    // requested window are trimmed locally.
+    return pageStartForIndex(firstWantedIndex);
 }
 
 uint32_t rangeEndExclusiveIndex(const Metadata& metadata, const SyncRequest& request) {
@@ -417,33 +417,30 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
         delay(50);
 
-        uint32_t requestPageIndex = pageIndex;
-        if (requestPageIndex + kSamplesPerPage > result.metadata.endIndex) {
-            if (result.metadata.endIndex < kSamplesPerPage) {
-                break;
-            }
-            // The device rejects page reads that extend past the metadata
-            // endIndex cursor with a one-byte 0x02 response. For a partial
-            // final window, read the last full page and trim/skip duplicates
-            // locally instead of asking the device for an invalid tail page.
-            requestPageIndex = result.metadata.endIndex - kSamplesPerPage;
+        const uint32_t remainingSamples = endExclusive - pageIndex;
+        const uint8_t requestSampleCount = static_cast<uint8_t>(
+            std::min<uint32_t>(kSamplesPerPage, remainingSamples)
+        );
+        if (requestSampleCount == 0) {
+            break;
         }
 
-        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(requestPageIndex, kSamplesPerPage), request.commandTimeoutMs, response)) {
+        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(pageIndex, requestSampleCount), request.commandTimeoutMs, response)) {
             cleanup();
             return fail(SyncStatus::Timeout, "page command timed out or write failed");
         }
 
         const auto samples = decodePageResponse(
             response,
-            requestPageIndex,
+            pageIndex,
             result.metadata.startEpoch,
-            result.metadata.intervalSeconds
+            result.metadata.intervalSeconds,
+            requestSampleCount
         );
         if (!samples.has_value()) {
             logBytes("bad-page", response);
             cleanup();
-            return fail(SyncStatus::BadPage, badPageMessage(requestPageIndex, response));
+            return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
         }
 
         for (const Sample& sample : *samples) {
