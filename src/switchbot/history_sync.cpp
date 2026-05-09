@@ -4,6 +4,7 @@
 #include <cctype>
 #include <ctime>
 #include <string>
+#include <utility>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -346,12 +347,57 @@ bool keepSample(const Sample& sample, const SyncRequest& request, uint32_t endEx
 
 }  // namespace
 
-SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request) {
-    if ((request.startEpoch == 0) != (request.endEpoch == 0)) {
-        return fail(SyncStatus::InvalidRequest, "startEpoch and endEpoch must both be set or both be zero");
+struct SensorHistorySessionImpl {
+    explicit SensorHistorySessionImpl(std::string sensorMac)
+        : mac(std::move(sensorMac)) {}
+
+    ~SensorHistorySessionImpl() {
+        cleanup();
     }
-    if (request.startEpoch != 0 && request.startEpoch >= request.endEpoch) {
-        return fail(SyncStatus::InvalidRequest, "startEpoch must be before endEpoch");
+
+    void cleanup() {
+        if (client != nullptr) {
+            if (client->isConnected()) {
+                client->disconnect();
+            }
+            NimBLEDevice::deleteClient(client);
+            client = nullptr;
+        }
+        writeChar = nullptr;
+        metadata = Metadata{};
+        opened = false;
+    }
+
+    std::string mac;
+    NotifyState notifyState;
+    NimBLEClient* client = nullptr;
+    NimBLERemoteCharacteristic* writeChar = nullptr;
+    Metadata metadata;
+    bool opened = false;
+};
+
+SensorHistorySession::SensorHistorySession(std::string mac)
+    : impl_(new SensorHistorySessionImpl(std::move(mac))) {}
+
+SensorHistorySession::~SensorHistorySession() = default;
+
+bool SensorHistorySession::isOpen() const {
+    return impl_ != nullptr && impl_->opened;
+}
+
+const Metadata& SensorHistorySession::metadata() const {
+    return impl_->metadata;
+}
+
+SyncResult SensorHistorySession::open(const SyncRequest& request) {
+    if (impl_ == nullptr || !impl_->notifyState.valid()) {
+        return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
+    }
+
+    if (impl_->opened) {
+        SyncResult result;
+        result.metadata = impl_->metadata;
+        return result;
     }
 
     static bool nimbleInitialised = false;
@@ -360,137 +406,138 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         nimbleInitialised = true;
     }
 
-    NotifyState notifyState;
-    if (!notifyState.valid()) {
-        return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
-    }
-
-    NimBLEClient* client = NimBLEDevice::createClient();
-    if (client == nullptr) {
+    impl_->client = NimBLEDevice::createClient();
+    if (impl_->client == nullptr) {
         return fail(SyncStatus::ConnectFailed, "NimBLEDevice::createClient failed");
     }
 
-    auto cleanup = [&]() {
-        if (client->isConnected()) {
-            client->disconnect();
-        }
-        NimBLEDevice::deleteClient(client);
-    };
-
-    const NimBLEAdvertisedDevice* device = findAdvertisedDeviceByMac(mac);
+    const NimBLEAdvertisedDevice* device = findAdvertisedDeviceByMac(impl_->mac);
     if (device == nullptr) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::ConnectFailed, "device not found during scan");
     }
 
-    if (!client->connect(device)) {
-        cleanup();
+    if (!impl_->client->connect(device)) {
+        impl_->cleanup();
         return fail(SyncStatus::ConnectFailed, "connect failed");
     }
 
-    NimBLERemoteService* service = client->getService(kSwitchbotServiceUuid);
+    NimBLERemoteService* service = impl_->client->getService(kSwitchbotServiceUuid);
     if (service == nullptr) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::ServiceNotFound, "SwitchBot service not found");
     }
 
-    NimBLERemoteCharacteristic* writeChar = service->getCharacteristic(kWriteCharacteristicUuid);
+    impl_->writeChar = service->getCharacteristic(kWriteCharacteristicUuid);
     NimBLERemoteCharacteristic* notifyChar = service->getCharacteristic(kNotifyCharacteristicUuid);
-    if (writeChar == nullptr || notifyChar == nullptr) {
-        cleanup();
+    if (impl_->writeChar == nullptr || notifyChar == nullptr) {
+        impl_->cleanup();
         return fail(SyncStatus::CharacteristicNotFound, "write or notify characteristic not found");
     }
 
     const bool subscribed = notifyChar->subscribe(
         true,
-        [&notifyState](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
-            notifyState.value.assign(data, data + length);
-            if (notifyState.ready != nullptr) {
-                xSemaphoreGive(notifyState.ready);
+        [state = &impl_->notifyState](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
+            state->value.assign(data, data + length);
+            if (state->ready != nullptr) {
+                xSemaphoreGive(state->ready);
             }
         }
     );
     if (!subscribed) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::SubscribeFailed, "notify subscribe failed");
     }
 
     std::vector<uint8_t> response;
     const uint32_t timeSyncEpoch = chooseTimeSyncEpoch(request);
     if (timeSyncEpoch == 0) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::InvalidRequest, "no valid time for time sync");
     }
 
-    if (!writeAndWait(*writeChar, notifyState, "time-sync", buildTimeSyncCommand(timeSyncEpoch), request.commandTimeoutMs, response)) {
-        cleanup();
+    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "time-sync", buildTimeSyncCommand(timeSyncEpoch), request.commandTimeoutMs, response)) {
+        impl_->cleanup();
         return fail(SyncStatus::Timeout, "time sync command timed out or write failed");
     }
     if (response.size() != 1 || response[0] != 0x01) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::BadAck, badAckMessage("time-sync", response, "01"));
     }
 
-    delay(0);
-
-    if (!writeAndWait(*writeChar, notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
-        cleanup();
+    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
+        impl_->cleanup();
         return fail(SyncStatus::Timeout, "start command timed out or write failed");
     }
     // Observed devices return different 0x01-prefixed start ACK variants.
     // Keep metadata parsing as the strict validation gate for the history session.
     if (response.empty() || response[0] != 0x01) {
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed ack"));
     }
 
-    delay(0);
-
-    if (!writeAndWait(*writeChar, notifyState, "metadata", buildMetadataCommand(), request.commandTimeoutMs, response)) {
-        cleanup();
+    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "metadata", buildMetadataCommand(), request.commandTimeoutMs, response)) {
+        impl_->cleanup();
         return fail(SyncStatus::Timeout, "metadata command timed out or write failed");
     }
 
-    const auto metadata = parseMetadataResponse(response);
-    if (!metadata.has_value()) {
+    const auto parsedMetadata = parseMetadataResponse(response);
+    if (!parsedMetadata.has_value()) {
         logBytes("bad-metadata", response);
-        cleanup();
+        impl_->cleanup();
         return fail(SyncStatus::BadMetadata, badDecodeMessage("metadata response decode failed", response));
     }
 
+    impl_->metadata = *parsedMetadata;
+    impl_->opened = true;
+
     SyncResult result;
-    result.metadata = *metadata;
+    result.metadata = impl_->metadata;
+    return result;
+}
+
+SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
+    if ((request.startEpoch == 0) != (request.endEpoch == 0)) {
+        return fail(SyncStatus::InvalidRequest, "startEpoch and endEpoch must both be set or both be zero");
+    }
+    if (request.startEpoch != 0 && request.startEpoch >= request.endEpoch) {
+        return fail(SyncStatus::InvalidRequest, "startEpoch must be before endEpoch");
+    }
+    if (!isOpen() || impl_->writeChar == nullptr) {
+        return fail(SyncStatus::ConnectFailed, "history session is not open");
+    }
+
+    SyncResult result;
+    result.metadata = impl_->metadata;
 
     const RequestedSampleRange requestedRange = planRequestedSampleRange(result.metadata, request);
     const uint32_t firstPage = requestedRange.firstRequestIndex;
     const uint32_t endExclusive = requestedRange.endExclusiveIndex;
     const uint32_t totalProgressSamples = requestedRange.progressTotalSamples;
 
-    logPagePlan(mac, request, result.metadata, requestedRange);
+    logPagePlan(impl_->mac, request, result.metadata, requestedRange);
 
     uint32_t keptSamples = 0;
     uint32_t nextProgressAt = totalProgressSamples >= 60 ? 60 : totalProgressSamples;
     bool haveLastKeptIndex = false;
     uint32_t lastKeptIndex = 0;
+    std::vector<uint8_t> response;
 
     for (uint32_t pageIndex = firstPage; pageIndex < endExclusive; pageIndex += kSamplesPerPage) {
         if (pageIndex + kSamplesPerPage > result.metadata.endIndex) {
             logLine(
                 LogLevel::Debug,
                 "switchbot_history_drop_partial_metadata_page," +
-                pageDiagnosticFields(mac, request, result.metadata, pageIndex, endExclusive, kSamplesPerPage, "metadata_tail_partial")
+                pageDiagnosticFields(impl_->mac, request, result.metadata, pageIndex, endExclusive, kSamplesPerPage, "metadata_tail_partial")
             );
             break;
         }
 
-        delay(0);
-
         const uint8_t requestSampleCount = kSamplesPerPage;
 
-        logPageRequest(mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount);
+        logPageRequest(impl_->mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount);
 
-        if (!writeAndWait(*writeChar, notifyState, "page", buildPageCommand(pageIndex), request.commandTimeoutMs, response)) {
-            cleanup();
+        if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "page", buildPageCommand(pageIndex), request.commandTimeoutMs, response)) {
             return fail(SyncStatus::Timeout, "page command timed out or write failed");
         }
 
@@ -504,11 +551,10 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
             logLine(
                 LogLevel::Warn,
                 "switchbot_history_page_diag," +
-                pageDiagnosticFields(mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount, "bad_page") +
+                pageDiagnosticFields(impl_->mac, request, result.metadata, pageIndex, endExclusive, requestSampleCount, "bad_page") +
                 "," + responseSummary(response)
             );
             logBytes("bad-page", response);
-            cleanup();
             return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
         }
 
@@ -522,7 +568,7 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
                 lastKeptIndex = sample.index;
                 ++keptSamples;
                 if (nextProgressAt != 0 && keptSamples >= nextProgressAt) {
-                    logProgress(request.progressLabel.empty() ? mac : request.progressLabel, keptSamples, totalProgressSamples);
+                    logProgress(request.progressLabel.empty() ? impl_->mac : request.progressLabel, keptSamples, totalProgressSamples);
                     nextProgressAt += 60;
                     if (nextProgressAt > totalProgressSamples) {
                         nextProgressAt = totalProgressSamples > keptSamples ? totalProgressSamples : 0;
@@ -532,9 +578,18 @@ SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request)
         }
     }
 
-    cleanup();
     return result;
 }
+
+SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request) {
+    SensorHistorySession session(mac);
+    SyncResult open = session.open(request);
+    if (!open.ok()) {
+        return open;
+    }
+    return session.fetch(request);
+}
+
 
 #endif  // ARDUINO
 

@@ -3,6 +3,7 @@
 #include "history_protocol.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,27 @@ struct SyncResult {
 const char* syncStatusName(SyncStatus status);
 
 #ifdef ARDUINO
+
+struct SensorHistorySessionImpl;
+
+class SensorHistorySession {
+public:
+    explicit SensorHistorySession(std::string mac);
+    ~SensorHistorySession();
+
+    SensorHistorySession(const SensorHistorySession&) = delete;
+    SensorHistorySession& operator=(const SensorHistorySession&) = delete;
+
+    SyncResult open(const SyncRequest& request = SyncRequest{});
+    SyncResult fetch(const SyncRequest& request = SyncRequest{});
+
+    bool isOpen() const;
+    const Metadata& metadata() const;
+
+private:
+    std::unique_ptr<SensorHistorySessionImpl> impl_;
+};
+
 SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request = SyncRequest{});
 #endif
 

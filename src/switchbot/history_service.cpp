@@ -396,6 +396,7 @@ PlanTotals uploadReadings(const Config& config,
 }
 
 PlanTotals syncAndUploadWindow(const Config& config,
+                               SensorHistorySession& session,
                                const std::string& label,
                                const BackendSensorInfo& sensor,
                                const PlannedHistoryWindow& window,
@@ -419,7 +420,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
         " to=" + formatIsoUtc(window.lastPointEpoch)
     );
 
-    const SyncResult sync = syncSensorHistory(sensor.mac, request);
+    const SyncResult sync = session.fetch(request);
     if (!sync.ok()) {
         ++totals.syncFailures;
         logLine(
@@ -468,8 +469,30 @@ PlanTotals syncAndUploadSensor(const Config& config,
     const std::string label = labelForMac(labelsByMac, sensor.mac);
     const auto windows = planHistoryWindows(sensor, nowEpoch, planningOptions(options));
 
+    if (windows.empty()) {
+        return totals;
+    }
+
+    SensorHistorySession session(sensor.mac);
+    SyncRequest setupRequest;
+    setupRequest.timeSyncEpoch = nowEpoch;
+    setupRequest.commandTimeoutMs = options.commandTimeoutMs;
+    setupRequest.progressLabel = label;
+
+    const SyncResult opened = session.open(setupRequest);
+    if (!opened.ok()) {
+        ++totals.syncFailures;
+        logLine(
+            LogLevel::Warn,
+            "SwitchBot history session failed: " + label +
+            " status=" + syncStatusName(opened.status) +
+            "; " + opened.message
+        );
+        return totals;
+    }
+
     for (const PlannedHistoryWindow& window : windows) {
-        addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options));
+        addTotals(totals, syncAndUploadWindow(config, session, label, sensor, window, nowEpoch, options));
     }
 
     return totals;
