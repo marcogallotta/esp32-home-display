@@ -170,6 +170,87 @@ TEST_CASE("switchbot history backend plans leading backfill before recent first 
     CHECK_EQ(windows[1].pointCount, 1U);
 }
 
+TEST_CASE("switchbot history backend plans multiple internal gaps") {
+    switchbot::history::BackendSensorInfo sensor;
+    sensor.mac = "AA:BB:CC:DD:EE:FF";
+    sensor.sensorId = "sensor-uuid";
+    sensor.firstEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T00:00:00Z");
+    sensor.latestEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T12:00:00Z");
+
+    switchbot::history::BackendSyncInterval gap1;
+    gap1.startEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T02:00:00Z");
+    gap1.endEpoch   = *switchbot::history::parseIsoUtcEpoch("2026-05-08T02:30:00Z");
+
+    switchbot::history::BackendSyncInterval gap2;
+    gap2.startEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T06:00:00Z");
+    gap2.endEpoch   = *switchbot::history::parseIsoUtcEpoch("2026-05-08T06:45:00Z");
+
+    sensor.syncIntervals = {gap1, gap2};
+
+    switchbot::history::HistoryPlanningOptions options;
+    options.sampleIntervalSeconds = 15 * 60;
+    options.newSensorWindowSeconds = 6 * 60 * 60;
+    options.historyLimitSeconds = 68U * 24U * 60U * 60U;
+
+    const std::uint32_t now = *switchbot::history::parseIsoUtcEpoch("2026-05-08T13:00:00Z");
+    const auto windows = switchbot::history::planHistoryWindows(sensor, now, options);
+
+    REQUIRE_EQ(windows.size(), 4U);
+    CHECK_EQ(windows[0].source, "leading_backfill");
+    CHECK_EQ(windows[1].source, "internal_gap");
+    CHECK_EQ(windows[1].firstPointEpoch, *switchbot::history::parseIsoUtcEpoch("2026-05-08T02:00:00Z"));
+    CHECK_EQ(windows[2].source, "internal_gap");
+    CHECK_EQ(windows[2].firstPointEpoch, *switchbot::history::parseIsoUtcEpoch("2026-05-08T06:00:00Z"));
+    CHECK_EQ(windows[3].source, "trailing");
+}
+
+TEST_CASE("switchbot history backend clamps leading backfill to history limit") {
+    switchbot::history::BackendSensorInfo sensor;
+    sensor.mac = "AA:BB:CC:DD:EE:FF";
+    sensor.sensorId = "sensor-uuid";
+    // firstEpoch within the limit, but newSensorWindow would extend past it
+    sensor.firstEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T09:00:00Z");
+    sensor.latestEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T09:00:00Z");
+
+    switchbot::history::HistoryPlanningOptions options;
+    options.sampleIntervalSeconds = 15 * 60;
+    options.newSensorWindowSeconds = 8 * 60 * 60;  // would go back to 01:00 — before limit
+    options.historyLimitSeconds = 4 * 60 * 60;     // only 4h back → earliest = 05:00
+
+    const std::uint32_t now = *switchbot::history::parseIsoUtcEpoch("2026-05-08T09:00:00Z");
+    const auto windows = switchbot::history::planHistoryWindows(sensor, now, options);
+
+    REQUIRE_EQ(windows.size(), 1U);
+    CHECK_EQ(windows[0].source, "leading_backfill");
+    CHECK(windows[0].clampedToHistoryLimit);
+    CHECK_EQ(windows[0].firstPointEpoch, *switchbot::history::parseIsoUtcEpoch("2026-05-08T05:00:00Z"));
+}
+
+TEST_CASE("switchbot history backend drops gap entirely before history limit") {
+    switchbot::history::BackendSensorInfo sensor;
+    sensor.mac = "AA:BB:CC:DD:EE:FF";
+    sensor.sensorId = "sensor-uuid";
+    sensor.firstEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T00:00:00Z");
+    sensor.latestEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T09:00:00Z");
+
+    switchbot::history::BackendSyncInterval old_gap;
+    old_gap.startEpoch = *switchbot::history::parseIsoUtcEpoch("2026-05-08T01:00:00Z");
+    old_gap.endEpoch   = *switchbot::history::parseIsoUtcEpoch("2026-05-08T02:00:00Z");
+    sensor.syncIntervals = {old_gap};
+
+    switchbot::history::HistoryPlanningOptions options;
+    options.sampleIntervalSeconds = 15 * 60;
+    options.newSensorWindowSeconds = 6 * 60 * 60;
+    options.historyLimitSeconds = 4 * 60 * 60;  // earliest = 05:00 — gap ends at 02:00
+
+    const std::uint32_t now = *switchbot::history::parseIsoUtcEpoch("2026-05-08T09:00:00Z");
+    const auto windows = switchbot::history::planHistoryWindows(sensor, now, options);
+
+    for (const auto& w : windows) {
+        CHECK_NE(w.source, "internal_gap");
+    }
+}
+
 TEST_CASE("switchbot history backend plans new sensor default window") {
     switchbot::history::BackendSensorInfo sensor;
     sensor.mac = "AA:BB:CC:DD:EE:FF";
