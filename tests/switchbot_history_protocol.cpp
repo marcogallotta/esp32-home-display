@@ -40,10 +40,6 @@ TEST_CASE("switchbot history builds known commands") {
     }));
 
     CHECK(switchbot::history::buildStartCommand() == bytes({0x57, 0x0f, 0x3a}));
-    CHECK(switchbot::history::buildMetadataCommand() == bytes({0x57, 0x0f, 0x3b, 0x00}));
-    CHECK(switchbot::history::buildPageCommand(0x00012d04, 6) == bytes({
-        0x57, 0x0f, 0x3c, 0x00, 0x00, 0x01, 0x2d, 0x04, 0x06,
-    }));
 }
 
 TEST_CASE("switchbot history builds bank metadata command") {
@@ -200,7 +196,6 @@ TEST_CASE("switchbot history rejects malformed pages") {
 TEST_CASE("switchbot history converts epoch and index") {
     const std::uint32_t startEpoch = 1773509975;
     CHECK_EQ(switchbot::history::epochForIndex(startEpoch, 77061, 60), 1778133635U);
-    CHECK_EQ(switchbot::history::indexForEpochFloor(startEpoch, 1778133635U, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133600, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133635, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133636, 60), 77062U);

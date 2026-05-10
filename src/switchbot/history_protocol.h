@@ -39,9 +39,7 @@ struct Sample {
 
 std::vector<uint8_t> buildTimeSyncCommand(uint32_t unixEpoch);
 std::vector<uint8_t> buildStartCommand();
-std::vector<uint8_t> buildMetadataCommand();
 std::vector<uint8_t> buildBankMetadataCommand(uint8_t bank);
-std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count = kSamplesPerPage);
 std::vector<uint8_t> buildBankPageCommand(uint8_t bank, uint32_t bankLocalIndex, uint8_t count = kSamplesPerPage);
 
 std::optional<StartResponse> parseStartResponse(const std::vector<uint8_t>& response);
@@ -51,14 +49,9 @@ std::optional<std::vector<Sample>> decodePageResponse(const std::vector<uint8_t>
                                                        uint32_t startEpoch,
                                                        uint16_t intervalSeconds);
 
-uint32_t indexForEpochFloor(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds);
 uint32_t indexForEpochCeil(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds);
 uint32_t epochForIndex(uint32_t startEpoch, uint32_t index, uint16_t intervalSeconds);
 uint32_t pageStartForIndex(uint32_t index);
-
-// Compatibility aliases for older call sites.
-uint32_t epochToIndex(uint32_t epoch, uint32_t startEpoch, uint16_t intervalSeconds);
-uint32_t indexToEpoch(uint32_t index, uint32_t startEpoch, uint16_t intervalSeconds);
 
 std::vector<uint8_t> hexToBytes(std::string_view hex);
 std::string bytesToHex(const std::vector<uint8_t>& bytes);
