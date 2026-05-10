@@ -186,8 +186,26 @@ TEST_CASE("switchbot history rejects malformed pages") {
 TEST_CASE("switchbot history converts epoch and index") {
     const std::uint32_t startEpoch = 1773509975;
     CHECK_EQ(switchbot::history::epochForIndex(startEpoch, 77061, 60), 1778133635U);
+    CHECK_EQ(switchbot::history::indexForEpochFloor(startEpoch, 1778133635U, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133600, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133635, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133636, 60), 77062U);
     CHECK_EQ(switchbot::history::pageStartForIndex(77061), 77058U);
+}
+
+TEST_CASE("switchbot history decodes real captured page") {
+    const std::uint32_t startEpoch = 1773509975U;
+    const auto samples = switchbot::history::decodePageResponse(
+        switchbot::history::hexToBytes("018c31558c318c31578c2f8c2f778c2f"),
+        77079, startEpoch, 60
+    );
+
+    REQUIRE(samples.has_value());
+    REQUIRE_EQ(samples->size(), 6U);
+    CHECK((*samples)[0].temperatureC == doctest::Approx(12.5f));
+    CHECK_EQ((*samples)[0].humidityPct, 49U);
+    CHECK((*samples)[3].temperatureC == doctest::Approx(12.7f));
+    CHECK_EQ((*samples)[3].humidityPct, 47U);
+    CHECK((*samples)[5].temperatureC == doctest::Approx(12.7f));
+    CHECK_EQ((*samples)[5].humidityPct, 47U);
 }
