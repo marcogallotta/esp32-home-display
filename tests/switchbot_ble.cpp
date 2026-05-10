@@ -87,15 +87,8 @@ TEST_CASE("switchbot scanner ignores unknown configured sensors") {
 
 TEST_CASE("switchbot scanner ignores all-zero meter payloads") {
     switchbot::Scanner scanner(switchbotConfig());
-    std::vector<std::uint8_t> payload(12, 0x00);
-    payload[0] = 0xAA;
-    payload[1] = 0xBB;
-    payload[2] = 0xCC;
-    payload[3] = 0xDD;
-    payload[4] = 0xEE;
-    payload[5] = 0xFF;
 
-    scanner.handleAdvertisement(switchbotAdvertisement(kKnownMac, payload));
+    scanner.handleAdvertisement(switchbotAdvertisement(kKnownMac, std::vector<std::uint8_t>(12, 0x00)));
 
     CHECK(scanner.snapshot().empty());
 }
