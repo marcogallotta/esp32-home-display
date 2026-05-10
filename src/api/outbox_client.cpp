@@ -314,8 +314,8 @@ std::string dropReasonName(pqueue::http::DropReason reason) {
     switch (reason) {
         case pqueue::http::DropReason::DecodeFailed:
             return "decode_failed";
-        case pqueue::http::DropReason::ClassifiedDrop:
-            return "classified_drop";
+        case pqueue::http::DropReason::ServerRejected:
+            return "server_rejected";
     }
     return "dropped";
 }
