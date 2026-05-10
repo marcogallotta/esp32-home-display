@@ -495,10 +495,7 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
             return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed bank list"));
         }
 
-        std::vector<uint8_t> bankIds = startResponse->banks;
-        if (bankIds.empty()) {
-            bankIds.push_back(0);
-        }
+        const std::vector<uint8_t>& bankIds = startResponse->banks;
 
         for (uint8_t bankId : bankIds) {
             if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "metadata", buildBankMetadataCommand(bankId), request.commandTimeoutMs, response)) {
