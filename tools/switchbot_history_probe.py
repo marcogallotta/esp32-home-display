@@ -332,6 +332,26 @@ def print_metadata(metadata: Metadata, *, prefix: str = "metadata") -> None:
     print(f"  interval:    {metadata.interval_seconds}s")
 
 
+def parse_probe_indexes(value: str) -> list[int]:
+    raw = value.strip()
+    if not raw:
+        return []
+    return [parse_int(part) for part in raw.split(",") if part.strip()]
+
+
+def boundary_probe_indexes(metadata: Metadata, page_count: int) -> list[int]:
+    candidates = [0]
+    if metadata.end_index >= page_count:
+        candidates.append(metadata.end_index - page_count)
+    candidates.append(metadata.end_index)
+
+    indexes: list[int] = []
+    for index in candidates:
+        if 0 <= index <= 0xFFFFFFFF and index not in indexes:
+            indexes.append(index)
+    return indexes
+
+
 def latest_full_page_index(metadata: Metadata, page_count: int) -> int | None:
     if metadata.end_index < page_count:
         return None
@@ -364,58 +384,113 @@ async def run(args: argparse.Namespace) -> None:
             metadata_extras = parse_hex_blob_list(args.metadata_extras) or [parse_hex_blob(args.metadata_extra)]
             page_extra = parse_hex_blob(args.page_extra)
 
-            async def probe_metadata_for_banks(start_response: bytes) -> bool:
+            async def read_metadata(bank: int, metadata_extra: bytes) -> Metadata | None:
+                meta_response = await probe.write_and_wait(
+                    f"metadata-bank-0x{bank:02x}-extra-{hex_label(metadata_extra)}",
+                    build_metadata_command(bank, metadata_extra),
+                )
+                if meta_response is None:
+                    print(f"bank 0x{bank:02x} metadata_extra={hex_label(metadata_extra)}: no metadata response")
+                    return None
+                try:
+                    bank_metadata = parse_metadata(meta_response)
+                except ValueError as exc:
+                    print(
+                        f"bank 0x{bank:02x} metadata_extra={hex_label(metadata_extra)}: "
+                        f"bad metadata raw={meta_response.hex()} error={exc}"
+                    )
+                    return None
+
+                print(f"bank 0x{bank:02x} metadata raw: {meta_response.hex()}")
+                print_metadata(
+                    bank_metadata,
+                    prefix=f"bank 0x{bank:02x} metadata extra={hex_label(metadata_extra)}",
+                )
+                probe.log_raw(
+                    "==",
+                    "metadata-parsed",
+                    b"",
+                    {"bank": bank, "metadata_extra": metadata_extra.hex(), **bank_metadata.__dict__},
+                )
+                return bank_metadata
+
+            async def read_probe_page(bank: int, index: int, count: int, metadata: Metadata | None, label: str) -> None:
+                response = await probe.write_and_wait(
+                    f"page-bank-0x{bank:02x}-{label}-index-{index}-extra-{hex_label(page_extra)}",
+                    build_page_command(index, count, bank, page_extra),
+                )
+                samples = decode_history_payload(response or b"", index, metadata) if metadata else []
+                print(
+                    f"bank 0x{bank:02x} probe_page label={label} index={index} count={count} "
+                    f"page_extra={hex_label(page_extra)} response={(response or b'').hex()} decoded={len(samples)}"
+                )
+                for sample in samples:
+                    print(f"  {sample.index},{utc_iso(sample.epoch)},{sample.temperature_c:.1f},{sample.humidity_pct}")
+
+            async def probe_metadata_for_banks(start_response: bytes | None, *, label: str) -> bool:
                 bank_probe_list = parse_bank_list(args.banks, start_response)
                 if not bank_probe_list:
                     return False
 
+                explicit_probe_indexes = parse_probe_indexes(args.probe_indexes)
+
                 for bank in bank_probe_list:
                     for metadata_extra in metadata_extras:
-                        meta_response = await probe.write_and_wait(
-                            f"metadata-bank-0x{bank:02x}-extra-{hex_label(metadata_extra)}",
-                            build_metadata_command(bank, metadata_extra),
-                        )
-                        if meta_response is None:
-                            print(f"bank 0x{bank:02x} metadata_extra={hex_label(metadata_extra)}: no metadata response")
-                            continue
-                        try:
-                            bank_metadata = parse_metadata(meta_response)
-                        except ValueError as exc:
-                            print(
-                                f"bank 0x{bank:02x} metadata_extra={hex_label(metadata_extra)}: "
-                                f"bad metadata raw={meta_response.hex()} error={exc}"
-                            )
+                        bank_metadata = await read_metadata(bank, metadata_extra)
+                        if bank_metadata is None:
                             continue
 
-                        print_metadata(
-                            bank_metadata,
-                            prefix=f"bank 0x{bank:02x} metadata extra={hex_label(metadata_extra)}",
-                        )
-                        probe.log_raw(
-                            "==",
-                            "metadata-parsed",
-                            b"",
-                            {"bank": bank, "metadata_extra": metadata_extra.hex(), **bank_metadata.__dict__},
-                        )
-
+                        page_indexes: list[tuple[str, int]] = []
                         if args.read_last_page:
                             page_index = latest_full_page_index(bank_metadata, args.page_count)
                             if page_index is None:
                                 print(f"bank 0x{bank:02x}: fewer than {args.page_count} samples; skipping last-page read")
+                            else:
+                                page_indexes.append(("last", page_index))
+                        if args.boundary_probes:
+                            page_indexes.extend(("boundary", index) for index in boundary_probe_indexes(bank_metadata, args.page_count))
+                        page_indexes.extend(("probe", index) for index in explicit_probe_indexes)
+
+                        seen: set[tuple[str, int]] = set()
+                        for page_label, page_index in page_indexes:
+                            key = (page_label, page_index)
+                            if key in seen:
                                 continue
-                            response = await probe.write_and_wait(
-                                f"page-bank-0x{bank:02x}-last-extra-{hex_label(page_extra)}",
-                                build_page_command(page_index, args.page_count, bank, page_extra),
+                            seen.add(key)
+                            await read_probe_page(
+                                bank,
+                                page_index,
+                                args.page_count,
+                                bank_metadata,
+                                f"{label}-{page_label}",
                             )
-                            samples = decode_history_payload(response or b"", page_index, bank_metadata)
-                            print(
-                                f"bank 0x{bank:02x} last_page index={page_index} "
-                                f"page_extra={hex_label(page_extra)} response={(response or b'').hex()} decoded={len(samples)}"
-                            )
-                            for sample in samples:
-                                print(f"  {sample.index},{utc_iso(sample.epoch)},{sample.temperature_c:.1f},{sample.humidity_pct}")
+                            await asyncio.sleep(args.delay_ms / 1000)
 
                 return True
+
+            if args.pre_start_metadata:
+                if not await probe_metadata_for_banks(None, label="before-start"):
+                    print("pre-start metadata requested but --banks did not name concrete banks")
+                if args.skip_start:
+                    return
+
+            if args.skip_start:
+                if await probe_metadata_for_banks(None, label="no-start"):
+                    return
+
+                metadata_extra = metadata_extras[0]
+                meta_response = await probe.write_and_wait(
+                    f"metadata-bank-0x{args.bank:02x}-extra-{hex_label(metadata_extra)}",
+                    build_metadata_command(args.bank, metadata_extra),
+                )
+                if meta_response is None:
+                    raise RuntimeError("no metadata response")
+                print(f"bank 0x{args.bank:02x} metadata raw: {meta_response.hex()}")
+                metadata = parse_metadata(meta_response)
+                print_metadata(metadata, prefix=f"bank 0x{args.bank:02x} metadata")
+                probe.log_raw("==", "metadata-parsed", b"", {"bank": args.bank, **metadata.__dict__})
+                if args.metadata_only:
+                    return
 
             if start_extras:
                 for start_extra in start_extras:
@@ -431,7 +506,7 @@ async def run(args: argparse.Namespace) -> None:
                     print(f"start_extra={hex_label(start_extra)} start_response: {start_response.hex()}")
                     if start_banks:
                         print("start_banks: " + ",".join(f"0x{bank:02x}" for bank in start_banks))
-                    await probe_metadata_for_banks(start_response)
+                    await probe_metadata_for_banks(start_response, label="after-start")
                 return
 
             start_extra = parse_hex_blob(args.start_extra)
@@ -450,7 +525,7 @@ async def run(args: argparse.Namespace) -> None:
             if start_banks:
                 print("start_banks: " + ",".join(f"0x{bank:02x}" for bank in start_banks))
 
-            if await probe_metadata_for_banks(start_response):
+            if await probe_metadata_for_banks(start_response, label="after-start"):
                 return
 
             metadata_extra = metadata_extras[0]
@@ -539,6 +614,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bank", type=parse_int, default=0, help="history bank byte for normal metadata/page reads")
     parser.add_argument("--banks", default="", help="comma-separated bank bytes to probe, or 'start' to use bytes from start response")
     parser.add_argument("--read-last-page", action="store_true", help="with --banks, read the last full page for each bank")
+    parser.add_argument("--pre-start-metadata", action="store_true", help="read --banks metadata before sending the start command")
+    parser.add_argument("--skip-start", action="store_true", help="do not send the start command; useful with concrete --banks values")
+    parser.add_argument("--probe-indexes", default="", help="comma-separated page indexes to probe for each bank, e.g. 77970,0x13092")
+    parser.add_argument("--boundary-probes", action="store_true", help="probe page indexes 0, end_index-page_count, and end_index for each bank")
     parser.add_argument("--start-extra", default="", help="hex bytes appended to the start command, e.g. 00")
     parser.add_argument("--start-extras", default="", help="comma-separated start-command extra variants, e.g. none,00,01,02")
     parser.add_argument("--metadata-extra", default="", help="hex bytes appended to each metadata command")
