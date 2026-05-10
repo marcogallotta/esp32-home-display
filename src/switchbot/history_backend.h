@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../config.h"
+#include "history_protocol.h"
 
 #include <cstdint>
 #include <optional>
@@ -87,6 +88,11 @@ BulkUploadResult postBulkUpload(const Config& config, const std::string& sensorI
 std::vector<PlannedHistoryWindow> planHistoryWindows(const BackendSensorInfo& sensor,
                                                      std::uint32_t nowEpoch,
                                                      const HistoryPlanningOptions& options);
+
+std::vector<BulkHistoryReading> selectAlignedReadings(const std::vector<Sample>& samples,
+                                                      const PlannedHistoryWindow& window,
+                                                      std::uint32_t sampleIntervalSeconds,
+                                                      std::uint32_t deviceIntervalSeconds);
 
 }  // namespace history
 }  // namespace switchbot
