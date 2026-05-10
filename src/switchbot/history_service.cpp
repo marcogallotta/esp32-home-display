@@ -450,7 +450,8 @@ PlanTotals syncAndUploadWindow(const Config& config,
                                const BackendSensorInfo& sensor,
                                const PlannedHistoryWindow& window,
                                std::uint32_t nowEpoch,
-                               const HistoryServiceOptions& options) {
+                               const HistoryServiceOptions& options,
+                               SensorHistorySession& session) {
     PlanTotals totals;
 
     SyncRequest request;
@@ -469,7 +470,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
         " to=" + formatIsoUtc(window.lastPointEpoch)
     );
 
-    const SyncResult sync = syncSensorHistory(sensor.mac, request);
+    const SyncResult sync = session.fetch(request);
     if (!sync.ok()) {
         ++totals.syncFailures;
         logLine(
@@ -511,8 +512,25 @@ PlanTotals syncAndUploadSensor(const Config& config,
     const std::string label = labelForMac(labelsByMac, sensor.mac);
     const auto windows = planHistoryWindows(sensor, nowEpoch, planningOptions(options));
 
+    if (windows.empty()) {
+        return totals;
+    }
+
+    SensorHistorySession session(sensor.mac);
+    const SyncResult openResult = session.open();
+    if (!openResult.ok()) {
+        logLine(
+            LogLevel::Warn,
+            "SwitchBot history connect failed: " + label +
+            " status=" + syncStatusName(openResult.status) +
+            "; " + openResult.message
+        );
+        totals.syncFailures = static_cast<std::uint32_t>(windows.size());
+        return totals;
+    }
+
     for (const PlannedHistoryWindow& window : windows) {
-        addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options));
+        addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options, session));
     }
 
     return totals;
