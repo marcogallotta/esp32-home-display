@@ -28,8 +28,7 @@ TEST_CASE("switchbot history backend parses UTC timestamps") {
 
 TEST_CASE("switchbot history backend builds sensor lookup payload") {
     const std::string payload = switchbot::history::makeSensorLookupPayload({"AA:BB:CC:DD:EE:FF"});
-    CHECK(payload.find("\"sensors\"") != std::string::npos);
-    CHECK(payload.find("AA:BB:CC:DD:EE:FF") != std::string::npos);
+    CHECK(payload.find("\"mac\":\"AA:BB:CC:DD:EE:FF\"") != std::string::npos);
 }
 
 TEST_CASE("switchbot history backend parses sensor lookup response") {
@@ -181,7 +180,7 @@ TEST_CASE("switchbot history backend builds bulk upload payload") {
     const std::string payload = switchbot::history::makeBulkUploadPayload("sensor-uuid", readings);
     CHECK(payload.find("\"sensor_id\":\"sensor-uuid\"") != std::string::npos);
     CHECK(payload.find("\"timestamp\":\"2026-05-08T15:00:00Z\"") != std::string::npos);
-    CHECK(payload.find("\"temperature_c\"") != std::string::npos);
+    CHECK(payload.find("\"temperature_c\":20.3") != std::string::npos);
     CHECK(payload.find("\"humidity_pct\":43") != std::string::npos);
 }
 
