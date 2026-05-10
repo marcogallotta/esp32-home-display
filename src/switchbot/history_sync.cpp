@@ -393,8 +393,7 @@ const Metadata& SensorHistorySession::metadata() const {
     return impl_->metadata;
 }
 
-SyncResult SensorHistorySession::open(const SyncRequest& request) {
-    (void)request;
+SyncResult SensorHistorySession::open() {
     if (impl_ == nullptr || !impl_->notifyState.valid()) {
         return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
     }
@@ -615,7 +614,7 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
 }
 SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request) {
     SensorHistorySession session(mac);
-    SyncResult open = session.open(request);
+    SyncResult open = session.open();
     if (!open.ok()) {
         return open;
     }

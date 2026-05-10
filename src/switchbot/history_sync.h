@@ -58,7 +58,7 @@ public:
     SensorHistorySession(const SensorHistorySession&) = delete;
     SensorHistorySession& operator=(const SensorHistorySession&) = delete;
 
-    SyncResult open(const SyncRequest& request = SyncRequest{});
+    SyncResult open();
     SyncResult fetch(const SyncRequest& request = SyncRequest{});
 
     bool isOpen() const;
