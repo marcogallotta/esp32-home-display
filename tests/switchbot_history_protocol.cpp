@@ -172,6 +172,20 @@ TEST_CASE("switchbot history decodes mixed decimals and humidity") {
     CHECK_EQ((*samples)[4].humidityPct, 47U);
 }
 
+TEST_CASE("switchbot history decodes negative temperature in page") {
+    const auto samples = switchbot::history::decodePageResponse(bytes({
+        0x01,
+        0x05, 0x42, 0x66, 0x05, 0x42,
+        0x05, 0x42, 0x66, 0x05, 0x42,
+        0x05, 0x42, 0x66, 0x05, 0x42,
+    }), 0, 1000, 60);
+
+    REQUIRE(samples.has_value());
+    REQUIRE_EQ(samples->size(), 6U);
+    CHECK((*samples)[0].temperatureC == doctest::Approx(-5.6f));
+    CHECK_EQ((*samples)[0].humidityPct, 66U);
+}
+
 TEST_CASE("switchbot history rejects malformed pages") {
     CHECK_FALSE(switchbot::history::decodePageResponse({}, 0, 0, 60).has_value());
     CHECK_FALSE(switchbot::history::decodePageResponse(bytes({0x02}), 0, 0, 60).has_value());
