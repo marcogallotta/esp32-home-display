@@ -568,7 +568,9 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
             logPageRequest(impl_->mac, request, bank.metadata, pageIndex, endExclusive, requestSampleCount);
 
             if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "page", buildBankPageCommand(bank.id, pageIndex), request.commandTimeoutMs, response)) {
-                return fail(SyncStatus::Timeout, "page command timed out or write failed");
+                result.status = SyncStatus::Timeout;
+                result.message = "page command timed out or write failed";
+                return result;
             }
 
             const auto samples = decodePageResponse(
@@ -586,7 +588,9 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
                     "," + responseSummary(response)
                 );
                 logBytes("bad-page", response);
-                return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
+                result.status = SyncStatus::BadPage;
+                result.message = badPageMessage(pageIndex, response);
+                return result;
             }
 
             for (const Sample& sample : *samples) {

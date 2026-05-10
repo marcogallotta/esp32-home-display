@@ -471,19 +471,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
     );
 
     const SyncResult sync = session.fetch(request);
-    if (!sync.ok()) {
-        ++totals.syncFailures;
-        logLine(
-            LogLevel::Warn,
-            "SwitchBot history sync failed: " + label +
-            " source=" + window.source +
-            " status=" + syncStatusName(sync.status) +
-            "; " + sync.message
-        );
-        return totals;
-    }
 
-    ++totals.syncedWindows;
     const std::uint32_t deviceInterval = sync.metadata.intervalSeconds == 0 ? 60U : sync.metadata.intervalSeconds;
     std::vector<BulkHistoryReading> selected = selectAlignedReadings(
         sync.samples,
@@ -493,6 +481,22 @@ PlanTotals syncAndUploadWindow(const Config& config,
     );
     totals.selectedReadings += static_cast<std::uint32_t>(selected.size());
 
+    if (!sync.ok()) {
+        ++totals.syncFailures;
+        if (!selected.empty()) {
+            addTotals(totals, uploadReadings(config, label, sensor.sensorId, selected, options));
+        }
+        logLine(
+            LogLevel::Error,
+            "SwitchBot history sync failed: " + label +
+            " source=" + window.source +
+            " status=" + syncStatusName(sync.status) +
+            "; " + sync.message
+        );
+        return totals;
+    }
+
+    ++totals.syncedWindows;
     logWindowResult(label, window, sync, selected);
 
     if (selected.empty()) {
@@ -520,7 +524,7 @@ PlanTotals syncAndUploadSensor(const Config& config,
     const SyncResult openResult = session.open();
     if (!openResult.ok()) {
         logLine(
-            LogLevel::Warn,
+            LogLevel::Error,
             "SwitchBot history connect failed: " + label +
             " status=" + syncStatusName(openResult.status) +
             "; " + openResult.message
