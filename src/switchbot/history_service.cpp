@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
+
 namespace switchbot {
 namespace history {
 namespace {
@@ -540,7 +544,6 @@ void runHistorySync(const std::vector<std::string>& macs,
 }
 
 #ifdef ARDUINO
-#include <Arduino.h>
 
 namespace {
 
