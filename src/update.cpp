@@ -37,19 +37,11 @@ std::optional<std::int64_t> validEpochOrNull(std::int64_t epochS) {
 }
 
 std::string switchbotLabel(const SwitchbotSensorState& row) {
-#ifdef ARDUINO
-    return row.identity.shortName;
-#else
     return row.identity.name;
-#endif
 }
 
 std::string xiaomiLabel(const XiaomiSensorState& row) {
-#ifdef ARDUINO
-    return row.identity.shortName;
-#else
     return row.identity.name;
-#endif
 }
 
 void logSwitchbotSummary(const State& state, std::time_t now) {
