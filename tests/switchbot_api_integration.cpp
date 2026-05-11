@@ -12,7 +12,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -91,6 +90,13 @@ ble::AdvertisementEvent makeAdvertisement(
     return event;
 }
 
+std::string prepareSpoolDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(kSpoolDir, ec);
+    std::filesystem::create_directories(kSpoolDir);
+    return kSpoolDir.string();
+}
+
 struct Fixture {
     Config config;
     FakeTransport transport;
@@ -102,15 +108,10 @@ struct Fixture {
 
     Fixture()
         : config(makeConfig()),
-          client(config, transport, kSpoolDir.string(), fakeClockNow, &clock),
+          client(config, transport, prepareSpoolDir(), fakeClockNow, &clock),
           scanner(config.switchbot) {
         state.switchbotSensors.resize(config.switchbot.sensors.size());
         api::initState(state, apiState);
-
-        std::error_code ec;
-        std::filesystem::remove_all(kSpoolDir, ec);
-        std::filesystem::create_directories(kSpoolDir);
-        std::ofstream lockFile(kSpoolDir / ".pqueue.lock", std::ios::binary | std::ios::trunc);
     }
 };
 
@@ -129,11 +130,14 @@ TEST_CASE("switchbot integration: valid advert reaches API POST") {
     syncApiState(f.config, f.state, f.apiState, f.client, kNow);
 
     REQUIRE_EQ(f.transport.posts.size(), 1U);
-    CHECK(f.transport.posts[0].url.find("/switchbot/reading") != std::string::npos);
+    CHECK_EQ(f.transport.posts[0].url, "https://example.test/api/switchbot/reading");
 
     StaticJsonDocument<512> doc;
     REQUIRE_FALSE(deserializeJson(doc, f.transport.posts[0].body));
     CHECK_EQ(doc["mac"].as<std::string>(), kMac);
+    CHECK_EQ(doc["name"].as<std::string>(), "Bedroom");
+    CHECK_EQ(doc["type"].as<std::string>(), "switchbot");
+    CHECK_FALSE(doc["timestamp"].isNull());
     CHECK(doc["temperature_c"].as<float>() == doctest::Approx(23.4f));
     CHECK_EQ(doc["humidity_pct"].as<int>(), 72);
 }

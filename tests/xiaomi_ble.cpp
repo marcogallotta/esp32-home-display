@@ -7,13 +7,14 @@
 #include <cstdint>
 #include <vector>
 
+using xiaomi_test::kFe95Uuid;
+using xiaomi_test::xiaomiAdvertisement;
 using xiaomi_test::xiaomiPayload;
 
 namespace {
 
 constexpr const char* kKnownMac = "AA:BB:CC:DD:EE:FF";
 constexpr const char* kUnknownMac = "00:11:22:33:44:55";
-constexpr const char* kFe95Uuid = "0000fe95-0000-1000-8000-00805f9b34fb";
 constexpr const char* kWrongUuid = "0000180f-0000-1000-8000-00805f9b34fb";
 
 XiaomiConfig xiaomiConfig() {
@@ -24,17 +25,6 @@ XiaomiConfig xiaomiConfig() {
         "Basil",
     });
     return config;
-}
-
-ble::AdvertisementEvent xiaomiAdvertisement(
-    const char* address,
-    const std::string& uuid,
-    const std::vector<std::uint8_t>& payload
-) {
-    ble::AdvertisementEvent event;
-    event.address = address;
-    event.serviceData[uuid] = payload;
-    return event;
 }
 
 } // namespace
