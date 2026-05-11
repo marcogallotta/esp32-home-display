@@ -234,6 +234,96 @@ ScenarioResult runHttpDrainBacklog(uint32_t recordSizeBytes) {
     return result;
 }
 
+void runFlushCurve() {
+    struct SizePoint { uint32_t bytes; const char* label; };
+    static const SizePoint kSizes[] = {
+        {512,   "512B"},
+        {1024,  "1KB"},
+        {2048,  "2KB"},
+        {4096,  "4KB"},
+        {8192,  "8KB"},
+        {12288, "12KB"},
+        {16384, "16KB"},
+        {32768, "32KB"},
+    };
+    const uint32_t kIter = 20;
+    const uint32_t kWriteSize = 128;
+    const char* kFile = "/pqueue_prof_fc";
+    const std::string writeData(kWriteSize, 'x');
+    const std::string zeros(256, '\0');
+
+    Serial.printf("flush cost curve (%u iters, %uB append-like write):\n", kIter, kWriteSize);
+    Serial.printf("  %-6s  %9s  %9s  %9s  %9s  %9s\n",
+        "size", "open_us", "flush_us", "close_us", "total_us", "flush_pers");
+
+    for (const auto& sp : kSizes) {
+        {
+            File f = LittleFS.open(kFile, "w");
+            if (!f) { Serial.printf("  %-6s  CREATE FAILED\n", sp.label); continue; }
+            uint32_t written = 0;
+            while (written < sp.bytes) {
+                const uint32_t chunk = std::min(256u, sp.bytes - written);
+                f.write(reinterpret_cast<const uint8_t*>(zeros.data()), chunk);
+                written += chunk;
+            }
+            f.flush();
+            f.close();
+        }
+
+        const uint32_t writeOffset = sp.bytes >= kWriteSize ? sp.bytes - kWriteSize : 0;
+        uint64_t openUs = 0, flushUs = 0, closeUs = 0;
+
+        for (uint32_t i = 0; i < kIter; ++i) {
+            int64_t t0, t1;
+
+            t0 = esp_timer_get_time();
+            File f = LittleFS.open(kFile, "r+");
+            t1 = esp_timer_get_time();
+            openUs += static_cast<uint64_t>(t1 - t0);
+
+            if (!f) { Serial.printf("  %-6s  OPEN FAILED\n", sp.label); break; }
+            f.seek(writeOffset, SeekSet);
+            f.write(reinterpret_cast<const uint8_t*>(writeData.data()), kWriteSize);
+
+            t0 = esp_timer_get_time();
+            f.flush();
+            t1 = esp_timer_get_time();
+            flushUs += static_cast<uint64_t>(t1 - t0);
+
+            t0 = esp_timer_get_time();
+            f.close();
+            t1 = esp_timer_get_time();
+            closeUs += static_cast<uint64_t>(t1 - t0);
+        }
+
+        // Persistent handle: open once, measure only flush
+        uint64_t flushPersUs = 0;
+        {
+            File f = LittleFS.open(kFile, "r+");
+            if (f) {
+                for (uint32_t i = 0; i < kIter; ++i) {
+                    f.seek(writeOffset, SeekSet);
+                    f.write(reinterpret_cast<const uint8_t*>(writeData.data()), kWriteSize);
+                    const int64_t t0 = esp_timer_get_time();
+                    f.flush();
+                    flushPersUs += static_cast<uint64_t>(esp_timer_get_time() - t0);
+                }
+                f.close();
+            }
+        }
+
+        LittleFS.remove(kFile);
+
+        Serial.printf("  %-6s  %9llu  %9llu  %9llu  %9llu  %9llu\n",
+            sp.label,
+            openUs / kIter,
+            flushUs / kIter,
+            closeUs / kIter,
+            (openUs + flushUs + closeUs) / kIter,
+            flushPersUs / kIter);
+    }
+}
+
 void runMountBreakdown() {
     const char* kDir = "/pqueue_prof_mtest";
     const uint32_t kIter = 20;
@@ -460,6 +550,8 @@ void setup() {
     Serial.println("=== pqueue on-device LittleFS profiler ===");
     Serial.printf("records per scenario: %u  body: %u B\n\n", kRecordsPerScenario, kRealisticBodyBytes);
 
+    runFlushCurve();
+    Serial.println();
     runMountBreakdown();
     Serial.println();
     runWriteAtPhaseBreakdown();
