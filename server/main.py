@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -10,13 +10,20 @@ from sqlalchemy.orm import Session
 
 import switchbot as sb
 import xiaomi as xm
-from common import READINGS_DEFAULT_LIMIT, READINGS_MAX_LIMIT
+from common import (
+    BULK_ERROR_DETAIL_LIMIT,
+    READINGS_DEFAULT_LIMIT,
+    READINGS_MAX_LIMIT,
+    SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
+)
 from config import load_config
 from db import build_engine, build_session_factory
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import SWITCHBOT_TYPE, XIAOMI_TYPE
 from service import (
+    bulk_result_counts,
     fetch_readings,
+    get_or_create_sensors_with_latest,
     get_sensor_by_id,
     ingest_reading,
     list_sensors,
@@ -123,6 +130,53 @@ def create_app(config: dict) -> FastAPI:
             end_ts=end_ts,
             max_points=max_points,
             sensor=SENSOR_SPECS[sensor_row.type],
+        )
+
+    @protected.post("/switchbot/sensors", response_model=sb.SensorsOut)
+    def create_switchbot_sensors(payload: sb.SensorsIn, db: Session = Depends(get_db)):
+        return sb.SensorsOut(
+            sensors=get_or_create_sensors_with_latest(
+                db=db,
+                requested_sensors=payload.sensors,
+                sensor=sb.SENSOR,
+            )
+        )
+
+    @protected.post("/switchbot/bulk", response_model=sb.BulkOut)
+    def create_switchbot_bulk(
+        payload: sb.BulkIn,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        max_readings = int(
+            request.app.state.config.get(
+                "switchbot_bulk_max_readings",
+                SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
+            )
+        )
+        if len(payload.readings) > max_readings:
+            raise HTTPException(
+                status_code=422,
+                detail=f"readings must contain at most {max_readings} items",
+            )
+
+        sensor_row = get_sensor_by_id(db, payload.sensor_id)
+        if sensor_row is None:
+            raise HTTPException(status_code=422, detail="unknown sensor_id")
+
+        if sensor_row.type != SWITCHBOT_TYPE:
+            raise HTTPException(
+                status_code=422,
+                detail="sensor_id is not a SwitchBot sensor",
+            )
+
+        return bulk_result_counts(
+            db=db,
+            sensor_row=sensor_row,
+            raw_readings=payload.readings,
+            reading_model=sb.ReadingIn,
+            sensor=sb.SENSOR,
+            error_limit=BULK_ERROR_DETAIL_LIMIT,
         )
 
     @protected.post("/switchbot/reading")
