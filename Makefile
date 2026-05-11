@@ -83,6 +83,7 @@ MAIN_TEST_API_SRC := \
 TEST_SRC := \
 	tests/api_outbox_client.cpp \
 	tests/api_payloads.cpp \
+	tests/forecast_openmeteo.cpp \
 	tests/api_sensor_write_policy.cpp \
 	tests/api_sync.cpp \
 	tests/config.cpp \
