@@ -7,7 +7,6 @@
 #include <ctime>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -23,63 +22,45 @@ struct Scanner::Impl {
     }
 
     SwitchbotConfig config_;
-    mutable std::mutex mutex;
     SensorMap sensors;
-    UpdateCallback callback_;
 
-    void upsertReading(
+    bool upsertReading(
         const std::string& addr,
         const std::vector<std::uint8_t>& payload
     ) {
         if (!isMeterPayload(payload)) {
-            return;
+            return false;
         }
 
         auto reading = decodeMeter(addr, payload, config_);
         if (!reading.has_value()) {
-            return;
+            return false;
         }
 
         const std::int64_t lastSeenEpochS =
             platform::hasValidTime() ? static_cast<std::int64_t>(std::time(nullptr)) : 0;
 
-        SensorReading out{
+        sensors.insert_or_assign(addr, SensorReading{
             reading->name,
             reading->shortName,
             reading->temperature_c,
             reading->humidity,
             lastSeenEpochS,
-        };
+        });
 
-        UpdateCallback cb;
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            sensors.insert_or_assign(addr, std::move(out));
-            cb = callback_;
-        }
-
-        if (cb) {
-            cb();
-        }
+        return true;
     }
 
-    // Note this is a callback that runs async, outside the main thread.
-    void handleAdvertisement(const ble::AdvertisementEvent& event) {
+    bool handleAdvertisement(const ble::AdvertisementEvent& event) {
         const auto it = event.manufacturerData.find(kSwitchbotManufacturerId);
         if (it == event.manufacturerData.end()) {
-            return;
+            return false;
         }
 
-        upsertReading(event.address, it->second);
-    }
-
-    void setUpdateCallback(UpdateCallback callback) {
-        std::lock_guard<std::mutex> lock(mutex);
-        callback_ = std::move(callback);
+        return upsertReading(event.address, it->second);
     }
 
     SensorMap snapshot() const {
-        std::lock_guard<std::mutex> lock(mutex);
         return sensors;
     }
 };
@@ -90,16 +71,8 @@ Scanner::Scanner(const SwitchbotConfig& config)
 
 Scanner::~Scanner() = default;
 
-void Scanner::start() {}
-void Scanner::stop() {}
-void Scanner::poll() {}
-
-void Scanner::handleAdvertisement(const ble::AdvertisementEvent& event) {
-    impl_->handleAdvertisement(event);
-}
-
-void Scanner::setUpdateCallback(UpdateCallback callback) {
-    impl_->setUpdateCallback(std::move(callback));
+bool Scanner::handleAdvertisement(const ble::AdvertisementEvent& event) {
+    return impl_->handleAdvertisement(event);
 }
 
 SensorMap Scanner::snapshot() const {

@@ -3,7 +3,6 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <ctime>
 #include <cstdint>
 #include <string>
@@ -12,6 +11,7 @@
 #include "api/outbox_client.h"
 #include "api/state.h"
 #include "api_sync.h"
+#include "ble/event_queue.h"
 #include "ble/scanner.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
@@ -80,20 +80,15 @@ struct AppContext {
 
     switchbot::Scanner switchbotScanner;
     xiaomi::Scanner xiaomiScanner;
+    ble::EventQueue bleEventQueue;
     ble::Scanner bleScanner;
-
-    std::atomic<bool> switchbotUpdatePending{false};
-    std::atomic<bool> xiaomiUpdatePending{false};
 
     explicit AppContext(const Config& cfg)
         : config(cfg),
           apiOutboxClient(config),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
-          bleScanner([this](const ble::AdvertisementEvent& event) {
-              switchbotScanner.handleAdvertisement(event);
-              xiaomiScanner.handleAdvertisement(event);
-          }) {
+          bleScanner(bleEventQueue) {
     }
 };
 
@@ -121,16 +116,6 @@ void initStateStorage(AppContext& app) {
     logLine(LogLevel::Info, "API uses pqueue HTTP outbox");
 }
 
-void initCallbacks(AppContext& app) {
-    app.switchbotScanner.setUpdateCallback([&]() {
-        app.switchbotUpdatePending.store(true);
-    });
-
-    app.xiaomiScanner.setUpdateCallback([&]() {
-        app.xiaomiUpdatePending.store(true);
-    });
-}
-
 void initPlatform(AppContext& app) {
     app.hasValidTime = platform::initTime(app.config);
     app.bleScanner.start();
@@ -146,7 +131,6 @@ bool initApp(AppContext& app) {
     }
 
     initStateStorage(app);
-    initCallbacks(app);
     initPlatform(app);
     return true;
 }
@@ -203,8 +187,8 @@ void updateSalahIfDue(AppContext& app, std::time_t now) {
     markSalahUpdated(now2, app.timing);
 }
 
-void updateSwitchbotIfDue(AppContext& app, std::time_t now) {
-    if (!app.switchbotUpdatePending.exchange(false) && !areSensorsDue(now, app.timing)) {
+void updateSwitchbotIfDue(AppContext& app, std::time_t now, bool newData) {
+    if (!newData && !areSensorsDue(now, app.timing)) {
         return;
     }
 
@@ -212,8 +196,8 @@ void updateSwitchbotIfDue(AppContext& app, std::time_t now) {
     markSensorsUpdated(now, app.timing);
 }
 
-void updateXiaomiIfDue(AppContext& app, std::time_t now) {
-    if (!app.xiaomiUpdatePending.exchange(false) && !areXiaomiDue(now, app.timing)) {
+void updateXiaomiIfDue(AppContext& app, std::time_t now, bool newData) {
+    if (!newData && !areXiaomiDue(now, app.timing)) {
         return;
     }
 
@@ -250,10 +234,10 @@ void updateForecastIfDue(AppContext& app, std::time_t now) {
     }
 }
 
-void updateDomainState(AppContext& app, std::time_t now) {
+void updateDomainState(AppContext& app, std::time_t now, bool switchbotUpdated, bool xiaomiUpdated) {
     updateSalahIfDue(app, now);
-    updateSwitchbotIfDue(app, now);
-    updateXiaomiIfDue(app, now);
+    updateSwitchbotIfDue(app, now, switchbotUpdated);
+    updateXiaomiIfDue(app, now, xiaomiUpdated);
     updateForecastIfDue(app, now);
 }
 
@@ -388,7 +372,16 @@ void tick(AppContext& app) {
     prepareCurrentState(app.currentState, app.previousState);
 
     app.bleScanner.poll();
-    updateDomainState(app, now);
+
+    bool switchbotUpdated = false;
+    bool xiaomiUpdated = false;
+    ble::AdvertisementEvent event;
+    while (app.bleEventQueue.pop(event)) {
+        if (app.switchbotScanner.handleAdvertisement(event)) switchbotUpdated = true;
+        if (app.xiaomiScanner.handleAdvertisement(event)) xiaomiUpdated = true;
+    }
+
+    updateDomainState(app, now, switchbotUpdated, xiaomiUpdated);
 #ifdef ARDUINO
     switchbot::history::maybeRunStartupHistorySync(
         app.config,

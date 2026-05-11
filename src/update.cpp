@@ -169,7 +169,6 @@ void updateSwitchbotState(
     switchbot::Scanner& scanner,
     State& state
 ) {
-    scanner.poll();
     const auto sensors = scanner.snapshot();
 
     for (std::size_t i = 0; i < state.switchbotSensors.size(); ++i) {
@@ -201,7 +200,6 @@ void updateXiaomiState(
     xiaomi::Scanner& scanner,
     State& state
 ) {
-    scanner.poll();
     const auto sensors = scanner.snapshot();
 
     for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {

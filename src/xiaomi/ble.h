@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -34,17 +33,10 @@ using SensorMap = std::map<std::string, SensorReading>;
 
 class Scanner {
 public:
-    using UpdateCallback = std::function<void()>;
-
     explicit Scanner(const XiaomiConfig& config);
     ~Scanner();
 
-    void start();
-    void stop();
-    void poll();
-
-    void handleAdvertisement(const ble::AdvertisementEvent& event);
-    void setUpdateCallback(UpdateCallback callback);
+    bool handleAdvertisement(const ble::AdvertisementEvent& event);
 
     SensorMap snapshot() const;
 
