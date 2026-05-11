@@ -358,8 +358,6 @@ SensorLookupResult parseSensorLookupResponse(const std::string& body, int httpSt
                 }
 
                 BackendSyncInterval interval;
-                interval.startTimestamp = start;
-                interval.endTimestamp = end;
                 interval.startEpoch = *startEpoch;
                 interval.endEpoch = *endEpoch;
                 sensor.syncIntervals.push_back(std::move(interval));

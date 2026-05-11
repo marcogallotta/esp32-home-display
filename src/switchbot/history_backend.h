@@ -12,8 +12,6 @@ namespace switchbot {
 namespace history {
 
 struct BackendSyncInterval {
-    std::string startTimestamp;
-    std::string endTimestamp;
     std::uint32_t startEpoch = 0;
     std::uint32_t endEpoch = 0;
 };
