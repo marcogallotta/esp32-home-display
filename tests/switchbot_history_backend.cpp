@@ -397,3 +397,41 @@ TEST_CASE("switchbot history backend postBulkUpload returns ok for empty reading
     const auto result = switchbot::history::postBulkUpload(config, "sensor-uuid", {});
     CHECK(result.ok);
 }
+
+TEST_CASE("switchbot history backend parseSensorLookupResponse rejects malformed JSON") {
+    const auto parsed = switchbot::history::parseSensorLookupResponse("not json", 200);
+    CHECK_FALSE(parsed.ok);
+    CHECK_FALSE(parsed.error.empty());
+}
+
+TEST_CASE("switchbot history backend parseSensorLookupResponse rejects missing sensors field") {
+    const auto parsed = switchbot::history::parseSensorLookupResponse(R"json({"warnings":[]})json", 200);
+    CHECK_FALSE(parsed.ok);
+    CHECK(parsed.error.find("sensors") != std::string::npos);
+}
+
+TEST_CASE("switchbot history backend parseSensorLookupResponse rejects invalid mac") {
+    const std::string body = R"json({
+        "sensors": [{"mac": "bad-mac", "sensor_id": "uuid", "first_timestamp": null, "latest_timestamp": null, "sync_intervals": [], "sync_intervals_capped": false}],
+        "warnings": []
+    })json";
+    const auto parsed = switchbot::history::parseSensorLookupResponse(body, 200);
+    CHECK_FALSE(parsed.ok);
+    CHECK(parsed.error.find("mac") != std::string::npos);
+}
+
+TEST_CASE("switchbot history backend parseSensorLookupResponse rejects missing sensor_id") {
+    const std::string body = R"json({
+        "sensors": [{"mac": "AA:BB:CC:DD:EE:FF", "sensor_id": "", "first_timestamp": null, "latest_timestamp": null, "sync_intervals": [], "sync_intervals_capped": false}],
+        "warnings": []
+    })json";
+    const auto parsed = switchbot::history::parseSensorLookupResponse(body, 200);
+    CHECK_FALSE(parsed.ok);
+    CHECK(parsed.error.find("sensor_id") != std::string::npos);
+}
+
+TEST_CASE("switchbot history backend parseBulkUploadResponse rejects malformed JSON") {
+    const auto parsed = switchbot::history::parseBulkUploadResponse("not json", 200);
+    CHECK_FALSE(parsed.ok);
+    CHECK_FALSE(parsed.error.empty());
+}
