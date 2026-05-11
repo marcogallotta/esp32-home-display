@@ -533,7 +533,6 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
     }
 
     SyncResult result;
-    result.banks = impl_->banks;
     result.metadata = impl_->metadata;
 
     bool haveLastKeptEpoch = false;
