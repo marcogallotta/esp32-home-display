@@ -19,7 +19,6 @@ struct StartResponse {
 struct Metadata {
     uint8_t bank = 0;
     uint32_t startEpoch = 0;
-    uint32_t endEpoch = 0;
     uint32_t endIndex = 0;
     uint16_t intervalSeconds = 0;
 };

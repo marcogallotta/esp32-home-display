@@ -94,7 +94,6 @@ TEST_CASE("switchbot history parses metadata response") {
     REQUIRE(metadata.has_value());
     CHECK_EQ(metadata->bank, 0U);
     CHECK_EQ(metadata->startEpoch, 1773509970U);
-    CHECK_EQ(metadata->endEpoch, 1778136390U);
     CHECK_EQ(metadata->endIndex, 77108U);
     CHECK_EQ(metadata->intervalSeconds, 60U);
 }

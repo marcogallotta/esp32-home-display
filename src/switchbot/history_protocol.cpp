@@ -20,7 +20,6 @@ constexpr uint8_t kDecimalNibbleMask = 0x0f;
 
 constexpr size_t kMetadataResponseBytes = 15;
 constexpr size_t kMetadataStartEpochOffset = 1;
-constexpr size_t kMetadataEndEpochOffset = 5;
 constexpr size_t kMetadataEndIndexOffset = 9;
 constexpr size_t kMetadataIntervalOffset = 13;
 
@@ -222,7 +221,6 @@ std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& respon
     Metadata metadata;
     metadata.bank = bank;
     metadata.startEpoch = reader.u32BE(kMetadataStartEpochOffset);
-    metadata.endEpoch = reader.u32BE(kMetadataEndEpochOffset);
     metadata.endIndex = reader.u32BE(kMetadataEndIndexOffset);
     metadata.intervalSeconds = reader.u16BE(kMetadataIntervalOffset);
 
