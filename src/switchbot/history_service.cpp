@@ -188,13 +188,12 @@ void logPlannedWindow(const std::string& label,
 
 PlanTotals logSensorPlan(const BackendSensorInfo& sensor,
                          const std::map<std::string, std::string>& labelsByMac,
-                         std::uint32_t nowEpoch,
+                         const std::vector<PlannedHistoryWindow>& windows,
                          const HistoryServiceOptions& options) {
     PlanTotals totals;
     totals.sensors = 1;
 
     const std::string label = labelForMac(labelsByMac, sensor.mac);
-    const auto windows = planHistoryWindows(sensor, nowEpoch, planningOptions(options));
 
     if (sensor.syncIntervalsCapped) {
         totals.cappedSensors = 1;
@@ -457,11 +456,11 @@ PlanTotals syncAndUploadWindow(const Config& config,
 PlanTotals syncAndUploadSensor(const Config& config,
                                const BackendSensorInfo& sensor,
                                const std::map<std::string, std::string>& labelsByMac,
+                               const std::vector<PlannedHistoryWindow>& windows,
                                std::uint32_t nowEpoch,
                                const HistoryServiceOptions& options) {
     PlanTotals totals;
     const std::string label = labelForMac(labelsByMac, sensor.mac);
-    const auto windows = planHistoryWindows(sensor, nowEpoch, planningOptions(options));
 
     if (windows.empty()) {
         return totals;
@@ -570,8 +569,15 @@ void maybeRunStartupHistorySync(const Config& config,
 
     PlanTotals totals;
     const std::uint32_t nowEpoch = static_cast<std::uint32_t>(now);
+
+    std::vector<std::vector<PlannedHistoryWindow>> allWindows;
+    allWindows.reserve(lookup.sensors.size());
     for (const BackendSensorInfo& sensor : lookup.sensors) {
-        addTotals(totals, logSensorPlan(sensor, labelsByMac, nowEpoch, effective));
+        allWindows.push_back(planHistoryWindows(sensor, nowEpoch, planningOptions(effective)));
+    }
+
+    for (std::size_t i = 0; i < lookup.sensors.size(); ++i) {
+        addTotals(totals, logSensorPlan(lookup.sensors[i], labelsByMac, allWindows[i], effective));
     }
 
     logLine(
@@ -588,8 +594,8 @@ void maybeRunStartupHistorySync(const Config& config,
     }
 
     scanner.stop();
-    for (const BackendSensorInfo& sensor : lookup.sensors) {
-        addTotals(totals, syncAndUploadSensor(config, sensor, labelsByMac, nowEpoch, effective));
+    for (std::size_t i = 0; i < lookup.sensors.size(); ++i) {
+        addTotals(totals, syncAndUploadSensor(config, lookup.sensors[i], labelsByMac, allWindows[i], nowEpoch, effective));
     }
     scanner.start();
 
