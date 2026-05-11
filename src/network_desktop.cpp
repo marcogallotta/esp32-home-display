@@ -58,12 +58,9 @@ public:
     explicit DesktopPlatform(const WifiConfig& wifiConfig)
         : Platform(wifiConfig),
           start_(std::chrono::steady_clock::now()) {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
     }
 
-    ~DesktopPlatform() override {
-        curl_global_cleanup();
-    }
+    ~DesktopPlatform() override = default;
 
     void log(const std::string& msg) override {
         std::cerr << msg << '\n';
@@ -169,6 +166,14 @@ private:
 Platform& platform(const WifiConfig& wifiConfig) {
     static DesktopPlatform instance(wifiConfig);
     return instance;
+}
+
+void initCurl() {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+}
+
+void cleanupCurl() {
+    curl_global_cleanup();
 }
 
 } // namespace network

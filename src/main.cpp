@@ -16,6 +16,7 @@
 #include "config.h"
 #include "forecast/openmeteo.h"
 #include "log.h"
+#include "network.h"
 #include "platform.h"
 #include "salah/types.h"
 #include "state.h"
@@ -426,7 +427,9 @@ void loop() {
 }
 #else
 int main() {
+    network::initCurl();
     run();
+    network::cleanupCurl();
     return 0;
 }
 #endif
