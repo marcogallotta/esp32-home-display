@@ -179,7 +179,7 @@ void logPlannedWindow(const std::string& label,
             " source=" + window.source +
             " first_point=" + formatIsoUtc(window.firstPointEpoch) +
             " last_point=" + formatIsoUtc(window.lastPointEpoch) +
-            " clamped_68d=" + yesNo(window.clampedToHistoryLimit) +
+            " clamped_history_limit=" + yesNo(window.clampedToHistoryLimit) +
             " mac=" + sensor.mac +
             " sensor_id=" + sensor.sensorId
         );
