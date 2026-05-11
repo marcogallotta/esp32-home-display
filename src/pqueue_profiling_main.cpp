@@ -234,6 +234,108 @@ ScenarioResult runHttpDrainBacklog(uint32_t recordSizeBytes) {
     return result;
 }
 
+void runWriteAtPhaseBreakdown() {
+    const char* kFile = "/pqueue_prof_wtest";
+    const uint32_t kIter = 20;
+    const uint32_t kWriteSize = 512;
+
+    {
+        File f = LittleFS.open(kFile, "w");
+        if (!f) { Serial.println("writeAt breakdown: create failed"); return; }
+        const std::string zeros(kWriteSize, '\0');
+        f.write(reinterpret_cast<const uint8_t*>(zeros.data()), zeros.size());
+        f.flush();
+        f.close();
+    }
+
+    uint64_t openUs = 0, writeUs = 0, flushUs = 0, closeUs = 0;
+    const std::string data(kWriteSize, 'x');
+
+    for (uint32_t i = 0; i < kIter; ++i) {
+        int64_t t0, t1;
+
+        t0 = esp_timer_get_time();
+        File f = LittleFS.open(kFile, "r+");
+        t1 = esp_timer_get_time();
+        openUs += static_cast<uint64_t>(t1 - t0);
+
+        if (!f) { Serial.println("writeAt breakdown: open failed"); LittleFS.remove(kFile); return; }
+        f.seek(0, SeekSet);
+
+        t0 = esp_timer_get_time();
+        f.write(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        t1 = esp_timer_get_time();
+        writeUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        f.flush();
+        t1 = esp_timer_get_time();
+        flushUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        f.close();
+        t1 = esp_timer_get_time();
+        closeUs += static_cast<uint64_t>(t1 - t0);
+    }
+
+    LittleFS.remove(kFile);
+
+    Serial.printf("writeAt phase breakdown (%u iters, %u B):\n", kIter, kWriteSize);
+    Serial.printf("  open  avg=%llu us\n", openUs / kIter);
+    Serial.printf("  write avg=%llu us\n", writeUs / kIter);
+    Serial.printf("  flush avg=%llu us\n", flushUs / kIter);
+    Serial.printf("  close avg=%llu us\n", closeUs / kIter);
+    Serial.printf("  total avg=%llu us\n", (openUs + writeUs + flushUs + closeUs) / kIter);
+}
+
+void runReadAtPhaseBreakdown() {
+    const char* kFile = "/pqueue_prof_rtest";
+    const uint32_t kIter = 20;
+    const uint32_t kReadSize = 512;
+
+    {
+        File f = LittleFS.open(kFile, "w");
+        if (!f) { Serial.println("readAt breakdown: create failed"); return; }
+        const std::string data(kReadSize, 'x');
+        f.write(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        f.flush();
+        f.close();
+    }
+
+    uint64_t openUs = 0, readUs = 0, closeUs = 0;
+    std::string buf(kReadSize, '\0');
+
+    for (uint32_t i = 0; i < kIter; ++i) {
+        int64_t t0, t1;
+
+        t0 = esp_timer_get_time();
+        File f = LittleFS.open(kFile, "r");
+        t1 = esp_timer_get_time();
+        openUs += static_cast<uint64_t>(t1 - t0);
+
+        if (!f) { Serial.println("readAt breakdown: open failed"); LittleFS.remove(kFile); return; }
+        f.seek(0, SeekSet);
+
+        t0 = esp_timer_get_time();
+        f.read(reinterpret_cast<uint8_t*>(buf.data()), kReadSize);
+        t1 = esp_timer_get_time();
+        readUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        f.close();
+        t1 = esp_timer_get_time();
+        closeUs += static_cast<uint64_t>(t1 - t0);
+    }
+
+    LittleFS.remove(kFile);
+
+    Serial.printf("readAt phase breakdown (%u iters, %u B):\n", kIter, kReadSize);
+    Serial.printf("  open  avg=%llu us\n", openUs / kIter);
+    Serial.printf("  read  avg=%llu us\n", readUs / kIter);
+    Serial.printf("  close avg=%llu us\n", closeUs / kIter);
+    Serial.printf("  total avg=%llu us\n", (openUs + readUs + closeUs) / kIter);
+}
+
 void printResult(const ScenarioResult& r) {
     Serial.printf("%-22s %4uB  avg=%6llu us  min=%6llu us  max=%6llu us\n",
         r.name, r.recordSizeBytes, r.timings.avg(),
@@ -259,6 +361,11 @@ void setup() {
 
     Serial.println("=== pqueue on-device LittleFS profiler ===");
     Serial.printf("records per scenario: %u  body: %u B\n\n", kRecordsPerScenario, kRealisticBodyBytes);
+
+    runWriteAtPhaseBreakdown();
+    Serial.println();
+    runReadAtPhaseBreakdown();
+    Serial.println();
 
     for (const uint32_t recordSize : kRecordSizes) {
         Serial.printf("--- record_size=%u B ---\n", recordSize);
