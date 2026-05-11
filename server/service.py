@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import logging
 from math import ceil
 from typing import Any
 from uuid import UUID
@@ -20,6 +21,9 @@ from common import (
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import Sensor
 from sensor_spec import DataField, SensorSpec
+
+
+logger = logging.getLogger(__name__)
 
 
 def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
@@ -81,20 +85,79 @@ def get_or_create_sensor_for_sync(
     return sensor
 
 
-def get_latest_timestamp(db: Session, sensor_id: UUID, sensor: SensorSpec) -> datetime | None:
-    return db.execute(
-        select(func.max(sensor.reading_model.timestamp)).where(
-            sensor.reading_model.sensor_id == sensor_id,
-        )
-    ).scalar_one()
+def get_sensor_timestamps(db: Session, sensor_id: UUID, sensor: SensorSpec) -> list[datetime]:
+    return list(
+        db.execute(
+            select(sensor.reading_model.timestamp)
+            .where(sensor.reading_model.sensor_id == sensor_id)
+            .order_by(sensor.reading_model.timestamp.asc())
+        ).scalars()
+    )
 
 
-def get_or_create_sensors_with_latest(
+def build_sync_intervals(
+    timestamps: list[datetime],
+    *,
+    gap_threshold: timedelta,
+    max_intervals: int,
+) -> tuple[list[dict[str, datetime]], bool]:
+    intervals: list[dict[str, datetime]] = []
+    capped = False
+
+    for current, next_timestamp in zip(timestamps, timestamps[1:]):
+        if next_timestamp - current < gap_threshold:
+            continue
+
+        if len(intervals) >= max_intervals:
+            capped = True
+            continue
+
+        intervals.append({"start": current, "end": next_timestamp})
+
+    return intervals, capped
+
+
+def get_sensor_sync_state(
+    db: Session,
+    *,
+    sensor_row: Sensor,
+    sensor: SensorSpec,
+    gap_threshold: timedelta,
+    max_intervals: int,
+) -> dict[str, Any]:
+    timestamps = get_sensor_timestamps(db, sensor_row.id, sensor)
+    intervals, capped = build_sync_intervals(
+        timestamps,
+        gap_threshold=gap_threshold,
+        max_intervals=max_intervals,
+    )
+
+    return {
+        "mac": sensor_row.mac,
+        "sensor_id": sensor_row.id,
+        "first_timestamp": timestamps[0] if timestamps else None,
+        "latest_timestamp": timestamps[-1] if timestamps else None,
+        "sync_intervals": intervals,
+        "sync_intervals_capped": capped,
+    }
+
+
+def get_or_create_sensors_with_sync_state(
     db: Session,
     requested_sensors: list[Any],
     sensor: SensorSpec,
-) -> list[dict[str, Any]]:
+    *,
+    gap_threshold_minutes: int | float,
+    max_intervals_per_sensor: int,
+    max_intervals_total: int,
+) -> dict[str, Any]:
     resolved = []
+    warnings = []
+    remaining_total = max(0, max_intervals_total)
+    any_capped = False
+
+    gap_threshold = timedelta(minutes=gap_threshold_minutes)
+    per_sensor_limit = max(0, max_intervals_per_sensor)
 
     for requested in requested_sensors:
         sensor_row = get_or_create_sensor_for_sync(
@@ -103,16 +166,41 @@ def get_or_create_sensors_with_latest(
             name=requested.name,
             sensor_type=sensor.db_sensor_type,
         )
-        resolved.append(
+
+        allowed_for_sensor = min(per_sensor_limit, remaining_total)
+        state = get_sensor_sync_state(
+            db=db,
+            sensor_row=sensor_row,
+            sensor=sensor,
+            gap_threshold=gap_threshold,
+            max_intervals=allowed_for_sensor,
+        )
+        remaining_total -= len(state["sync_intervals"])
+
+        if state["sync_intervals_capped"]:
+            any_capped = True
+            logger.warning(
+                "switchbot_sync_intervals_capped sensor_id=%s mac=%s allowed=%s",
+                sensor_row.id,
+                sensor_row.mac,
+                allowed_for_sensor,
+            )
+
+        resolved.append(state)
+
+    if any_capped:
+        warnings.append(
             {
-                "mac": sensor_row.mac,
-                "sensor_id": sensor_row.id,
-                "latest_timestamp": get_latest_timestamp(db, sensor_row.id, sensor),
+                "code": "sync_intervals_capped",
+                "message": (
+                    "sync intervals were capped; client should upload returned "
+                    "intervals and request /switchbot/sensors again"
+                ),
             }
         )
 
     db.commit()
-    return resolved
+    return {"sensors": resolved, "warnings": warnings}
 
 
 def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int) -> Sensor:

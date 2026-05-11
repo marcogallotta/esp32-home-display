@@ -15,6 +15,9 @@ from common import (
     READINGS_DEFAULT_LIMIT,
     READINGS_MAX_LIMIT,
     SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
+    SWITCHBOT_SYNC_DEFAULT_GAP_THRESHOLD_MINUTES,
+    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
+    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL,
 )
 from config import load_config
 from db import build_engine, build_session_factory
@@ -23,7 +26,7 @@ from models import SWITCHBOT_TYPE, XIAOMI_TYPE
 from service import (
     bulk_result_counts,
     fetch_readings,
-    get_or_create_sensors_with_latest,
+    get_or_create_sensors_with_sync_state,
     get_sensor_by_id,
     ingest_reading,
     list_sensors,
@@ -133,13 +136,31 @@ def create_app(config: dict) -> FastAPI:
         )
 
     @protected.post("/switchbot/sensors", response_model=sb.SensorsOut)
-    def create_switchbot_sensors(payload: sb.SensorsIn, db: Session = Depends(get_db)):
-        return sb.SensorsOut(
-            sensors=get_or_create_sensors_with_latest(
-                db=db,
-                requested_sensors=payload.sensors,
-                sensor=sb.SENSOR,
-            )
+    def create_switchbot_sensors(
+        payload: sb.SensorsIn,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        return get_or_create_sensors_with_sync_state(
+            db=db,
+            requested_sensors=payload.sensors,
+            sensor=sb.SENSOR,
+            gap_threshold_minutes=request.app.state.config.get(
+                "switchbot_sync_gap_threshold_minutes",
+                SWITCHBOT_SYNC_DEFAULT_GAP_THRESHOLD_MINUTES,
+            ),
+            max_intervals_per_sensor=int(
+                request.app.state.config.get(
+                    "switchbot_sync_max_intervals_per_sensor",
+                    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
+                )
+            ),
+            max_intervals_total=int(
+                request.app.state.config.get(
+                    "switchbot_sync_max_intervals_total",
+                    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL,
+                )
+            ),
         )
 
     @protected.post("/switchbot/bulk", response_model=sb.BulkOut)
