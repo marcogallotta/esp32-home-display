@@ -27,7 +27,6 @@ enum class SyncStatus {
     ServiceNotFound,
     CharacteristicNotFound,
     SubscribeFailed,
-    WriteFailed,
     Timeout,
     BadAck,
     BadMetadata,

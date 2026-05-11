@@ -31,8 +31,6 @@ const char* syncStatusName(SyncStatus status) {
             return "characteristic_not_found";
         case SyncStatus::SubscribeFailed:
             return "subscribe_failed";
-        case SyncStatus::WriteFailed:
-            return "write_failed";
         case SyncStatus::Timeout:
             return "timeout";
         case SyncStatus::BadAck:
