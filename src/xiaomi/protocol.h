@@ -19,9 +19,9 @@ struct DecodedObject {
 
     Kind kind;
     float temperatureC = 0.0f;
-    int lux = 0;
+    std::uint32_t lux = 0;
     std::uint8_t moisturePct = 0;
-    int conductivityUsCm = 0;
+    std::uint16_t conductivityUsCm = 0;
 };
 
 bool isXiaomiServiceDataUuid(const std::string& uuid);

@@ -61,7 +61,7 @@ std::optional<DecodedObject> decodeObject(const std::vector<std::uint8_t>& paylo
             return DecodedObject{
                 DecodedObject::Kind::Lux,
                 0.0f,
-                static_cast<int>(data[0] | (data[1] << 8) | (data[2] << 16)),
+                static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8) | (static_cast<std::uint32_t>(data[2]) << 16),
                 0,
                 0,
             };
@@ -87,7 +87,7 @@ std::optional<DecodedObject> decodeObject(const std::vector<std::uint8_t>& paylo
                 0.0f,
                 0,
                 0,
-                static_cast<int>(data[0] | (data[1] << 8)),
+                static_cast<std::uint16_t>(data[0] | (data[1] << 8)),
             };
 
         default:

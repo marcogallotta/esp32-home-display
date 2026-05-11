@@ -19,13 +19,13 @@ struct SensorReading {
     float temperatureC = 0.0f;
 
     bool hasLux = false;
-    int lux = 0;
+    std::uint32_t lux = 0;
 
     bool hasMoisture = false;
     std::uint8_t moisturePct = 0;
 
     bool hasConductivity = false;
-    int conductivityUsCm = 0;
+    std::uint16_t conductivityUsCm = 0;
 
     std::int64_t lastSeenEpochS = 0;
 };
