@@ -72,7 +72,7 @@ TEST_CASE("xiaomi decode lux object") {
 
     REQUIRE(decoded.has_value());
     CHECK(decoded->kind == xiaomi::DecodedObject::Kind::Lux);
-    CHECK(decoded->lux == 0x123456);
+    CHECK(decoded->lux == 0x123456U);
 }
 
 TEST_CASE("xiaomi decode moisture object") {
@@ -88,7 +88,7 @@ TEST_CASE("xiaomi decode conductivity object") {
 
     REQUIRE(decoded.has_value());
     CHECK(decoded->kind == xiaomi::DecodedObject::Kind::Conductivity);
-    CHECK(decoded->conductivityUsCm == 500);
+    CHECK(decoded->conductivityUsCm == 500U);
 }
 
 TEST_CASE("xiaomi decode rejects wrong length for known objects") {

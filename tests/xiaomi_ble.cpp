@@ -80,9 +80,9 @@ TEST_CASE("xiaomi scanner accumulates separate object advertisements into one re
     CHECK(reading.hasMoisture);
     CHECK_EQ(reading.moisturePct, 42);
     CHECK(reading.hasLux);
-    CHECK_EQ(reading.lux, 0x123456);
+    CHECK_EQ(reading.lux, 0x123456U);
     CHECK(reading.hasConductivity);
-    CHECK_EQ(reading.conductivityUsCm, 500);
+    CHECK_EQ(reading.conductivityUsCm, 500U);
 }
 
 TEST_CASE("xiaomi scanner ignores unknown sensors") {
