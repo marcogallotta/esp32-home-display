@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from common import check_hard_ranges
 from models import SWITCHBOT_TYPE, SwitchbotReading
@@ -52,14 +52,28 @@ class SensorsIn(BaseModel):
         return self
 
 
+class SyncIntervalOut(BaseModel):
+    start: datetime
+    end: datetime
+
+
 class SensorOut(BaseModel):
     mac: str
     sensor_id: UUID
+    first_timestamp: datetime | None
     latest_timestamp: datetime | None
+    sync_intervals: list[SyncIntervalOut]
+    sync_intervals_capped: bool = False
+
+
+class SyncWarningOut(BaseModel):
+    code: str
+    message: str
 
 
 class SensorsOut(BaseModel):
     sensors: list[SensorOut]
+    warnings: list[SyncWarningOut] = Field(default_factory=list)
 
 
 class BulkIn(BaseModel):
