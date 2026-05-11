@@ -288,7 +288,7 @@ TEST_CASE("api outbox client drops permanent backend rejection and writes droppe
     REQUIRE_EQ(transport.posts.size(), 1U);
 
     const auto log = droppedLogText();
-    CHECK(log.find("classified_drop") != std::string::npos);
+    CHECK(log.find("server_rejected") != std::string::npos);
     CHECK(log.find("/switchbot/reading") != std::string::npos);
     CHECK(log.find("AA:BB:CC:DD:EE:FF") != std::string::npos);
 }
