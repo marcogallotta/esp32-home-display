@@ -101,20 +101,15 @@ TEST_CASE("switchbot scanner ignores short meter payloads") {
     CHECK(scanner.snapshot().empty());
 }
 
-TEST_CASE("switchbot scanner callback fires only for accepted advertisements") {
+TEST_CASE("switchbot scanner returns false for rejected advertisements") {
     switchbot::Scanner scanner(switchbotConfig());
-    int callbackCount = 0;
-    scanner.setUpdateCallback([&]() { ++callbackCount; });
 
-    scanner.handleAdvertisement(switchbotAdvertisement(kUnknownMac, switchbotPayload()));
-    scanner.handleAdvertisement(switchbotAdvertisement(kKnownMac, {0x01, 0x02, 0x03}));
-    CHECK_EQ(callbackCount, 0);
+    CHECK_FALSE(scanner.handleAdvertisement(switchbotAdvertisement(kUnknownMac, switchbotPayload())));
+    CHECK_FALSE(scanner.handleAdvertisement(switchbotAdvertisement(kKnownMac, {0x01, 0x02, 0x03})));
+    CHECK(scanner.snapshot().empty());
 
-    scanner.handleAdvertisement(switchbotAdvertisement(kKnownMac, switchbotPayload()));
-    CHECK_EQ(callbackCount, 1);
-
-    const auto snapshot = scanner.snapshot();
-    REQUIRE_EQ(snapshot.size(), 1U);
+    CHECK(scanner.handleAdvertisement(switchbotAdvertisement(kKnownMac, switchbotPayload())));
+    REQUIRE_EQ(scanner.snapshot().size(), 1U);
 }
 
 TEST_CASE("switchbot scanner overwrites snapshot with latest valid reading") {

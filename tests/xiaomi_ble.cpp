@@ -125,24 +125,18 @@ TEST_CASE("xiaomi scanner ignores unknown object ids") {
     CHECK(scanner.snapshot().empty());
 }
 
-TEST_CASE("xiaomi scanner callback fires only when decoded value changes") {
+TEST_CASE("xiaomi scanner returns true only when decoded value changes") {
     xiaomi::Scanner scanner(xiaomiConfig());
-    int callbackCount = 0;
-    scanner.setUpdateCallback([&]() { ++callbackCount; });
 
-    scanner.handleAdvertisement(xiaomiAdvertisement(kUnknownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xEA, 0x00})));
-    scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kWrongUuid, xiaomiPayload(0x1004, {0xEA, 0x00})));
-    scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, {0x01, 0x02, 0x03}));
-    CHECK_EQ(callbackCount, 0);
+    CHECK_FALSE(scanner.handleAdvertisement(xiaomiAdvertisement(kUnknownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xEA, 0x00}))));
+    CHECK_FALSE(scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kWrongUuid, xiaomiPayload(0x1004, {0xEA, 0x00}))));
+    CHECK_FALSE(scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, {0x01, 0x02, 0x03})));
 
-    scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xEA, 0x00})));
-    CHECK_EQ(callbackCount, 1);
+    CHECK(scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xEA, 0x00}))));
 
-    scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xEA, 0x00})));
-    CHECK_EQ(callbackCount, 1);
+    CHECK_FALSE(scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xEA, 0x00}))));
 
-    scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xF4, 0x00})));
-    CHECK_EQ(callbackCount, 2);
+    CHECK(scanner.handleAdvertisement(xiaomiAdvertisement(kKnownMac, kFe95Uuid, xiaomiPayload(0x1004, {0xF4, 0x00}))));
 }
 
 TEST_CASE("xiaomi scanner preserves existing reading when later advertisement is malformed") {
