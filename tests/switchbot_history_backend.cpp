@@ -370,3 +370,30 @@ TEST_CASE("selectAlignedReadings uses target epoch not sample epoch in output") 
     REQUIRE_EQ(out.size(), 1U);
     CHECK_EQ(out[0].timestampEpoch, 1800U);
 }
+
+TEST_CASE("switchbot history backend apiUrl appends path without trailing slash") {
+    Config config;
+    config.api.baseUrl = "https://example.test/api";
+    CHECK_EQ(switchbot::history::apiUrl(config, "/switchbot/sensors"),
+             "https://example.test/api/switchbot/sensors");
+}
+
+TEST_CASE("switchbot history backend apiUrl strips trailing slash before appending path") {
+    Config config;
+    config.api.baseUrl = "https://example.test/api/";
+    CHECK_EQ(switchbot::history::apiUrl(config, "/switchbot/sensors"),
+             "https://example.test/api/switchbot/sensors");
+}
+
+TEST_CASE("switchbot history backend postBulkUpload returns error for empty sensor id") {
+    const Config config{};
+    const auto result = switchbot::history::postBulkUpload(config, "", {});
+    CHECK_FALSE(result.ok);
+    CHECK_FALSE(result.error.empty());
+}
+
+TEST_CASE("switchbot history backend postBulkUpload returns ok for empty readings") {
+    const Config config{};
+    const auto result = switchbot::history::postBulkUpload(config, "sensor-uuid", {});
+    CHECK(result.ok);
+}

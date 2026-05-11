@@ -15,6 +15,14 @@
 
 namespace switchbot {
 namespace history {
+
+std::string apiUrl(const Config& config, const char* path) {
+    if (config.api.baseUrl.empty() || config.api.baseUrl.back() != '/') {
+        return config.api.baseUrl + path;
+    }
+    return config.api.baseUrl.substr(0, config.api.baseUrl.size() - 1) + path;
+}
+
 namespace {
 
 constexpr std::uint32_t kSecondsPerMinute = 60;
@@ -141,13 +149,6 @@ bool parseTimestampField(JsonVariantConst value,
         return false;
     }
     return true;
-}
-
-std::string apiUrl(const Config& config, const char* path) {
-    if (config.api.baseUrl.empty() || config.api.baseUrl.back() != '/') {
-        return config.api.baseUrl + path;
-    }
-    return config.api.baseUrl.substr(0, config.api.baseUrl.size() - 1) + path;
 }
 
 std::uint32_t clampWindowStart(std::uint32_t start,

@@ -75,6 +75,8 @@ std::string normalizeMac(const std::string& mac);
 std::optional<std::uint32_t> parseIsoUtcEpoch(const std::string& timestamp);
 std::string formatIsoUtc(std::uint32_t epoch);
 
+std::string apiUrl(const Config& config, const char* path);
+
 std::string makeSensorLookupPayload(const std::vector<std::string>& normalizedMacs);
 SensorLookupResult parseSensorLookupResponse(const std::string& body, int httpStatusCode = 200);
 SensorLookupResult postSensorLookup(const Config& config, const std::vector<std::string>& normalizedMacs);
