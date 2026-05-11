@@ -239,7 +239,7 @@ Status Queue::recoverStaleLock() {
 }
 
 Status Queue::loadLatestIndex() {
-    const Status st = store_.readIndexFromDisk(index_);
+    const Status st = store_.readIndex(index_);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "loadLatestIndex");
     }
@@ -332,7 +332,6 @@ Status Queue::pop() {
     }
 
     index_ = next;
-    store_.removeRecord(oldHead);
     return Status::success();
 }
 
@@ -369,7 +368,6 @@ Status Queue::evictFront() {
     }
 
     index_ = next;
-    store_.removeRecord(oldHead);
     return Status::success();
 }
 
@@ -407,7 +405,6 @@ Status Queue::dropFrontIfCorrupt() {
     }
 
     index_ = next;
-    store_.removeRecord(corruptHead);
     return Status::success();
 }
 
