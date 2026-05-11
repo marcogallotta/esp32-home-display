@@ -49,9 +49,6 @@ std::optional<DecodedObject> decodeObject(const std::vector<std::uint8_t>& paylo
                 static_cast<float>(
                     static_cast<std::int16_t>(data[0] | (data[1] << 8))
                 ) / 10.0f,
-                0,
-                0,
-                0,
             };
 
         case 0x1007:
@@ -62,8 +59,6 @@ std::optional<DecodedObject> decodeObject(const std::vector<std::uint8_t>& paylo
                 DecodedObject::Kind::Lux,
                 0.0f,
                 static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8) | (static_cast<std::uint32_t>(data[2]) << 16),
-                0,
-                0,
             };
 
         case 0x1008:
@@ -75,7 +70,6 @@ std::optional<DecodedObject> decodeObject(const std::vector<std::uint8_t>& paylo
                 0.0f,
                 0,
                 data[0],
-                0,
             };
 
         case 0x1009:
