@@ -44,20 +44,28 @@ struct SyncResult {
 
 const char* syncStatusName(SyncStatus status);
 
+class ISensorHistorySession {
+public:
+    virtual ~ISensorHistorySession() = default;
+
+    virtual SyncResult open() = 0;
+    virtual SyncResult fetch(const SyncRequest& request = SyncRequest{}) = 0;
+};
+
 #ifdef ARDUINO
 
 struct SensorHistorySessionImpl;
 
-class SensorHistorySession {
+class SensorHistorySession : public ISensorHistorySession {
 public:
     explicit SensorHistorySession(std::string mac);
-    ~SensorHistorySession();
+    ~SensorHistorySession() override;
 
     SensorHistorySession(const SensorHistorySession&) = delete;
     SensorHistorySession& operator=(const SensorHistorySession&) = delete;
 
-    SyncResult open();
-    SyncResult fetch(const SyncRequest& request = SyncRequest{});
+    SyncResult open() override;
+    SyncResult fetch(const SyncRequest& request = SyncRequest{}) override;
 
     bool isOpen() const;
     const Metadata& metadata() const;
