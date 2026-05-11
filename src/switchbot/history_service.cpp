@@ -34,25 +34,6 @@ struct PlanTotals {
 
 void addTotals(PlanTotals& total, const PlanTotals& add);
 
-std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
-    if (!sensor.name.empty()) {
-        return sensor.name;
-    }
-    if (!sensor.shortName.empty()) {
-        return sensor.shortName;
-    }
-    return sensor.mac;
-}
-
-HistoryServiceOptions effectiveOptions(const Config& config, const HistoryServiceOptions& defaults) {
-    HistoryServiceOptions out = defaults;
-    out.newSensorWindowSeconds = config.switchbot.history.newSensorWindowSeconds;
-    out.sampleIntervalSeconds = config.switchbot.history.sampleIntervalSeconds;
-    out.historyLimitSeconds = config.switchbot.history.historyLimitSeconds;
-    out.bulkBatchLimit = config.switchbot.history.bulkBatchLimit;
-    return out;
-}
-
 HistoryPlanningOptions planningOptions(const HistoryServiceOptions& options) {
     HistoryPlanningOptions out;
     out.sampleIntervalSeconds = options.sampleIntervalSeconds;
@@ -75,26 +56,6 @@ std::string formatDuration(std::uint32_t seconds) {
         return std::to_string(seconds / 60) + "m";
     }
     return std::to_string(seconds) + "s";
-}
-
-std::vector<std::string> configuredMacs(const Config& config,
-                                        std::map<std::string, std::string>& labelsByMac) {
-    std::vector<std::string> macs;
-    std::set<std::string> seen;
-
-    for (const SwitchbotSensorConfig& sensor : config.switchbot.sensors) {
-        const std::string mac = normalizeMac(sensor.mac);
-        if (mac.empty()) {
-            logLine(LogLevel::Warn, "SwitchBot history: ignoring configured sensor with invalid MAC " + sensor.mac);
-            continue;
-        }
-        labelsByMac[mac] = sensorLabel(sensor);
-        if (seen.insert(mac).second) {
-            macs.push_back(mac);
-        }
-    }
-
-    return macs;
 }
 
 std::string labelForMac(const std::map<std::string, std::string>& labelsByMac, const std::string& mac) {
@@ -579,8 +540,50 @@ void runHistorySync(const std::vector<std::string>& macs,
 }
 
 #ifdef ARDUINO
-#include "history_backend.h"
 #include <Arduino.h>
+
+namespace {
+
+std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
+    if (!sensor.name.empty()) {
+        return sensor.name;
+    }
+    if (!sensor.shortName.empty()) {
+        return sensor.shortName;
+    }
+    return sensor.mac;
+}
+
+HistoryServiceOptions effectiveOptions(const Config& config, const HistoryServiceOptions& defaults) {
+    HistoryServiceOptions out = defaults;
+    out.newSensorWindowSeconds = config.switchbot.history.newSensorWindowSeconds;
+    out.sampleIntervalSeconds = config.switchbot.history.sampleIntervalSeconds;
+    out.historyLimitSeconds = config.switchbot.history.historyLimitSeconds;
+    out.bulkBatchLimit = config.switchbot.history.bulkBatchLimit;
+    return out;
+}
+
+std::vector<std::string> configuredMacs(const Config& config,
+                                        std::map<std::string, std::string>& labelsByMac) {
+    std::vector<std::string> macs;
+    std::set<std::string> seen;
+
+    for (const SwitchbotSensorConfig& sensor : config.switchbot.sensors) {
+        const std::string mac = normalizeMac(sensor.mac);
+        if (mac.empty()) {
+            logLine(LogLevel::Warn, "SwitchBot history: ignoring configured sensor with invalid MAC " + sensor.mac);
+            continue;
+        }
+        labelsByMac[mac] = sensorLabel(sensor);
+        if (seen.insert(mac).second) {
+            macs.push_back(mac);
+        }
+    }
+
+    return macs;
+}
+
+} // namespace
 
 void maybeRunStartupHistorySync(const Config& config,
                                 ble::Scanner& scanner,
