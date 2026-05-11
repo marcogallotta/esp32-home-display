@@ -31,8 +31,6 @@ const char* syncStatusName(SyncStatus status) {
             return "characteristic_not_found";
         case SyncStatus::SubscribeFailed:
             return "subscribe_failed";
-        case SyncStatus::WriteFailed:
-            return "write_failed";
         case SyncStatus::Timeout:
             return "timeout";
         case SyncStatus::BadAck:
@@ -239,13 +237,13 @@ uint32_t chooseTimeSyncEpoch(const SyncRequest& request) {
         return request.timeSyncEpoch;
     }
 
+    if (request.endEpoch != 0) {
+        return request.endEpoch;
+    }
+
     const time_t now = std::time(nullptr);
     if (now > 1700000000) {
         return static_cast<uint32_t>(now);
-    }
-
-    if (request.endEpoch != 0) {
-        return request.endEpoch;
     }
 
     return 0;
@@ -365,6 +363,8 @@ struct SensorHistorySessionImpl {
         }
         writeChar = nullptr;
         metadata = Metadata{};
+        banks.clear();
+        banksLoaded = false;
         opened = false;
     }
 
@@ -373,6 +373,8 @@ struct SensorHistorySessionImpl {
     NimBLEClient* client = nullptr;
     NimBLERemoteCharacteristic* writeChar = nullptr;
     Metadata metadata;
+    std::vector<HistoryBank> banks;
+    bool banksLoaded = false;
     bool opened = false;
 };
 
@@ -389,8 +391,7 @@ const Metadata& SensorHistorySession::metadata() const {
     return impl_->metadata;
 }
 
-SyncResult SensorHistorySession::open(const SyncRequest& request) {
-    (void)request;
+SyncResult SensorHistorySession::open() {
     if (impl_ == nullptr || !impl_->notifyState.valid()) {
         return fail(SyncStatus::ConnectFailed, "notify semaphore allocation failed");
     }
@@ -470,70 +471,72 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
     }
 
     std::vector<uint8_t> response;
-    const uint32_t timeSyncEpoch = chooseTimeSyncEpoch(request);
-    if (timeSyncEpoch == 0) {
-        return fail(SyncStatus::InvalidRequest, "no valid time for time sync");
-    }
 
-    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "time-sync", buildTimeSyncCommand(timeSyncEpoch), request.commandTimeoutMs, response)) {
-        return fail(SyncStatus::Timeout, "time sync command timed out or write failed");
-    }
-    if (response.size() != 1 || response[0] != 0x01) {
-        return fail(SyncStatus::BadAck, badAckMessage("time-sync", response, "01"));
-    }
+    if (!impl_->banksLoaded) {
+        const uint32_t timeSyncEpoch = chooseTimeSyncEpoch(request);
+        if (timeSyncEpoch == 0) {
+            return fail(SyncStatus::InvalidRequest, "no valid time for time sync");
+        }
 
-    if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
-        return fail(SyncStatus::Timeout, "start command timed out or write failed");
-    }
-    const auto startResponse = parseStartResponse(response);
-    if (!startResponse.has_value()) {
-        return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed bank list"));
+        if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "time-sync", buildTimeSyncCommand(timeSyncEpoch), request.commandTimeoutMs, response)) {
+            return fail(SyncStatus::Timeout, "time sync command timed out or write failed");
+        }
+        if (response.size() != 1 || response[0] != 0x01) {
+            return fail(SyncStatus::BadAck, badAckMessage("time-sync", response, "01"));
+        }
+
+        if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "start", buildStartCommand(), request.commandTimeoutMs, response)) {
+            return fail(SyncStatus::Timeout, "start command timed out or write failed");
+        }
+        const auto startResponse = parseStartResponse(response);
+        if (!startResponse.has_value()) {
+            return fail(SyncStatus::BadAck, badAckMessage("start", response, "0x01-prefixed bank list"));
+        }
+
+        const std::vector<uint8_t>& bankIds = startResponse->banks;
+
+        for (uint8_t bankId : bankIds) {
+            if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "metadata", buildBankMetadataCommand(bankId), request.commandTimeoutMs, response)) {
+                return fail(SyncStatus::Timeout, "metadata command timed out or write failed");
+            }
+
+            const auto parsedMetadata = parseMetadataResponse(response, bankId);
+            if (!parsedMetadata.has_value()) {
+                logBytes("bad-metadata", response);
+                continue;
+            }
+            if (parsedMetadata->endIndex == 0 || parsedMetadata->intervalSeconds == 0) {
+                continue;
+            }
+
+            HistoryBank bank;
+            bank.id = bankId;
+            bank.metadata = *parsedMetadata;
+            impl_->banks.push_back(bank);
+        }
+
+        if (impl_->banks.empty()) {
+            return fail(SyncStatus::BadMetadata, "no usable history bank metadata");
+        }
+
+        std::sort(impl_->banks.begin(), impl_->banks.end(), [](const HistoryBank& a, const HistoryBank& b) {
+            if (a.metadata.startEpoch != b.metadata.startEpoch) {
+                return a.metadata.startEpoch < b.metadata.startEpoch;
+            }
+            return a.id < b.id;
+        });
+
+        impl_->metadata = impl_->banks.back().metadata;
+        impl_->banksLoaded = true;
     }
 
     SyncResult result;
-    std::vector<uint8_t> bankIds = startResponse->banks;
-    if (bankIds.empty()) {
-        bankIds.push_back(0);
-    }
-
-    for (uint8_t bankId : bankIds) {
-        if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "metadata", buildBankMetadataCommand(bankId), request.commandTimeoutMs, response)) {
-            return fail(SyncStatus::Timeout, "metadata command timed out or write failed");
-        }
-
-        const auto parsedMetadata = parseMetadataResponse(response, bankId);
-        if (!parsedMetadata.has_value()) {
-            logBytes("bad-metadata", response);
-            continue;
-        }
-        if (parsedMetadata->endIndex == 0 || parsedMetadata->intervalSeconds == 0) {
-            continue;
-        }
-
-        HistoryBank bank;
-        bank.id = bankId;
-        bank.metadata = *parsedMetadata;
-        result.banks.push_back(bank);
-    }
-
-    if (result.banks.empty()) {
-        return fail(SyncStatus::BadMetadata, "no usable history bank metadata");
-    }
-
-    std::sort(result.banks.begin(), result.banks.end(), [](const HistoryBank& a, const HistoryBank& b) {
-        if (a.metadata.startEpoch != b.metadata.startEpoch) {
-            return a.metadata.startEpoch < b.metadata.startEpoch;
-        }
-        return a.id < b.id;
-    });
-
-    impl_->metadata = result.banks.back().metadata;
     result.metadata = impl_->metadata;
 
     bool haveLastKeptEpoch = false;
     uint32_t lastKeptEpoch = 0;
 
-    for (const HistoryBank& bank : result.banks) {
+    for (const HistoryBank& bank : impl_->banks) {
         const RequestedSampleRange requestedRange = planRequestedSampleRange(bank.metadata, request);
         const uint32_t firstPage = requestedRange.firstRequestIndex;
         const uint32_t endExclusive = requestedRange.endExclusiveIndex;
@@ -559,7 +562,9 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
             logPageRequest(impl_->mac, request, bank.metadata, pageIndex, endExclusive, requestSampleCount);
 
             if (!writeAndWait(*impl_->writeChar, impl_->notifyState, "page", buildBankPageCommand(bank.id, pageIndex), request.commandTimeoutMs, response)) {
-                return fail(SyncStatus::Timeout, "page command timed out or write failed");
+                result.status = SyncStatus::Timeout;
+                result.message = "page command timed out or write failed";
+                return result;
             }
 
             const auto samples = decodePageResponse(
@@ -577,7 +582,9 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
                     "," + responseSummary(response)
                 );
                 logBytes("bad-page", response);
-                return fail(SyncStatus::BadPage, badPageMessage(pageIndex, response));
+                result.status = SyncStatus::BadPage;
+                result.message = badPageMessage(pageIndex, response);
+                return result;
             }
 
             for (const Sample& sample : *samples) {
@@ -605,7 +612,7 @@ SyncResult SensorHistorySession::fetch(const SyncRequest& request) {
 }
 SyncResult syncSensorHistory(const std::string& mac, const SyncRequest& request) {
     SensorHistorySession session(mac);
-    SyncResult open = session.open(request);
+    SyncResult open = session.open();
     if (!open.ok()) {
         return open;
     }

@@ -358,8 +358,6 @@ SensorLookupResult parseSensorLookupResponse(const std::string& body, int httpSt
                 }
 
                 BackendSyncInterval interval;
-                interval.startTimestamp = start;
-                interval.endTimestamp = end;
                 interval.startEpoch = *startEpoch;
                 interval.endEpoch = *endEpoch;
                 sensor.syncIntervals.push_back(std::move(interval));
@@ -529,6 +527,64 @@ std::vector<PlannedHistoryWindow> planHistoryWindows(const BackendSensorInfo& se
     }
 
     return windows;
+}
+
+namespace {
+
+std::uint32_t absDistance(std::uint32_t a, std::uint32_t b) {
+    return a > b ? a - b : b - a;
+}
+
+} // namespace
+
+std::vector<BulkHistoryReading> selectAlignedReadings(const std::vector<Sample>& samples,
+                                                      const PlannedHistoryWindow& window,
+                                                      std::uint32_t sampleIntervalSeconds,
+                                                      std::uint32_t deviceIntervalSeconds) {
+    std::vector<BulkHistoryReading> out;
+    if (window.pointCount == 0 || sampleIntervalSeconds == 0 || samples.empty()) {
+        return out;
+    }
+
+    out.reserve(window.pointCount);
+    const std::uint32_t tolerance = std::max<std::uint32_t>(1, deviceIntervalSeconds / 2);
+    std::size_t searchFrom = 0;
+
+    for (std::uint32_t target = window.firstPointEpoch;
+         target <= window.lastPointEpoch;
+         target += sampleIntervalSeconds) {
+        std::size_t bestIndex = samples.size();
+        std::uint32_t bestDistance = std::numeric_limits<std::uint32_t>::max();
+
+        while (searchFrom < samples.size() && samples[searchFrom].epoch + tolerance < target) {
+            ++searchFrom;
+        }
+
+        for (std::size_t i = searchFrom; i < samples.size(); ++i) {
+            const std::uint32_t distance = absDistance(samples[i].epoch, target);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+            if (samples[i].epoch > target && distance > tolerance) {
+                break;
+            }
+        }
+
+        if (bestIndex != samples.size() && bestDistance <= tolerance) {
+            BulkHistoryReading reading;
+            reading.timestampEpoch = target;
+            reading.temperatureC = samples[bestIndex].temperatureC;
+            reading.humidityPct = samples[bestIndex].humidityPct;
+            out.push_back(reading);
+        }
+
+        if (target > std::numeric_limits<std::uint32_t>::max() - sampleIntervalSeconds) {
+            break;
+        }
+    }
+
+    return out;
 }
 
 }  // namespace history

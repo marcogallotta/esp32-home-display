@@ -27,7 +27,6 @@ enum class SyncStatus {
     ServiceNotFound,
     CharacteristicNotFound,
     SubscribeFailed,
-    WriteFailed,
     Timeout,
     BadAck,
     BadMetadata,
@@ -38,7 +37,6 @@ struct SyncResult {
     SyncStatus status = SyncStatus::Ok;
     std::string message;
     Metadata metadata;
-    std::vector<HistoryBank> banks;
     std::vector<Sample> samples;
 
     bool ok() const { return status == SyncStatus::Ok; }
@@ -58,7 +56,7 @@ public:
     SensorHistorySession(const SensorHistorySession&) = delete;
     SensorHistorySession& operator=(const SensorHistorySession&) = delete;
 
-    SyncResult open(const SyncRequest& request = SyncRequest{});
+    SyncResult open();
     SyncResult fetch(const SyncRequest& request = SyncRequest{});
 
     bool isOpen() const;

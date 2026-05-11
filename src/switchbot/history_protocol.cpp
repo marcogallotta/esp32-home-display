@@ -20,7 +20,6 @@ constexpr uint8_t kDecimalNibbleMask = 0x0f;
 
 constexpr size_t kMetadataResponseBytes = 15;
 constexpr size_t kMetadataStartEpochOffset = 1;
-constexpr size_t kMetadataEndEpochOffset = 5;
 constexpr size_t kMetadataEndIndexOffset = 9;
 constexpr size_t kMetadataIntervalOffset = 13;
 
@@ -185,18 +184,10 @@ std::vector<uint8_t> buildStartCommand() {
     return buildHistoryCommand(kStartHistoryCommand);
 }
 
-std::vector<uint8_t> buildMetadataCommand() {
-    return buildBankMetadataCommand(kReservedByte);
-}
-
 std::vector<uint8_t> buildBankMetadataCommand(uint8_t bank) {
     std::vector<uint8_t> out = buildHistoryCommand(kMetadataCommand);
     out.push_back(bank);
     return out;
-}
-
-std::vector<uint8_t> buildPageCommand(uint32_t absoluteIndex, uint8_t count) {
-    return buildBankPageCommand(kReservedByte, absoluteIndex, count);
 }
 
 std::vector<uint8_t> buildBankPageCommand(uint8_t bank, uint32_t bankLocalIndex, uint8_t count) {
@@ -230,7 +221,6 @@ std::optional<Metadata> parseMetadataResponse(const std::vector<uint8_t>& respon
     Metadata metadata;
     metadata.bank = bank;
     metadata.startEpoch = reader.u32BE(kMetadataStartEpochOffset);
-    metadata.endEpoch = reader.u32BE(kMetadataEndEpochOffset);
     metadata.endIndex = reader.u32BE(kMetadataEndIndexOffset);
     metadata.intervalSeconds = reader.u16BE(kMetadataIntervalOffset);
 
@@ -259,13 +249,6 @@ std::optional<std::vector<Sample>> decodePageResponse(const std::vector<uint8_t>
     return out;
 }
 
-uint32_t indexForEpochFloor(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds) {
-    if (intervalSeconds == 0 || epoch <= startEpoch) {
-        return 0;
-    }
-    return (epoch - startEpoch) / intervalSeconds;
-}
-
 uint32_t indexForEpochCeil(uint32_t startEpoch, uint32_t epoch, uint16_t intervalSeconds) {
     if (intervalSeconds == 0 || epoch <= startEpoch) {
         return 0;
@@ -284,13 +267,6 @@ uint32_t pageStartForIndex(uint32_t index) {
     return index - (index % kSamplesPerPage);
 }
 
-uint32_t epochToIndex(uint32_t epoch, uint32_t startEpoch, uint16_t intervalSeconds) {
-    return indexForEpochFloor(startEpoch, epoch, intervalSeconds);
-}
-
-uint32_t indexToEpoch(uint32_t index, uint32_t startEpoch, uint16_t intervalSeconds) {
-    return epochForIndex(startEpoch, index, intervalSeconds);
-}
 
 std::vector<uint8_t> hexToBytes(std::string_view hex) {
     std::string clean;

@@ -40,10 +40,6 @@ TEST_CASE("switchbot history builds known commands") {
     }));
 
     CHECK(switchbot::history::buildStartCommand() == bytes({0x57, 0x0f, 0x3a}));
-    CHECK(switchbot::history::buildMetadataCommand() == bytes({0x57, 0x0f, 0x3b, 0x00}));
-    CHECK(switchbot::history::buildPageCommand(0x00012d04, 6) == bytes({
-        0x57, 0x0f, 0x3c, 0x00, 0x00, 0x01, 0x2d, 0x04, 0x06,
-    }));
 }
 
 TEST_CASE("switchbot history builds bank metadata command") {
@@ -98,7 +94,6 @@ TEST_CASE("switchbot history parses metadata response") {
     REQUIRE(metadata.has_value());
     CHECK_EQ(metadata->bank, 0U);
     CHECK_EQ(metadata->startEpoch, 1773509970U);
-    CHECK_EQ(metadata->endEpoch, 1778136390U);
     CHECK_EQ(metadata->endIndex, 77108U);
     CHECK_EQ(metadata->intervalSeconds, 60U);
 }
@@ -172,6 +167,20 @@ TEST_CASE("switchbot history decodes mixed decimals and humidity") {
     CHECK_EQ((*samples)[4].humidityPct, 47U);
 }
 
+TEST_CASE("switchbot history decodes negative temperature in page") {
+    const auto samples = switchbot::history::decodePageResponse(bytes({
+        0x01,
+        0x05, 0x42, 0x66, 0x05, 0x42,
+        0x05, 0x42, 0x66, 0x05, 0x42,
+        0x05, 0x42, 0x66, 0x05, 0x42,
+    }), 0, 1000, 60);
+
+    REQUIRE(samples.has_value());
+    REQUIRE_EQ(samples->size(), 6U);
+    CHECK((*samples)[0].temperatureC == doctest::Approx(-5.6f));
+    CHECK_EQ((*samples)[0].humidityPct, 66U);
+}
+
 TEST_CASE("switchbot history rejects malformed pages") {
     CHECK_FALSE(switchbot::history::decodePageResponse({}, 0, 0, 60).has_value());
     CHECK_FALSE(switchbot::history::decodePageResponse(bytes({0x02}), 0, 0, 60).has_value());
@@ -190,4 +199,21 @@ TEST_CASE("switchbot history converts epoch and index") {
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133635, 60), 77061U);
     CHECK_EQ(switchbot::history::indexForEpochCeil(startEpoch, 1778133636, 60), 77062U);
     CHECK_EQ(switchbot::history::pageStartForIndex(77061), 77058U);
+}
+
+TEST_CASE("switchbot history decodes real captured page") {
+    const std::uint32_t startEpoch = 1773509975U;
+    const auto samples = switchbot::history::decodePageResponse(
+        switchbot::history::hexToBytes("018c31558c318c31578c2f8c2f778c2f"),
+        77079, startEpoch, 60
+    );
+
+    REQUIRE(samples.has_value());
+    REQUIRE_EQ(samples->size(), 6U);
+    CHECK((*samples)[0].temperatureC == doctest::Approx(12.5f));
+    CHECK_EQ((*samples)[0].humidityPct, 49U);
+    CHECK((*samples)[3].temperatureC == doctest::Approx(12.7f));
+    CHECK_EQ((*samples)[3].humidityPct, 47U);
+    CHECK((*samples)[5].temperatureC == doctest::Approx(12.7f));
+    CHECK_EQ((*samples)[5].humidityPct, 47U);
 }

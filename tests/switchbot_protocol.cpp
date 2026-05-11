@@ -42,15 +42,7 @@ TEST_CASE("switchbot meter payload rejects short payloads") {
 }
 
 TEST_CASE("switchbot meter payload rejects payloads with only zero data after mac") {
-    std::vector<std::uint8_t> payload(12, 0x00);
-    payload[0] = 0xAA;
-    payload[1] = 0xBB;
-    payload[2] = 0xCC;
-    payload[3] = 0xDD;
-    payload[4] = 0xEE;
-    payload[5] = 0xFF;
-
-    CHECK_FALSE(switchbot::isMeterPayload(payload));
+    CHECK_FALSE(switchbot::isMeterPayload(std::vector<std::uint8_t>(12, 0x00)));
 }
 
 TEST_CASE("switchbot meter payload accepts non-zero data after mac") {

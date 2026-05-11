@@ -67,10 +67,9 @@ struct SwitchbotSensorConfig {
 struct SwitchbotHistoryConfig {
     // Client-side planning only. SwitchBot device history interval comes from device metadata.
     std::uint32_t sampleIntervalSeconds = 15U * 60U;
-    std::uint32_t newSensorWindowSeconds = 6U * 60U * 60U;
+    std::uint32_t newSensorWindowSeconds = 68U * 24U * 60U * 60U;
     std::uint32_t historyLimitSeconds = 68U * 24U * 60U * 60U;
-    // TODO: test increasing this up to backend max 1000 when bulk upload is enabled.
-    std::uint32_t bulkBatchLimit = 100;
+    std::uint32_t bulkBatchLimit = 1000;
 };
 
 struct SwitchbotConfig {

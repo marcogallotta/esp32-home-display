@@ -459,6 +459,9 @@ void run() {
 }
 
 #ifdef ARDUINO
+// Override weak symbol from framework main.cpp — mbedTLS SSL handshake needs ~8KB alone.
+size_t getArduinoLoopTaskStackSize() { return 16384; }
+
 void setup() {
     Serial.begin(115200);
     run();

@@ -40,19 +40,6 @@ std::optional<std::string> getStringProperty(const VariantMap& props, const char
     }
 }
 
-std::optional<std::int16_t> getInt16Property(const VariantMap& props, const char* key) {
-    auto it = props.find(key);
-    if (it == props.end()) {
-        return std::nullopt;
-    }
-
-    try {
-        return it->second.get<std::int16_t>();
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
 std::string normalizeUuidString(std::string uuid) {
     std::transform(
         uuid.begin(),

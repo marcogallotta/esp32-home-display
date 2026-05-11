@@ -1,10 +1,13 @@
 #include "xiaomi/ble.h"
+#include "xiaomi_helpers.h"
 
 #include "ble/scanner.h"
 #include "doctest/doctest.h"
 
 #include <cstdint>
 #include <vector>
+
+using xiaomi_test::xiaomiPayload;
 
 namespace {
 
@@ -21,18 +24,6 @@ XiaomiConfig xiaomiConfig() {
         "Basil",
     });
     return config;
-}
-
-std::vector<std::uint8_t> xiaomiPayload(
-    std::uint16_t objectId,
-    const std::vector<std::uint8_t>& data
-) {
-    std::vector<std::uint8_t> payload(15, 0x00);
-    payload[12] = static_cast<std::uint8_t>(objectId & 0xFF);
-    payload[13] = static_cast<std::uint8_t>((objectId >> 8) & 0xFF);
-    payload[14] = static_cast<std::uint8_t>(data.size());
-    payload.insert(payload.end(), data.begin(), data.end());
-    return payload;
 }
 
 ble::AdvertisementEvent xiaomiAdvertisement(
@@ -89,9 +80,9 @@ TEST_CASE("xiaomi scanner accumulates separate object advertisements into one re
     CHECK(reading.hasMoisture);
     CHECK_EQ(reading.moisturePct, 42);
     CHECK(reading.hasLux);
-    CHECK_EQ(reading.lux, 0x123456);
+    CHECK_EQ(reading.lux, 0x123456U);
     CHECK(reading.hasConductivity);
-    CHECK_EQ(reading.conductivityUsCm, 500);
+    CHECK_EQ(reading.conductivityUsCm, 500U);
 }
 
 TEST_CASE("xiaomi scanner ignores unknown sensors") {
