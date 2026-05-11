@@ -45,14 +45,7 @@ struct Scanner::Impl {
             return false;
         }
 
-        bool matched = false;
         bool changed = false;
-
-        SensorReading& reading = sensors[event.address];
-        reading.name = sensor->name;
-        reading.shortName = sensor->shortName;
-        reading.lastSeenEpochS =
-            platform::hasValidTime() ? static_cast<std::int64_t>(std::time(nullptr)) : 0;
 
         for (const auto& [uuid, payload] : event.serviceData) {
             if (!isXiaomiServiceDataUuid(uuid)) {
@@ -64,7 +57,11 @@ struct Scanner::Impl {
                 continue;
             }
 
-            matched = true;
+            SensorReading& reading = sensors[event.address];
+            reading.name = sensor->name;
+            reading.shortName = sensor->shortName;
+            reading.lastSeenEpochS =
+                platform::hasValidTime() ? static_cast<std::int64_t>(std::time(nullptr)) : 0;
 
             const SensorReading before = reading;
             applyObject(reading, *decoded);
@@ -79,14 +76,6 @@ struct Scanner::Impl {
                 reading.conductivityUsCm != before.conductivityUsCm) {
                 changed = true;
             }
-        }
-
-        if (!matched &&
-            !reading.hasTemperature &&
-            !reading.hasLux &&
-            !reading.hasMoisture &&
-            !reading.hasConductivity) {
-            sensors.erase(event.address);
         }
 
         return changed;
