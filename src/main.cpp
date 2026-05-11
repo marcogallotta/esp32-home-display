@@ -330,44 +330,6 @@ void logDirtyRegions(const AppContext& app) {
     );
 }
 
-void renderUi(const AppContext& app, bool doFullDraw) {
-#ifdef ARDUINO
-    if (doFullDraw) {
-        drawAllRegions(app.currentState);
-        return;
-    }
-
-    if (app.currentUiState.dirty.salahName) {
-        drawSalahNameRegion(app.currentState);
-        updateSalahNameRegion();
-    }
-
-    if (app.currentUiState.dirty.minutes) {
-        drawMinutesRegion(app.currentState);
-        updateMinutesRegion();
-    }
-
-    const int visibleRows = std::min<int>(
-        static_cast<int>(app.currentState.switchbotSensors.size()),
-        kMaxVisibleSensorRows
-    );
-
-    for (int rowIndex = 0; rowIndex < visibleRows; ++rowIndex) {
-        if (app.currentUiState.dirty.sensorRows[rowIndex]) {
-            drawSensorRowRegion(app.currentState, rowIndex);
-            updateSensorRowRegion(rowIndex);
-        }
-    }
-
-    if (app.currentUiState.dirty.forecast) {
-        drawForecastRegion(app.currentState);
-        updateForecastRegion();
-    }
-#else
-    (void)app;
-    (void)doFullDraw;
-#endif
-}
 
 void logInvalidTimeApiSyncSkipped(std::uint64_t nowMs) {
     if (nowMs >= kInvalidTimeApiSyncErrorAfterMs) {
@@ -410,7 +372,7 @@ void syncOutputs(AppContext& app, std::time_t now) {
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);
     logDirtyRegions(app);
-    renderUi(app, doFullDraw);
+    renderUi(app.currentState, app.currentUiState, doFullDraw);
 }
 
 void sleepUntilNextDue(AppContext& app) {
