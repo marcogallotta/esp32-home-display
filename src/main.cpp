@@ -366,21 +366,55 @@ void sleepUntilNextDue(AppContext& app) {
     platform::delayMs(delayMs);
 }
 
+void logHeapStats(const char* label, const platform::HeapStats& stats) {
+#ifdef ARDUINO
+    const int fragPct = stats.freeBytes > 0
+        ? static_cast<int>(100 - (stats.largestFreeBlock * 100 / stats.freeBytes))
+        : 0;
+    logLine(LogLevel::Debug,
+        std::string("heap ") + label +
+        ": free=" + std::to_string(stats.freeBytes) +
+        " largest=" + std::to_string(stats.largestFreeBlock) +
+        " frag=" + std::to_string(fragPct) + "%"
+    );
+#else
+    (void)label;
+    (void)stats;
+#endif
+}
+
 void tick(AppContext& app) {
     const std::time_t now = std::time(nullptr);
 
     std::swap(app.previousState, app.currentState);
     prepareCurrentState(app.currentState, app.previousState);
 
+    const platform::HeapStats heapPreBle = platform::heapStats();
     app.bleScanner.poll();
 
     bool switchbotUpdated = false;
     bool xiaomiUpdated = false;
+    int bleEventsProcessed = 0;
     ble::AdvertisementEvent event;
     while (app.bleEventQueue.pop(event)) {
         if (app.switchbotScanner.handleAdvertisement(event)) switchbotUpdated = true;
         if (app.xiaomiScanner.handleAdvertisement(event)) xiaomiUpdated = true;
+        ++bleEventsProcessed;
     }
+
+    const platform::HeapStats heapPostBle = platform::heapStats();
+    logHeapStats("pre-BLE", heapPreBle);
+    logHeapStats("post-BLE", heapPostBle);
+#ifdef ARDUINO
+    if (bleEventsProcessed > 0) {
+        logLine(LogLevel::Debug,
+            "BLE drained " + std::to_string(bleEventsProcessed) +
+            " events, largest-block delta=" +
+            std::to_string(static_cast<int>(heapPostBle.largestFreeBlock) -
+                           static_cast<int>(heapPreBle.largestFreeBlock))
+        );
+    }
+#endif
 
     updateDomainState(app, now, switchbotUpdated, xiaomiUpdated);
 #ifdef ARDUINO
