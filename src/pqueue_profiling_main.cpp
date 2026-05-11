@@ -234,6 +234,104 @@ ScenarioResult runHttpDrainBacklog(uint32_t recordSizeBytes) {
     return result;
 }
 
+void runMountBreakdown() {
+    const char* kDir = "/pqueue_prof_mtest";
+    const uint32_t kIter = 20;
+
+    LittleFS.mkdir(kDir);
+
+    uint64_t beginUs = 0, mkdirUs = 0, openDirUs = 0;
+
+    for (uint32_t i = 0; i < kIter; ++i) {
+        int64_t t0, t1;
+
+        t0 = esp_timer_get_time();
+        LittleFS.begin(false);
+        t1 = esp_timer_get_time();
+        beginUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        LittleFS.mkdir(kDir);
+        t1 = esp_timer_get_time();
+        mkdirUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        File d = LittleFS.open(kDir, "r");
+        t1 = esp_timer_get_time();
+        openDirUs += static_cast<uint64_t>(t1 - t0);
+        if (d) d.close();
+    }
+
+    LittleFS.rmdir(kDir);
+
+    Serial.printf("mount (rawMount) breakdown (%u iters):\n", kIter);
+    Serial.printf("  LittleFS.begin(false) avg=%llu us\n", beginUs / kIter);
+    Serial.printf("  mkdir (existing)      avg=%llu us\n", mkdirUs / kIter);
+    Serial.printf("  open dir              avg=%llu us\n", openDirUs / kIter);
+    Serial.printf("  total (per rawMount)  avg=%llu us\n", (beginUs + mkdirUs + openDirUs) / kIter);
+}
+
+void runWriteAtLargeFile() {
+    const char* kFile = "/pqueue_prof_ltest";
+    const uint32_t kIter = 20;
+    const uint32_t kFileSize = 18688;
+    const uint32_t kWriteSize = 512;
+
+    {
+        File f = LittleFS.open(kFile, "w");
+        if (!f) { Serial.println("writeAt large: create failed"); return; }
+        const std::string zeros(256, '\0');
+        uint32_t written = 0;
+        while (written < kFileSize) {
+            const uint32_t chunk = std::min(256u, kFileSize - written);
+            f.write(reinterpret_cast<const uint8_t*>(zeros.data()), chunk);
+            written += chunk;
+        }
+        f.flush();
+        f.close();
+    }
+
+    uint64_t openUs = 0, writeUs = 0, flushUs = 0, closeUs = 0;
+    const std::string data(kWriteSize, 'x');
+    const uint32_t kMidOffset = kFileSize / 2;
+
+    for (uint32_t i = 0; i < kIter; ++i) {
+        int64_t t0, t1;
+
+        t0 = esp_timer_get_time();
+        File f = LittleFS.open(kFile, "r+");
+        t1 = esp_timer_get_time();
+        openUs += static_cast<uint64_t>(t1 - t0);
+
+        if (!f) { Serial.println("writeAt large: open failed"); LittleFS.remove(kFile); return; }
+        f.seek(kMidOffset, SeekSet);
+
+        t0 = esp_timer_get_time();
+        f.write(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        t1 = esp_timer_get_time();
+        writeUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        f.flush();
+        t1 = esp_timer_get_time();
+        flushUs += static_cast<uint64_t>(t1 - t0);
+
+        t0 = esp_timer_get_time();
+        f.close();
+        t1 = esp_timer_get_time();
+        closeUs += static_cast<uint64_t>(t1 - t0);
+    }
+
+    LittleFS.remove(kFile);
+
+    Serial.printf("writeAt large-file breakdown (%u iters, %u B file, %u B write at mid):\n", kIter, kFileSize, kWriteSize);
+    Serial.printf("  open  avg=%llu us\n", openUs / kIter);
+    Serial.printf("  write avg=%llu us\n", writeUs / kIter);
+    Serial.printf("  flush avg=%llu us\n", flushUs / kIter);
+    Serial.printf("  close avg=%llu us\n", closeUs / kIter);
+    Serial.printf("  total avg=%llu us\n", (openUs + writeUs + flushUs + closeUs) / kIter);
+}
+
 void runWriteAtPhaseBreakdown() {
     const char* kFile = "/pqueue_prof_wtest";
     const uint32_t kIter = 20;
@@ -340,8 +438,8 @@ void printResult(const ScenarioResult& r) {
     Serial.printf("%-22s %4uB  avg=%6llu us  min=%6llu us  max=%6llu us\n",
         r.name, r.recordSizeBytes, r.timings.avg(),
         r.timings.count > 0 ? r.timings.minUs : 0ULL, r.timings.maxUs);
-    Serial.printf("  readAt=%-4llu writeAt=%-4llu writeFile=%-4llu rename=%-4llu remove=%-4llu lock=%-4llu\n",
-        r.fs.readAt, r.fs.writeAt, r.fs.writeFile, r.fs.renameFile, r.fs.removeFile, r.fs.lockAcquire);
+    Serial.printf("  readAt=%-4llu writeAt=%-4llu writeFile=%-4llu rename=%-4llu remove=%-4llu lock=%-4llu mount=%-4llu\n",
+        r.fs.readAt, r.fs.writeAt, r.fs.writeFile, r.fs.renameFile, r.fs.removeFile, r.fs.lockAcquire, r.fs.mount);
     Serial.printf("  bytesW=%-10llu bytesR=%-10llu\n",
         r.fs.bytesWritten, r.fs.bytesRead);
     if (r.failed) {
@@ -362,7 +460,11 @@ void setup() {
     Serial.println("=== pqueue on-device LittleFS profiler ===");
     Serial.printf("records per scenario: %u  body: %u B\n\n", kRecordsPerScenario, kRealisticBodyBytes);
 
+    runMountBreakdown();
+    Serial.println();
     runWriteAtPhaseBreakdown();
+    Serial.println();
+    runWriteAtLargeFile();
     Serial.println();
     runReadAtPhaseBreakdown();
     Serial.println();
