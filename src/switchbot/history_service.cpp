@@ -1,12 +1,9 @@
 #include "history_service.h"
 
-#ifdef ARDUINO
 #include "history_backend.h"
 #include "history_sync.h"
 
 #include "../log.h"
-
-#include <Arduino.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -16,6 +13,10 @@
 #include <set>
 #include <string>
 #include <vector>
+
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
 
 namespace switchbot {
 namespace history {
@@ -36,25 +37,6 @@ struct PlanTotals {
 };
 
 void addTotals(PlanTotals& total, const PlanTotals& add);
-
-std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
-    if (!sensor.name.empty()) {
-        return sensor.name;
-    }
-    if (!sensor.shortName.empty()) {
-        return sensor.shortName;
-    }
-    return sensor.mac;
-}
-
-HistoryServiceOptions effectiveOptions(const Config& config, const HistoryServiceOptions& defaults) {
-    HistoryServiceOptions out = defaults;
-    out.newSensorWindowSeconds = config.switchbot.history.newSensorWindowSeconds;
-    out.sampleIntervalSeconds = config.switchbot.history.sampleIntervalSeconds;
-    out.historyLimitSeconds = config.switchbot.history.historyLimitSeconds;
-    out.bulkBatchLimit = config.switchbot.history.bulkBatchLimit;
-    return out;
-}
 
 HistoryPlanningOptions planningOptions(const HistoryServiceOptions& options) {
     HistoryPlanningOptions out;
@@ -78,26 +60,6 @@ std::string formatDuration(std::uint32_t seconds) {
         return std::to_string(seconds / 60) + "m";
     }
     return std::to_string(seconds) + "s";
-}
-
-std::vector<std::string> configuredMacs(const Config& config,
-                                        std::map<std::string, std::string>& labelsByMac) {
-    std::vector<std::string> macs;
-    std::set<std::string> seen;
-
-    for (const SwitchbotSensorConfig& sensor : config.switchbot.sensors) {
-        const std::string mac = normalizeMac(sensor.mac);
-        if (mac.empty()) {
-            logLine(LogLevel::Warn, "SwitchBot history: ignoring configured sensor with invalid MAC " + sensor.mac);
-            continue;
-        }
-        labelsByMac[mac] = sensorLabel(sensor);
-        if (seen.insert(mac).second) {
-            macs.push_back(mac);
-        }
-    }
-
-    return macs;
 }
 
 std::string labelForMac(const std::map<std::string, std::string>& labelsByMac, const std::string& mac) {
@@ -283,7 +245,6 @@ std::uint32_t expandedEndEpoch(const PlannedHistoryWindow& window, std::uint32_t
     return window.endEpoch + deviceIntervalSeconds;
 }
 
-
 std::uint32_t uploadBatchLimit(const HistoryServiceOptions& options) {
     if (options.bulkBatchLimit == 0) {
         return 100;
@@ -303,7 +264,7 @@ void logBulkErrors(const std::string& label, const BulkUploadResult& result) {
     }
 }
 
-PlanTotals uploadReadings(const Config& config,
+PlanTotals uploadReadings(const HistoryServiceDeps& deps,
                           const std::string& label,
                           const std::string& sensorId,
                           const std::vector<BulkHistoryReading>& readings,
@@ -315,7 +276,7 @@ PlanTotals uploadReadings(const Config& config,
         const std::size_t end = std::min<std::size_t>(readings.size(), offset + limit);
         std::vector<BulkHistoryReading> batch(readings.begin() + offset, readings.begin() + end);
 
-        const BulkUploadResult upload = postBulkUpload(config, sensorId, batch);
+        const BulkUploadResult upload = deps.bulkUpload(sensorId, batch);
         if (!upload.ok) {
             ++totals.uploadFailures;
             logLine(
@@ -391,13 +352,13 @@ void logWindowResult(const std::string& label,
     );
 }
 
-PlanTotals syncAndUploadWindow(const Config& config,
+PlanTotals syncAndUploadWindow(const HistoryServiceDeps& deps,
                                const std::string& label,
                                const BackendSensorInfo& sensor,
                                const PlannedHistoryWindow& window,
                                std::uint32_t nowEpoch,
                                const HistoryServiceOptions& options,
-                               SensorHistorySession& session) {
+                               ISensorHistorySession& session) {
     PlanTotals totals;
 
     SyncRequest request;
@@ -430,7 +391,7 @@ PlanTotals syncAndUploadWindow(const Config& config,
     if (!sync.ok()) {
         ++totals.syncFailures;
         if (!selected.empty()) {
-            addTotals(totals, uploadReadings(config, label, sensor.sensorId, selected, options));
+            addTotals(totals, uploadReadings(deps, label, sensor.sensorId, selected, options));
         }
         logLine(
             LogLevel::Error,
@@ -449,11 +410,11 @@ PlanTotals syncAndUploadWindow(const Config& config,
         return totals;
     }
 
-    addTotals(totals, uploadReadings(config, label, sensor.sensorId, selected, options));
+    addTotals(totals, uploadReadings(deps, label, sensor.sensorId, selected, options));
     return totals;
 }
 
-PlanTotals syncAndUploadSensor(const Config& config,
+PlanTotals syncAndUploadSensor(const HistoryServiceDeps& deps,
                                const BackendSensorInfo& sensor,
                                const std::map<std::string, std::string>& labelsByMac,
                                const std::vector<PlannedHistoryWindow>& windows,
@@ -466,8 +427,8 @@ PlanTotals syncAndUploadSensor(const Config& config,
         return totals;
     }
 
-    SensorHistorySession session(sensor.mac);
-    const SyncResult openResult = session.open();
+    auto session = deps.sessionFactory(sensor.mac);
+    const SyncResult openResult = session->open();
     if (!openResult.ok()) {
         logLine(
             LogLevel::Error,
@@ -480,7 +441,7 @@ PlanTotals syncAndUploadSensor(const Config& config,
     }
 
     for (const PlannedHistoryWindow& window : windows) {
-        addTotals(totals, syncAndUploadWindow(config, label, sensor, window, nowEpoch, options, session));
+        addTotals(totals, syncAndUploadWindow(deps, label, sensor, window, nowEpoch, options, *session));
     }
 
     return totals;
@@ -501,6 +462,131 @@ void addTotals(PlanTotals& total, const PlanTotals& add) {
 }
 
 }  // namespace
+
+void runHistorySync(const std::vector<std::string>& macs,
+                    const std::map<std::string, std::string>& labelsByMac,
+                    std::uint32_t nowEpoch,
+                    const HistoryServiceOptions& options,
+                    const HistoryServiceDeps& deps) {
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history sync started: sensors=" +
+        std::to_string(macs.size()) +
+        "; target interval=" + formatDuration(options.sampleIntervalSeconds) +
+        "; new sensor window=" + formatDuration(options.newSensorWindowSeconds) +
+        "; history limit=" + formatDuration(options.historyLimitSeconds)
+    );
+
+    logLine(
+        LogLevel::Debug,
+        "SwitchBot history planning detail: upload batch limit=" +
+        std::to_string(options.bulkBatchLimit)
+    );
+
+    const SensorLookupResult lookup = deps.sensorLookup(macs);
+    if (!lookup.ok) {
+        logLine(
+            LogLevel::Error,
+            "SwitchBot history lookup failed: http=" + std::to_string(lookup.httpStatusCode) +
+            "; " + lookup.error
+        );
+        return;
+    }
+
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history lookup complete: backend returned " +
+        std::to_string(lookup.sensors.size()) + " sensors, warnings=" +
+        std::to_string(lookup.warnings.size())
+    );
+    logLookupWarnings(lookup);
+    logMissingConfiguredSensors(macs, lookup, labelsByMac);
+
+    PlanTotals totals;
+    const HistoryPlanningOptions planning = planningOptions(options);
+
+    std::vector<std::vector<PlannedHistoryWindow>> allWindows;
+    allWindows.reserve(lookup.sensors.size());
+    for (const BackendSensorInfo& sensor : lookup.sensors) {
+        allWindows.push_back(planHistoryWindows(sensor, nowEpoch, planning));
+    }
+
+    for (std::size_t i = 0; i < lookup.sensors.size(); ++i) {
+        addTotals(totals, logSensorPlan(lookup.sensors[i], labelsByMac, allWindows[i], options));
+    }
+
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history planning done: sensors=" + std::to_string(totals.sensors) +
+        "; sensors_with_windows=" + std::to_string(totals.sensorsWithWindows) +
+        "; windows=" + std::to_string(totals.windows) +
+        "; target_readings=" + std::to_string(totals.plannedPoints) +
+        "; capped_sensors=" + std::to_string(totals.cappedSensors)
+    );
+
+    if (totals.windows == 0) {
+        return;
+    }
+
+    for (std::size_t i = 0; i < lookup.sensors.size(); ++i) {
+        addTotals(totals, syncAndUploadSensor(deps, lookup.sensors[i], labelsByMac, allWindows[i], nowEpoch, options));
+    }
+
+    logLine(
+        LogLevel::Info,
+        "SwitchBot history sync done: windows=" + std::to_string(totals.syncedWindows) +
+        "; sync_failures=" + std::to_string(totals.syncFailures) +
+        "; selected_readings=" + std::to_string(totals.selectedReadings) +
+        "; uploaded_readings=" + std::to_string(totals.uploadedReadings) +
+        "; upload_failures=" + std::to_string(totals.uploadFailures) +
+        "; upload_row_errors=" + std::to_string(totals.uploadRowErrors)
+    );
+}
+
+#ifdef ARDUINO
+
+namespace {
+
+std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
+    if (!sensor.name.empty()) {
+        return sensor.name;
+    }
+    if (!sensor.shortName.empty()) {
+        return sensor.shortName;
+    }
+    return sensor.mac;
+}
+
+HistoryServiceOptions effectiveOptions(const Config& config, const HistoryServiceOptions& defaults) {
+    HistoryServiceOptions out = defaults;
+    out.newSensorWindowSeconds = config.switchbot.history.newSensorWindowSeconds;
+    out.sampleIntervalSeconds = config.switchbot.history.sampleIntervalSeconds;
+    out.historyLimitSeconds = config.switchbot.history.historyLimitSeconds;
+    out.bulkBatchLimit = config.switchbot.history.bulkBatchLimit;
+    return out;
+}
+
+std::vector<std::string> configuredMacs(const Config& config,
+                                        std::map<std::string, std::string>& labelsByMac) {
+    std::vector<std::string> macs;
+    std::set<std::string> seen;
+
+    for (const SwitchbotSensorConfig& sensor : config.switchbot.sensors) {
+        const std::string mac = normalizeMac(sensor.mac);
+        if (mac.empty()) {
+            logLine(LogLevel::Warn, "SwitchBot history: ignoring configured sensor with invalid MAC " + sensor.mac);
+            continue;
+        }
+        labelsByMac[mac] = sensorLabel(sensor);
+        if (seen.insert(mac).second) {
+            macs.push_back(mac);
+        }
+    }
+
+    return macs;
+}
+
+} // namespace
 
 void maybeRunStartupHistorySync(const Config& config,
                                 ble::Scanner& scanner,
@@ -533,84 +619,24 @@ void maybeRunStartupHistorySync(const Config& config,
         return;
     }
 
-    logLine(
-        LogLevel::Info,
-        "SwitchBot history sync started: sensors=" +
-        std::to_string(macs.size()) +
-        "; target interval=" + formatDuration(effective.sampleIntervalSeconds) +
-        "; new sensor window=" + formatDuration(effective.newSensorWindowSeconds) +
-        "; history limit=" + formatDuration(effective.historyLimitSeconds)
-    );
+    HistoryServiceDeps deps;
+    deps.sensorLookup = [&](const std::vector<std::string>& m) {
+        return postSensorLookup(config, m);
+    };
+    deps.sessionFactory = [](const std::string& mac) {
+        return std::make_unique<SensorHistorySession>(mac);
+    };
+    deps.bulkUpload = [&](const std::string& sensorId, const std::vector<BulkHistoryReading>& readings) {
+        return postBulkUpload(config, sensorId, readings);
+    };
 
-    logLine(
-        LogLevel::Debug,
-        "SwitchBot history planning detail: upload batch limit=" +
-        std::to_string(effective.bulkBatchLimit)
-    );
-
-    const SensorLookupResult lookup = postSensorLookup(config, macs);
-    if (!lookup.ok) {
-        logLine(
-            LogLevel::Error,
-            "SwitchBot history lookup failed: http=" + std::to_string(lookup.httpStatusCode) +
-            "; " + lookup.error
-        );
-        return;
-    }
-
-    logLine(
-        LogLevel::Info,
-        "SwitchBot history lookup complete: backend returned " +
-        std::to_string(lookup.sensors.size()) + " sensors, warnings=" +
-        std::to_string(lookup.warnings.size())
-    );
-    logLookupWarnings(lookup);
-    logMissingConfiguredSensors(macs, lookup, labelsByMac);
-
-    PlanTotals totals;
     const std::uint32_t nowEpoch = static_cast<std::uint32_t>(now);
 
-    std::vector<std::vector<PlannedHistoryWindow>> allWindows;
-    allWindows.reserve(lookup.sensors.size());
-    for (const BackendSensorInfo& sensor : lookup.sensors) {
-        allWindows.push_back(planHistoryWindows(sensor, nowEpoch, planningOptions(effective)));
-    }
-
-    for (std::size_t i = 0; i < lookup.sensors.size(); ++i) {
-        addTotals(totals, logSensorPlan(lookup.sensors[i], labelsByMac, allWindows[i], effective));
-    }
-
-    logLine(
-        LogLevel::Info,
-        "SwitchBot history planning done: sensors=" + std::to_string(totals.sensors) +
-        "; sensors_with_windows=" + std::to_string(totals.sensorsWithWindows) +
-        "; windows=" + std::to_string(totals.windows) +
-        "; target_readings=" + std::to_string(totals.plannedPoints) +
-        "; capped_sensors=" + std::to_string(totals.cappedSensors)
-    );
-
-    if (totals.windows == 0) {
-        return;
-    }
-
     scanner.stop();
-    for (std::size_t i = 0; i < lookup.sensors.size(); ++i) {
-        addTotals(totals, syncAndUploadSensor(config, lookup.sensors[i], labelsByMac, allWindows[i], nowEpoch, effective));
-    }
+    runHistorySync(macs, labelsByMac, nowEpoch, effective, deps);
     scanner.start();
-
-    logLine(
-        LogLevel::Info,
-        "SwitchBot history sync done: windows=" + std::to_string(totals.syncedWindows) +
-        "; sync_failures=" + std::to_string(totals.syncFailures) +
-        "; selected_readings=" + std::to_string(totals.selectedReadings) +
-        "; uploaded_readings=" + std::to_string(totals.uploadedReadings) +
-        "; upload_failures=" + std::to_string(totals.uploadFailures) +
-        "; upload_row_errors=" + std::to_string(totals.uploadRowErrors)
-    );
 }
+#endif  // ARDUINO
 
 }  // namespace history
 }  // namespace switchbot
-
-#endif  // ARDUINO

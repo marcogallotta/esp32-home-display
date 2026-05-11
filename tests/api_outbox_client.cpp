@@ -298,4 +298,117 @@ TEST_CASE("api outbox client resolves absolute PEM config path under desktop dat
     CHECK_EQ(api::detail::resolveDesktopPemPathForApiOutbox("data/custom.pem"), "data/custom.pem");
 }
 
+TEST_CASE("api outbox client rejects SwitchBot reading with missing humidity") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    auto reading = validSwitchbotReading();
+    reading.humidityPct = std::nullopt;
+
+    const auto result = client.postSwitchbotReading(identity(), reading);
+
+    CHECK(result.status == api::WriteStatus::DroppedPermanent);
+    CHECK_EQ(transport.posts.size(), 0U);
+}
+
+TEST_CASE("api outbox client rejects SwitchBot reading with missing timestamp") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    auto reading = validSwitchbotReading();
+    reading.lastSeenEpochS = std::nullopt;
+
+    const auto result = client.postSwitchbotReading(identity(), reading);
+
+    CHECK(result.status == api::WriteStatus::DroppedPermanent);
+    CHECK_EQ(transport.posts.size(), 0U);
+}
+
+TEST_CASE("api outbox client rejects SwitchBot reading with zero timestamp") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    auto reading = validSwitchbotReading();
+    reading.lastSeenEpochS = 0;
+
+    const auto result = client.postSwitchbotReading(identity(), reading);
+
+    CHECK(result.status == api::WriteStatus::DroppedPermanent);
+    CHECK_EQ(transport.posts.size(), 0U);
+}
+
+TEST_CASE("api outbox client sends valid Xiaomi reading directly") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    const auto result = client.postXiaomiReading(identity(), validXiaomiReading());
+
+    CHECK(result.status == api::WriteStatus::Sent);
+    REQUIRE_EQ(transport.posts.size(), 1U);
+    CHECK_EQ(transport.posts[0].url, "https://example.test/api/xiaomi/reading");
+
+    const auto doc = parseBody(transport.posts[0]);
+    CHECK_EQ(doc["mac"].as<std::string>(), "AA:BB:CC:DD:EE:FF");
+}
+
+TEST_CASE("api outbox client rejects Xiaomi reading with missing timestamp") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    auto reading = validXiaomiReading();
+    reading.lastSeenEpochS = std::nullopt;
+
+    const auto result = client.postXiaomiReading(identity(), reading);
+
+    CHECK(result.status == api::WriteStatus::DroppedPermanent);
+    CHECK_EQ(transport.posts.size(), 0U);
+}
+
+TEST_CASE("api outbox client rejects Xiaomi reading with zero timestamp") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    auto reading = validXiaomiReading();
+    reading.lastSeenEpochS = 0;
+
+    const auto result = client.postXiaomiReading(identity(), reading);
+
+    CHECK(result.status == api::WriteStatus::DroppedPermanent);
+    CHECK_EQ(transport.posts.size(), 0U);
+}
+
+TEST_CASE("api outbox client rejects Xiaomi reading with no sensor values") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    XiaomiReading reading;
+    reading.lastSeenEpochS = 1710000000;
+
+    const auto result = client.postXiaomiReading(identity(), reading);
+
+    CHECK(result.status == api::WriteStatus::DroppedPermanent);
+    CHECK_EQ(transport.posts.size(), 0U);
+}
+
 #endif // !ARDUINO

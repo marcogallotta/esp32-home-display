@@ -62,6 +62,7 @@ COMMON_SRC := \
 	src/sensor_readings.cpp \
 	src/switchbot/history_backend.cpp \
 	src/switchbot/history_protocol.cpp \
+	src/switchbot/history_service.cpp \
 	src/switchbot/history_sync.cpp \
 	src/switchbot/protocol.cpp \
 	src/switchbot/ble.cpp \
@@ -85,6 +86,7 @@ TEST_SRC := \
 	tests/api_payloads.cpp \
 	tests/forecast_openmeteo.cpp \
 	tests/switchbot_api_integration.cpp \
+	tests/xiaomi_api_integration.cpp \
 	tests/api_sensor_write_policy.cpp \
 	tests/api_sync.cpp \
 	tests/config.cpp \
@@ -103,6 +105,7 @@ TEST_SRC := \
 	tests/switchbot_ble.cpp \
 	tests/switchbot_history_backend.cpp \
 	tests/switchbot_history_protocol.cpp \
+	tests/switchbot_history_service.cpp \
 	tests/switchbot_protocol.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
