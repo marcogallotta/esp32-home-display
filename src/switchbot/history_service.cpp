@@ -49,7 +49,7 @@ std::string sensorLabel(const SwitchbotSensorConfig& sensor) {
 
 HistoryServiceOptions effectiveOptions(const Config& config, const HistoryServiceOptions& defaults) {
     HistoryServiceOptions out = defaults;
-    out.startupWindowSeconds = config.switchbot.history.newSensorWindowSeconds;
+    out.newSensorWindowSeconds = config.switchbot.history.newSensorWindowSeconds;
     out.sampleIntervalSeconds = config.switchbot.history.sampleIntervalSeconds;
     out.historyLimitSeconds = config.switchbot.history.historyLimitSeconds;
     out.bulkBatchLimit = config.switchbot.history.bulkBatchLimit;
@@ -59,7 +59,7 @@ HistoryServiceOptions effectiveOptions(const Config& config, const HistoryServic
 HistoryPlanningOptions planningOptions(const HistoryServiceOptions& options) {
     HistoryPlanningOptions out;
     out.sampleIntervalSeconds = options.sampleIntervalSeconds;
-    out.newSensorWindowSeconds = options.startupWindowSeconds;
+    out.newSensorWindowSeconds = options.newSensorWindowSeconds;
     out.historyLimitSeconds = options.historyLimitSeconds;
     return out;
 }
@@ -538,7 +538,7 @@ void maybeRunStartupHistorySync(const Config& config,
         "SwitchBot history sync started: sensors=" +
         std::to_string(macs.size()) +
         "; target interval=" + formatDuration(effective.sampleIntervalSeconds) +
-        "; new sensor window=" + formatDuration(effective.startupWindowSeconds) +
+        "; new sensor window=" + formatDuration(effective.newSensorWindowSeconds) +
         "; history limit=" + formatDuration(effective.historyLimitSeconds)
     );
 
