@@ -17,7 +17,7 @@ static constexpr uint32_t kRecordsPerScenario = 20;
 static constexpr uint32_t kRealisticBodyBytes = 152;
 static constexpr const char* kBasePath = "/pqueue_prof";
 
-static const uint32_t kRecordSizes[] = {512, 4096};
+static const uint32_t kRecordSizes[] = {492};
 
 struct DeviceTimings {
     uint64_t sumUs = 0;
