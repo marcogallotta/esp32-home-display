@@ -11,12 +11,22 @@
 
 #include "api/types.h"
 #include "pqueue/diagnostics.h"
+#include "pqueue/queue.h"
 #include "pqueue/types.h"
 
 namespace {
 
 constexpr const char* kConfigPath = "/config.json";
 constexpr const char* kApiQueueBasePath = "/pqueue_api_spool";
+
+enum class RepairMode { Diagnose, RebuildMetadata, Format };
+#if defined(PQUEUE_DIAG_REBUILD)
+constexpr RepairMode kRepairMode = RepairMode::RebuildMetadata;
+#elif defined(PQUEUE_DIAG_FORMAT)
+constexpr RepairMode kRepairMode = RepairMode::Format;
+#else
+constexpr RepairMode kRepairMode = RepairMode::Diagnose;
+#endif
 
 struct ApiDiagnosticConfig {
     std::string baseUrl;
@@ -30,6 +40,15 @@ void printLine(const std::string& line) {
 
 std::string yesNo(bool value) {
     return value ? "yes" : "no";
+}
+
+std::string hexU32(std::uint32_t value) {
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out = "0x";
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        out.push_back(kHex[(value >> shift) & 0xFU]);
+    }
+    return out;
 }
 
 std::string statusSummary(const pqueue::Status& status) {
@@ -167,7 +186,7 @@ void printPqueueDiagnostic(const ApiDiagnosticConfig& config) {
     queueConfig.reservedBytes = config.diskReserveBytes;
     queueConfig.recordSizeBytes = pqueue::Config{}.recordSizeBytes;
 
-    const pqueue::FileStoreDiagnostic diag = pqueue::diagnoseFileStore(queueConfig, 192);
+    const pqueue::FileStoreDiagnostic diag = pqueue::diagnoseFileStore(queueConfig, 256);
 
     printLine("pqueue_diag: base_path=" + diag.basePath + " mount=" + statusSummary(diag.mountStatus));
     if (!diag.mountStatus.ok()) {
@@ -222,6 +241,9 @@ void printPqueueDiagnostic(const ApiDiagnosticConfig& config) {
         printLine(
             "pqueue_diag: checkpoint_slot=" + std::to_string(slot.slot) +
             " state=" + pqueue::checkpointSlotStateName(slot.state) +
+            " magic=" + hexU32(slot.magic) +
+            " version=" + std::to_string(slot.version) +
+            " checkpoint_bytes=" + std::to_string(slot.checkpointBytes) +
             " gen=" + std::to_string(slot.generation) +
             " head=" + std::to_string(slot.head) +
             " tail=" + std::to_string(slot.tail) +
@@ -230,7 +252,9 @@ void printPqueueDiagnostic(const ApiDiagnosticConfig& config) {
             " record_size=" + std::to_string(slot.recordSizeBytes) +
             " reserved=" + std::to_string(slot.reservedBytes) +
             " journal=" + std::to_string(slot.journalBytes) +
-            " journal_used=" + std::to_string(slot.journalUsedBytes)
+            " journal_used=" + std::to_string(slot.journalUsedBytes) +
+            " stored_crc=" + hexU32(slot.storedCrc) +
+            " computed_crc=" + hexU32(slot.computedCrc)
         );
     }
 
@@ -269,6 +293,29 @@ void printPemDiagnostic(const ApiDiagnosticConfig& config) {
     );
 }
 
+void runRepair(const ApiDiagnosticConfig& config) {
+    const char* modeName = kRepairMode == RepairMode::RebuildMetadata ? "rebuild_metadata" : "format";
+    printLine(std::string("repair: mode=") + modeName);
+
+    printLine("repair: before");
+    printPqueueDiagnostic(config);
+
+    pqueue::Config queueConfig;
+    queueConfig.basePath = kApiQueueBasePath;
+    queueConfig.storageBackend = pqueue::StorageBackend::LittleFS;
+    queueConfig.reservedBytes = config.diskReserveBytes;
+
+    pqueue::Queue queue(queueConfig);
+    const pqueue::Status st = kRepairMode == RepairMode::RebuildMetadata
+        ? queue.rebuildMetadata()
+        : queue.format();
+
+    printLine("repair: status=" + statusSummary(st));
+
+    printLine("repair: after");
+    printPqueueDiagnostic(config);
+}
+
 } // namespace
 
 void setup() {
@@ -289,7 +336,13 @@ void setup() {
 
     ApiDiagnosticConfig config;
     loadApiDiagnosticConfig(config);
-    printPqueueDiagnostic(config);
+
+    if (kRepairMode == RepairMode::Diagnose) {
+        printPqueueDiagnostic(config);
+    } else {
+        runRepair(config);
+    }
+
     printPemDiagnostic(config);
 
     printLine("api_outbox_diagnostic: done");
