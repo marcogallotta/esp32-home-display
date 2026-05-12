@@ -11,6 +11,7 @@
 
 #include "api/types.h"
 #include "pqueue/diagnostics.h"
+#include "pqueue/types.h"
 
 namespace {
 
@@ -164,6 +165,7 @@ void printPqueueDiagnostic(const ApiDiagnosticConfig& config) {
     queueConfig.basePath = kApiQueueBasePath;
     queueConfig.backend = pqueue::StorageBackend::LittleFS;
     queueConfig.reservedBytes = config.diskReserveBytes;
+    queueConfig.recordSizeBytes = pqueue::Config{}.recordSizeBytes;
 
     const pqueue::FileStoreDiagnostic diag = pqueue::diagnoseFileStore(queueConfig, 192);
 
