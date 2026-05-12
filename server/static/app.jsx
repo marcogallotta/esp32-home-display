@@ -21,6 +21,9 @@ function App() {
   const rangeWindowRef = React.useRef(rangeWindow);
   React.useEffect(() => { rangeWindowRef.current = rangeWindow; }, [rangeWindow]);
 
+  const zoomCacheRef = React.useRef(null);
+  React.useEffect(() => { zoomCacheRef.current = null; }, [range]);
+
   React.useEffect(() => {
     window.chartFactory.setZoomChangeCallback(async (zoomRange) => {
       if (!zoomRange) {
@@ -32,6 +35,12 @@ function App() {
       const zoomedDurationMs = max - min;
       const originalDurationMs = rw.endMs - rw.startMs;
       const maxPoints = Math.max(50, Math.round(rw.maxPoints * (zoomedDurationMs / originalDurationMs)));
+      const cache = zoomCacheRef.current;
+      if (cache && cache.startMs <= min && cache.endMs >= max && cache.maxPoints >= maxPoints) {
+        setZoomedHistoryBySensorId(cache.data);
+        return;
+      }
+
       const zoomWindow = {
         startTs: new Date(min).toISOString(),
         endTs: new Date(max).toISOString(),
@@ -44,7 +53,9 @@ function App() {
             return [sensor.id, window.sensorModel.normalizeReadings(rows)];
           })
         );
-        setZoomedHistoryBySensorId(Object.fromEntries(entries));
+        const result = Object.fromEntries(entries);
+        zoomCacheRef.current = { startMs: min, endMs: max, maxPoints, data: result };
+        setZoomedHistoryBySensorId(result);
       } catch (err) {
         // leave existing data in place if the fetch fails
       }
