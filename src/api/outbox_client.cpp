@@ -632,6 +632,11 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     result.dropped = drainResult.dropped + drainResult.corruptDropped;
     result.notDueYet = drainResult.notDue || drainResult.rateLimited;
     result.blockedByRetryableFailure = drainResult.sendError || drainResult.queueError;
+    if (drainResult.sent > 0 || drainResult.dropped > 0 || drainResult.corruptDropped > 0) {
+        logLine(LogLevel::Info,
+            "pqueue drain: sent=" + std::to_string(drainResult.sent) +
+            " dropped=" + std::to_string(drainResult.dropped + drainResult.corruptDropped));
+    }
     return result;
 }
 
