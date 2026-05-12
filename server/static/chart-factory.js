@@ -1,6 +1,8 @@
 window.chartFactory = {
   _charts: new Set(),
   _zoomedRange: null,
+  _onZoomChange: null,
+  _zoomDebounceTimer: null,
 
   makeTimeScale(rangeWindow) {
     return {
@@ -17,6 +19,10 @@ window.chartFactory = {
     for (const chart of this._charts) {
       if (chart === sourceChart) continue;
       chart.zoomScale("x", { min, max }, "none");
+    }
+    if (this._onZoomChange) {
+      clearTimeout(this._zoomDebounceTimer);
+      this._zoomDebounceTimer = setTimeout(() => this._onZoomChange({ min, max }), 400);
     }
   },
 
@@ -75,9 +81,11 @@ window.chartFactory = {
     }
 
     chartRef.current.data.datasets = datasets;
-    chartRef.current.options = options;
+    if (!this._zoomedRange) {
+      chartRef.current.options.scales.x.min = rangeWindow.startMs;
+      chartRef.current.options.scales.x.max = rangeWindow.endMs;
+    }
     chartRef.current.update();
-    this._applyZoom(chartRef.current);
   },
 
   timeSeriesDataset(label, rows, valueGetter) {
@@ -92,8 +100,19 @@ window.chartFactory = {
     };
   },
 
+  setZoomChangeCallback(fn) {
+    this._onZoomChange = fn;
+  },
+
+  clearZoomState() {
+    this._zoomedRange = null;
+    clearTimeout(this._zoomDebounceTimer);
+  },
+
   resetZoom(chartRefs) {
     this._zoomedRange = null;
+    clearTimeout(this._zoomDebounceTimer);
+    if (this._onZoomChange) this._onZoomChange(null);
     chartRefs.forEach((chartRef) => {
       if (chartRef.current && typeof chartRef.current.resetZoom === "function") {
         chartRef.current.resetZoom();
