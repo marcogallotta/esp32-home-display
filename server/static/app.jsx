@@ -18,6 +18,9 @@ function App() {
   const sensorsRef = React.useRef(sensors);
   React.useEffect(() => { sensorsRef.current = sensors; }, [sensors]);
 
+  const rangeWindowRef = React.useRef(rangeWindow);
+  React.useEffect(() => { rangeWindowRef.current = rangeWindow; }, [rangeWindow]);
+
   React.useEffect(() => {
     window.chartFactory.setZoomChangeCallback(async (zoomRange) => {
       if (!zoomRange) {
@@ -25,10 +28,14 @@ function App() {
         return;
       }
       const { min, max } = zoomRange;
+      const rw = rangeWindowRef.current;
+      const zoomedDurationMs = max - min;
+      const originalDurationMs = rw.endMs - rw.startMs;
+      const maxPoints = Math.max(50, Math.round(rw.maxPoints * (zoomedDurationMs / originalDurationMs)));
       const zoomWindow = {
         startTs: new Date(min).toISOString(),
         endTs: new Date(max).toISOString(),
-        maxPoints: 300,
+        maxPoints,
       };
       try {
         const entries = await Promise.all(
