@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../state.h"
+#include "state.h"
 
 #ifdef ARDUINO
 
@@ -18,3 +19,5 @@ void updateSensorRowRegion(int rowIndex);
 void updateForecastRegion();
 
 #endif
+
+void renderUi(const State& state, const UiState& uiState, bool doFullDraw);

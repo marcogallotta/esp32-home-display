@@ -60,3 +60,25 @@ def get_sensor_readings(client, api_key, sensor_id, params=None):
         headers=auth_headers(api_key),
         params=params or {},
     )
+
+
+def post_switchbot_sensors(client, api_key, sensors):
+    return client.post(
+        "/switchbot/sensors",
+        headers=auth_headers(api_key),
+        json={"sensors": sensors},
+    )
+
+
+def post_switchbot_bulk(client, api_key, sensor_id, readings):
+    return client.post(
+        "/switchbot/bulk",
+        headers=auth_headers(api_key),
+        json={"sensor_id": sensor_id, "readings": readings},
+    )
+
+
+def resolve_switchbot_sensor_id(client, api_key, mac="AA:BB:CC:DD:EE:FF"):
+    response = post_switchbot_sensors(client, api_key, [{"mac": mac}])
+    assert response.status_code == 200
+    return response.json()["sensors"][0]["sensor_id"]

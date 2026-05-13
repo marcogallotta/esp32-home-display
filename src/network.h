@@ -85,4 +85,9 @@ private:
 
 Platform& platform(const WifiConfig& wifiConfig);
 
+#ifndef ARDUINO
+void initCurl();
+void cleanupCurl();
+#endif
+
 } // namespace network

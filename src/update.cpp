@@ -37,19 +37,11 @@ std::optional<std::int64_t> validEpochOrNull(std::int64_t epochS) {
 }
 
 std::string switchbotLabel(const SwitchbotSensorState& row) {
-#ifdef ARDUINO
-    return row.identity.shortName;
-#else
     return row.identity.name;
-#endif
 }
 
 std::string xiaomiLabel(const XiaomiSensorState& row) {
-#ifdef ARDUINO
-    return row.identity.shortName;
-#else
     return row.identity.name;
-#endif
 }
 
 void logSwitchbotSummary(const State& state, std::time_t now) {
@@ -169,7 +161,6 @@ void updateSwitchbotState(
     switchbot::Scanner& scanner,
     State& state
 ) {
-    scanner.poll();
     const auto sensors = scanner.snapshot();
 
     for (std::size_t i = 0; i < state.switchbotSensors.size(); ++i) {
@@ -201,7 +192,6 @@ void updateXiaomiState(
     xiaomi::Scanner& scanner,
     State& state
 ) {
-    scanner.poll();
     const auto sensors = scanner.snapshot();
 
     for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {

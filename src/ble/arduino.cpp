@@ -2,6 +2,7 @@
 
 #include "platform.h"
 #include "scanner.h"
+#include "event_queue.h"
 
 #include <NimBLEDevice.h>
 
@@ -42,8 +43,8 @@ std::string normalizeUuidString(std::string uuid) {
 } // namespace
 
 struct Scanner::Impl {
-    explicit Impl(Callback callback)
-        : callback_(std::move(callback)) {
+    explicit Impl(EventQueue& queue)
+        : queue_(queue) {
     }
 
     class ScanCallbacks : public NimBLEScanCallbacks {
@@ -98,7 +99,7 @@ struct Scanner::Impl {
                 return;
             }
 
-            impl_.emitEvent(event);
+            impl_.queue_.push(event);
         }
 
         void onScanEnd(const NimBLEScanResults& results, int reason) override {
@@ -114,18 +115,12 @@ struct Scanner::Impl {
         Impl& impl_;
     };
 
-    Callback callback_;
+    EventQueue& queue_;
     NimBLEScan* scan{nullptr};
     std::atomic<bool> running{false};
     std::atomic<bool> restartRequested{false};
     bool nimbleInitialised{false};
     std::unique_ptr<ScanCallbacks> callbacks;
-
-    void emitEvent(const AdvertisementEvent& event) {
-        if (callback_) {
-            callback_(event);
-        }
-    }
 
     void start() {
         if (running.load()) {
@@ -187,8 +182,8 @@ struct Scanner::Impl {
     }
 };
 
-Scanner::Scanner(Callback callback)
-    : impl_(std::make_unique<Impl>(std::move(callback))) {
+Scanner::Scanner(EventQueue& queue)
+    : impl_(std::make_unique<Impl>(queue)) {
 }
 
 Scanner::~Scanner() {

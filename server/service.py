@@ -1,9 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import logging
 from math import ceil
 from typing import Any
 from uuid import UUID
 
 from psycopg.errors import UniqueViolation
+from pydantic import ValidationError
 from sqlalchemy import and_, extract, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +21,9 @@ from common import (
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import Sensor
 from sensor_spec import DataField, SensorSpec
+
+
+logger = logging.getLogger(__name__)
 
 
 def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
@@ -40,6 +45,164 @@ def list_sensors(db: Session) -> list[Sensor]:
     return db.execute(select(Sensor).order_by(Sensor.name)).scalars().all()
 
 
+def reconcile_sensor_name(sensor: Sensor, name: str | None):
+    if name is None or sensor.name == name:
+        return
+
+    if sensor.name == sensor.mac:
+        sensor.name = name
+        return
+
+    raise BadRequestError("sensor name does not match existing sensor")
+
+
+def get_or_create_sensor_for_sync(
+    db: Session,
+    *,
+    mac: str,
+    name: str | None,
+    sensor_type: int,
+) -> Sensor:
+    mac = validate_mac_address(mac)
+    sensor = get_sensor_by_mac(db, mac)
+
+    if sensor is None:
+        insert_stmt = (
+            insert(Sensor)
+            .values(mac=mac, name=name or mac, type=sensor_type)
+            .on_conflict_do_nothing(index_elements=[Sensor.mac])
+        )
+        db.execute(insert_stmt)
+        sensor = get_sensor_by_mac(db, mac)
+
+    if sensor is None:
+        raise BadRequestError("sensor could not be resolved")
+
+    if sensor.type != sensor_type:
+        raise BadRequestError("sensor type does not match existing sensor")
+
+    reconcile_sensor_name(sensor, name)
+    return sensor
+
+
+def get_sensor_timestamps(db: Session, sensor_id: UUID, sensor: SensorSpec) -> list[datetime]:
+    return list(
+        db.execute(
+            select(sensor.reading_model.timestamp)
+            .where(sensor.reading_model.sensor_id == sensor_id)
+            .order_by(sensor.reading_model.timestamp.asc())
+        ).scalars()
+    )
+
+
+def build_sync_intervals(
+    timestamps: list[datetime],
+    *,
+    gap_threshold: timedelta,
+    max_intervals: int,
+) -> tuple[list[dict[str, datetime]], bool]:
+    intervals: list[dict[str, datetime]] = []
+    capped = False
+
+    for current, next_timestamp in zip(timestamps, timestamps[1:]):
+        if next_timestamp - current < gap_threshold:
+            continue
+
+        if len(intervals) >= max_intervals:
+            capped = True
+            continue
+
+        intervals.append({"start": current, "end": next_timestamp})
+
+    return intervals, capped
+
+
+def get_sensor_sync_state(
+    db: Session,
+    *,
+    sensor_row: Sensor,
+    sensor: SensorSpec,
+    gap_threshold: timedelta,
+    max_intervals: int,
+) -> dict[str, Any]:
+    timestamps = get_sensor_timestamps(db, sensor_row.id, sensor)
+    intervals, capped = build_sync_intervals(
+        timestamps,
+        gap_threshold=gap_threshold,
+        max_intervals=max_intervals,
+    )
+
+    return {
+        "mac": sensor_row.mac,
+        "sensor_id": sensor_row.id,
+        "first_timestamp": timestamps[0] if timestamps else None,
+        "latest_timestamp": timestamps[-1] if timestamps else None,
+        "sync_intervals": intervals,
+        "sync_intervals_capped": capped,
+    }
+
+
+def get_or_create_sensors_with_sync_state(
+    db: Session,
+    requested_sensors: list[Any],
+    sensor: SensorSpec,
+    *,
+    gap_threshold_minutes: int | float,
+    max_intervals_per_sensor: int,
+    max_intervals_total: int,
+) -> dict[str, Any]:
+    resolved = []
+    warnings = []
+    remaining_total = max(0, max_intervals_total)
+    any_capped = False
+
+    gap_threshold = timedelta(minutes=gap_threshold_minutes)
+    per_sensor_limit = max(0, max_intervals_per_sensor)
+
+    for requested in requested_sensors:
+        sensor_row = get_or_create_sensor_for_sync(
+            db=db,
+            mac=requested.mac,
+            name=requested.name,
+            sensor_type=sensor.db_sensor_type,
+        )
+
+        allowed_for_sensor = min(per_sensor_limit, remaining_total)
+        state = get_sensor_sync_state(
+            db=db,
+            sensor_row=sensor_row,
+            sensor=sensor,
+            gap_threshold=gap_threshold,
+            max_intervals=allowed_for_sensor,
+        )
+        remaining_total -= len(state["sync_intervals"])
+
+        if state["sync_intervals_capped"]:
+            any_capped = True
+            logger.warning(
+                "switchbot_sync_intervals_capped sensor_id=%s mac=%s allowed=%s",
+                sensor_row.id,
+                sensor_row.mac,
+                allowed_for_sensor,
+            )
+
+        resolved.append(state)
+
+    if any_capped:
+        warnings.append(
+            {
+                "code": "sync_intervals_capped",
+                "message": (
+                    "sync intervals were capped; client should upload returned "
+                    "intervals and request /switchbot/sensors again"
+                ),
+            }
+        )
+
+    db.commit()
+    return {"sensors": resolved, "warnings": warnings}
+
+
 def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int) -> Sensor:
     sensor = get_sensor_by_mac(db, mac)
 
@@ -54,9 +217,7 @@ def ensure_sensor(db: Session, mac: str, name: str | None, sensor_type: int) -> 
     if sensor.type != sensor_type:
         raise BadRequestError("sensor type does not match existing sensor")
 
-    if name is not None and sensor.name != name:
-        raise BadRequestError("sensor name does not match existing sensor")
-
+    reconcile_sensor_name(sensor, name)
     return sensor
 
 
@@ -177,6 +338,118 @@ def ingest_reading(
         return {"status": "ok", "result": "created"}
 
     return classify_existing_reading(existing_values, reading, sensor.data_fields)
+
+
+
+def add_bulk_error(
+    errors: list[dict[str, Any]],
+    *,
+    error_limit: int,
+    index: int,
+    code: str,
+    message: str,
+):
+    if len(errors) >= error_limit:
+        return
+    errors.append({"index": index, "code": code, "message": message})
+
+
+def validation_error_message(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "invalid reading"
+
+    first = errors[0]
+    loc = first.get("loc", ())
+    message = first.get("msg", "invalid reading")
+
+    if loc:
+        return f"{'.'.join(str(part) for part in loc)}: {message}"
+    return message
+
+
+def bulk_result_counts(
+    db: Session,
+    *,
+    sensor_row: Sensor,
+    raw_readings: list[Any],
+    reading_model: Any,
+    sensor: SensorSpec,
+    error_limit: int,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "ok",
+        "received": len(raw_readings),
+        "created": 0,
+        "duplicate": 0,
+        "conflict": 0,
+        "invalid": 0,
+        "errors": [],
+    }
+
+    for index, raw in enumerate(raw_readings):
+        if not isinstance(raw, dict):
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="invalid_reading",
+                message="reading must be an object",
+            )
+            continue
+
+        try:
+            reading = reading_model(**{**raw, "mac": sensor_row.mac, "name": None})
+            row_result = ingest_reading(db=db, reading=reading, sensor=sensor)
+        except ValidationError as exc:
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="invalid_reading",
+                message=validation_error_message(exc),
+            )
+            continue
+        except BadRequestError as exc:
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="invalid_reading",
+                message=str(exc),
+            )
+            continue
+
+        row_status = row_result.get("result")
+        if row_status == "created":
+            result["created"] += 1
+        elif row_status == "duplicate":
+            result["duplicate"] += 1
+        elif row_status == "merged":
+            result["created"] += 1
+        elif row_status in {"conflict", "merged_with_conflict"}:
+            result["conflict"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="conflict",
+                message="conflicting reading ignored",
+            )
+        else:
+            result["invalid"] += 1
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="unexpected_result",
+                message=f"unexpected ingest result: {row_status}",
+            )
+
+    return result
 
 
 def choose_bucket_seconds(window_seconds: float, max_points: int) -> int:

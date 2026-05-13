@@ -158,4 +158,42 @@ void updateForecastRegion() {
     oled.updateDisplayArea(11, 0, 5, 8);
 }
 
+void renderUi(const State& state, const UiState& uiState, bool doFullDraw) {
+    if (doFullDraw) {
+        drawAllRegions(state);
+        return;
+    }
+
+    if (uiState.dirty.salahName) {
+        drawSalahNameRegion(state);
+        updateSalahNameRegion();
+    }
+
+    if (uiState.dirty.minutes) {
+        drawMinutesRegion(state);
+        updateMinutesRegion();
+    }
+
+    const int visibleRows = std::min<int>(
+        static_cast<int>(state.switchbotSensors.size()),
+        kMaxVisibleSensorRows
+    );
+
+    for (int rowIndex = 0; rowIndex < visibleRows; ++rowIndex) {
+        if (uiState.dirty.sensorRows[rowIndex]) {
+            drawSensorRowRegion(state, rowIndex);
+            updateSensorRowRegion(rowIndex);
+        }
+    }
+
+    if (uiState.dirty.forecast) {
+        drawForecastRegion(state);
+        updateForecastRegion();
+    }
+}
+
+#else
+
+void renderUi(const State&, const UiState&, bool) {}
+
 #endif

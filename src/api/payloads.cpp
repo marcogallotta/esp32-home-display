@@ -176,7 +176,7 @@ std::string toJson(const SwitchbotPayload& payload) {
 }
 
 std::string toJson(const XiaomiPayload& payload) {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<512> doc;
     doc["mac"] = payload.mac;
     doc["name"] = payload.name;
     doc["type"] = payload.type;

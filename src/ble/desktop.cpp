@@ -1,6 +1,7 @@
 #ifndef ARDUINO
 
 #include "scanner.h"
+#include "event_queue.h"
 
 #include <algorithm>
 #include <cctype>
@@ -35,19 +36,6 @@ std::optional<std::string> getStringProperty(const VariantMap& props, const char
 
     try {
         return it->second.get<std::string>();
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
-std::optional<std::int16_t> getInt16Property(const VariantMap& props, const char* key) {
-    auto it = props.find(key);
-    if (it == props.end()) {
-        return std::nullopt;
-    }
-
-    try {
-        return it->second.get<std::int16_t>();
     } catch (...) {
         return std::nullopt;
     }
@@ -110,11 +98,11 @@ std::optional<std::map<std::string, std::vector<std::uint8_t>>> getServiceData(
 } // namespace
 
 struct Scanner::Impl {
-    explicit Impl(Callback callback)
-        : callback_(std::move(callback)) {
+    explicit Impl(EventQueue& queue)
+        : queue_(queue) {
     }
 
-    Callback callback_;
+    EventQueue& queue_;
     std::map<std::string, std::string> pathToAddr;
 
     std::unique_ptr<sdbus::IConnection> connection;
@@ -126,10 +114,6 @@ struct Scanner::Impl {
     bool running{false};
 
     void emitEvent(const std::string& addr, const VariantMap& props) {
-        if (!callback_) {
-            return;
-        }
-
         const auto manufacturerData = getManufacturerData(props);
         const auto serviceData = getServiceData(props);
 
@@ -148,7 +132,7 @@ struct Scanner::Impl {
             event.serviceData = *serviceData;
         }
 
-        callback_(event);
+        queue_.push(event);
     }
 
     void primeFromExistingObjects() {
@@ -315,8 +299,8 @@ struct Scanner::Impl {
     }
 };
 
-Scanner::Scanner(Callback callback)
-    : impl_(std::make_unique<Impl>(std::move(callback))) {
+Scanner::Scanner(EventQueue& queue)
+    : impl_(std::make_unique<Impl>(queue)) {
 }
 
 Scanner::~Scanner() {

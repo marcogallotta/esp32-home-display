@@ -37,5 +37,9 @@ void printLine(const std::string& s) {
     std::cout << s << std::endl;
 }
 
+HeapStats heapStats() {
+    return {};
+}
+
 } // namespace platform
 #endif

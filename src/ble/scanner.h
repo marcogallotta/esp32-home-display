@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -15,12 +14,11 @@ struct AdvertisementEvent {
     std::map<std::string, std::vector<std::uint8_t>> serviceData;
 };
 
-// Note that callbacks are run async, not on the main thread.
+class EventQueue;
+
 class Scanner {
 public:
-    using Callback = std::function<void(const AdvertisementEvent&)>;
-
-    explicit Scanner(Callback callback);
+    explicit Scanner(EventQueue& queue);
     ~Scanner();
 
     void start();

@@ -91,6 +91,42 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail(std::string(path) + " must be one of debug, info, warning, error, none");
     };
 
+    auto readOptionalBleAddressType = [&](JsonObject obj, const char* key, std::uint8_t& value, const char* path) {
+        const JsonVariant field = obj[key];
+        if (field.isNull()) {
+            return true;
+        }
+        if (field.is<unsigned int>()) {
+            const unsigned int raw = field.as<unsigned int>();
+            if (raw > 3) {
+                return fail(std::string(path) + " must be 0, 1, 2, or 3");
+            }
+            value = static_cast<std::uint8_t>(raw);
+            return true;
+        }
+        if (!field.is<const char*>()) {
+            return fail(std::string(path) + " must be an int or string");
+        }
+        const std::string raw = field.as<const char*>();
+        if (raw == "public") {
+            value = 0;
+            return true;
+        }
+        if (raw == "random") {
+            value = 1;
+            return true;
+        }
+        if (raw == "public_id") {
+            value = 2;
+            return true;
+        }
+        if (raw == "random_id") {
+            value = 3;
+            return true;
+        }
+        return fail(std::string(path) + " must be one of public, random, public_id, random_id, 0, 1, 2, 3");
+    };
+
     const JsonObject forecast = json["forecast"];
     if (forecast.isNull()) {
         return fail("forecast is not an object");
@@ -255,6 +291,32 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("switchbot is not an object");
     }
 
+    SwitchbotHistoryConfig switchbotHistoryConfig = config.switchbot.history;
+    const JsonObject switchbotHistory = switchbot["history"];
+    if (!switchbot["history"].isNull() && switchbotHistory.isNull()) {
+        return fail("switchbot.history is not an object");
+    }
+    if (!switchbotHistory.isNull() &&
+        (!readOptionalUint32(switchbotHistory, "sample_interval_seconds", switchbotHistoryConfig.sampleIntervalSeconds, "switchbot.history.sample_interval_seconds") ||
+         !readOptionalUint32(switchbotHistory, "new_sensor_window_seconds", switchbotHistoryConfig.newSensorWindowSeconds, "switchbot.history.new_sensor_window_seconds") ||
+         !readOptionalUint32(switchbotHistory, "history_limit_seconds", switchbotHistoryConfig.historyLimitSeconds, "switchbot.history.history_limit_seconds") ||
+         !readOptionalUint32(switchbotHistory, "bulk_batch_limit", switchbotHistoryConfig.bulkBatchLimit, "switchbot.history.bulk_batch_limit"))) {
+        return false;
+    }
+
+    if (switchbotHistoryConfig.sampleIntervalSeconds == 0) {
+        return fail("switchbot.history.sample_interval_seconds must be > 0");
+    }
+    if (switchbotHistoryConfig.newSensorWindowSeconds == 0) {
+        return fail("switchbot.history.new_sensor_window_seconds must be > 0");
+    }
+    if (switchbotHistoryConfig.historyLimitSeconds == 0) {
+        return fail("switchbot.history.history_limit_seconds must be > 0");
+    }
+    if (switchbotHistoryConfig.bulkBatchLimit == 0) {
+        return fail("switchbot.history.bulk_batch_limit must be > 0");
+    }
+
     const JsonArray sensors = switchbot["sensors"];
     if (!switchbot["sensors"].isNull() && sensors.isNull()) {
         return fail("switchbot.sensors is not an array");
@@ -277,6 +339,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         sensor.mac = s["mac"].as<const char*>();
         sensor.name = s["name"].as<const char*>();
         sensor.shortName = s["short_name"].as<const char*>();
+        if (!readOptionalBleAddressType(s, "address_type", sensor.addressType, "switchbot.sensors[].address_type")) {
+            return false;
+        }
         config.switchbot.sensors.push_back(sensor);
     }
 
@@ -351,6 +416,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.salah.dstRule = dstRuleStr;
     config.salah.asrMakruhMinutes = asrMakruhMinutes;
     config.salah.hanafiAsr = hanafiAsr;
+
+    config.switchbot.history = switchbotHistoryConfig;
 
     config.xiaomi.updateIntervalMinutes = xiaomiUpdateIntervalMinutes;
 

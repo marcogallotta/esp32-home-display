@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libcurl4-openssl-dev \
+            libsystemd-dev \
+            git \
+            cmake \
+            ninja-build
+
+      - name: Install newer sdbus-c++
+        run: |
+          git clone --depth 1 https://github.com/Kistler-Group/sdbus-cpp.git /tmp/sdbus-cpp
+          cmake -S /tmp/sdbus-cpp -B /tmp/sdbus-cpp/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDBUSCPP_BUILD_TESTS=OFF \
+            -DSDBUSCPP_BUILD_CODEGEN=OFF \
+            -DSDBUSCPP_BUILD_DOCS=OFF
+          sudo cmake --build /tmp/sdbus-cpp/build --target install
+          sudo ldconfig
+
+      - name: Show sdbus-c++ version
+        run: pkg-config --modversion sdbus-c++
+
+      - name: Build and run desktop tests
+        run: make -j"$(nproc)" run-tests

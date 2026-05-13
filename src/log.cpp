@@ -44,6 +44,8 @@ const char* logLevelColour(LogLevel level) {
     }
 
     switch (level) {
+        case LogLevel::Trace:
+            return "\033[90m"; // bright black / grey
         case LogLevel::Debug:
             return "\033[36m"; // cyan
         case LogLevel::Info:
@@ -61,10 +63,16 @@ const char* resetColour() {
     return kUseAnsiColours ? "\033[0m" : "";
 }
 
+bool shouldLog(LogLevel level) {
+    return static_cast<int>(level) >= LOG_LEVEL;
+}
+
 } // namespace
 
 const char* logLevelName(LogLevel level) {
     switch (level) {
+        case LogLevel::Trace:
+            return "TRACE";
         case LogLevel::Debug:
             return "DEBUG";
         case LogLevel::Info:
@@ -103,7 +111,7 @@ void setLogMuted(bool muted) {
 }
 
 void logLine(LogLevel level, const std::string& msg) {
-    if (gLogMuted) {
+    if (gLogMuted || !shouldLog(level)) {
         return;
     }
 
@@ -122,6 +130,10 @@ void rateLimitedLog(
     const std::string& msg,
     std::uint64_t intervalMs
 ) {
+    if (gLogMuted || !shouldLog(level)) {
+        return;
+    }
+
     RateLimitedLogSlot* slot = findRateLimitedLogSlot(level, key);
     const std::uint64_t nowMs = platform::millis();
 

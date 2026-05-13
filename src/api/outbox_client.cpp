@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -27,10 +28,9 @@
 #include "payloads.h"
 
 namespace api {
-namespace {
 
 #ifndef ARDUINO
-std::string resolveDesktopPemPath(const std::string& pemFile) {
+std::string detail::resolveDesktopPemPathForApiOutbox(const std::string& pemFile) {
     if (pemFile.empty()) {
         return {};
     }
@@ -43,6 +43,8 @@ std::string resolveDesktopPemPath(const std::string& pemFile) {
     return pemFile;
 }
 #endif
+
+namespace {
 
 std::string invalidTimestampReason(const std::optional<std::int64_t>& epochS) {
     if (!epochS.has_value()) {
@@ -136,6 +138,8 @@ LogLevel mapPqueueSeverity(pqueue::Severity severity) {
 
 int logLevelRank(LogLevel level) {
     switch (level) {
+        case LogLevel::Trace:
+            return -1;
         case LogLevel::Debug:
             return 0;
         case LogLevel::Info:
@@ -280,10 +284,8 @@ std::string dropReasonName(pqueue::http::DropReason reason) {
     switch (reason) {
         case pqueue::http::DropReason::DecodeFailed:
             return "decode_failed";
-        case pqueue::http::DropReason::ClassifiedDrop:
-            return "classified_drop";
-        case pqueue::http::DropReason::MaxAttempts:
-            return "max_attempts";
+        case pqueue::http::DropReason::ServerRejected:
+            return "server_rejected";
     }
     return "dropped";
 }
@@ -309,20 +311,25 @@ void logDroppedQueueFullRequest(const ApiRequest& request) {
     );
 }
 
+std::string defaultQueueBasePath() {
+#ifdef ARDUINO
+    return "/pqueue_api_spool";
+#else
+    return "build/pqueue-spools/pqueue_api_spool";
+#endif
+}
+
 pqueue::http::Config makeHttpConfig(
     const ::Config& config,
     const std::array<pqueue::http::Header, 2>& headers,
     void* callbackContext,
     pqueue::http::ResponseCallback onResponse,
     pqueue::http::DropCallback onDrop,
-    pqueue::EventSink onEvent
+    pqueue::EventSink onEvent,
+    const std::string& queueBasePath
 ) {
     pqueue::http::Config httpConfig;
-#ifdef ARDUINO
-    httpConfig.queue.basePath = "/pqueue_api_spool";
-#else
-    httpConfig.queue.basePath = "pqueue_api_spool";
-#endif
+    httpConfig.queue.basePath = queueBasePath;
     httpConfig.queue.reservedBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
     httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
@@ -356,12 +363,33 @@ struct OutboxClientImpl {
               {"Content-Type", "application/json"},
               {"x-api-key", config.api.apiKey.c_str()},
           }},
-          transport(makeTransportConfig(config, {&OutboxClientImpl::onPqueueEvent, this})),
+          ownedTransport(std::make_unique<TransportType>(makeTransportConfig(config, {&OutboxClientImpl::onPqueueEvent, this}))),
+          transport(ownedTransport.get()),
           outbox(
-              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent),
-              transport,
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent, defaultQueueBasePath()),
+              *transport,
               &OutboxClientImpl::clockNow,
-              this
+              nullptr
+          ) {}
+
+    OutboxClientImpl(
+        const ::Config& config,
+        pqueue::http::Transport& injectedTransport,
+        std::string queueBasePath,
+        pqueue::ClockCallback clock,
+        void* clockContext
+    )
+        : config(config),
+          headers{{
+              {"Content-Type", "application/json"},
+              {"x-api-key", config.api.apiKey.c_str()},
+          }},
+          transport(&injectedTransport),
+          outbox(
+              makeHttpConfig(config, headers, this, &OutboxClientImpl::onResponse, &OutboxClientImpl::onDrop, &OutboxClientImpl::onPqueueEvent, queueBasePath),
+              *transport,
+              clock,
+              clockContext
           ) {}
 
 #ifdef ARDUINO
@@ -384,12 +412,13 @@ struct OutboxClientImpl {
         transportConfig.common.userAgent = "my-app/1.0";
         transportConfig.common.timeoutMs = 15000;
         transportConfig.common.events = events;
-        transportConfig.caBundlePath = resolveDesktopPemPath(config.api.pemFile);
+        transportConfig.caBundlePath = detail::resolveDesktopPemPathForApiOutbox(config.api.pemFile);
         return transportConfig;
     }
 
     using TransportType = pqueue::http::PosixCurlTransport;
 #endif
+
 
     static std::uint64_t clockNow(void* context) {
         (void)context;
@@ -460,7 +489,8 @@ struct OutboxClientImpl {
 
     const ::Config& config;
     std::array<pqueue::http::Header, 2> headers;
-    TransportType transport;
+    std::unique_ptr<pqueue::http::Transport> ownedTransport;
+    pqueue::http::Transport* transport = nullptr;
     pqueue::http::Outbox outbox;
     std::optional<pqueue::http::Response> lastResponse;
 };
@@ -468,6 +498,18 @@ struct OutboxClientImpl {
 OutboxClient::OutboxClient(const ::Config& config)
     : config_(config),
       pqueue_(std::make_unique<OutboxClientImpl>(config_)) {}
+
+#ifndef ARDUINO
+OutboxClient::OutboxClient(
+    const ::Config& config,
+    pqueue::http::Transport& transport,
+    std::string queueBasePath,
+    pqueue::ClockCallback clock,
+    void* clockContext
+)
+    : config_(config),
+      pqueue_(std::make_unique<OutboxClientImpl>(config_, transport, std::move(queueBasePath), clock, clockContext)) {}
+#endif
 
 OutboxClient::~OutboxClient() = default;
 
@@ -529,19 +571,30 @@ WriteResult OutboxClient::send(ApiRequest request) {
                 response.body
             );
 
-        case pqueue::SubmitStatus::Queued:
+        case pqueue::SubmitStatus::Queued: {
+            const auto stats = pqueue_->outbox.stats();
+            if (stats.count == 0) {
+                return makeWriteResult(
+                    WriteStatus::FailedTemporary,
+                    BackendWriteResult::Failed,
+                    response.statusCode,
+                    response.body
+                );
+            }
+
             logLine(
                 LogLevel::Debug,
                 "Queued API request in pqueue: " +
-                std::to_string(pqueue_->outbox.stats().count) + " queued"
+                std::to_string(stats.count) + " queued"
             );
             return makeWriteResult(
                 WriteStatus::Queued,
                 BackendWriteResult::Failed,
                 response.statusCode,
                 response.body,
-                pqueue_->outbox.stats().count > 1 ? WriteQueueReason::BacklogPresent : WriteQueueReason::RetryableFailure
+                stats.count > 1 ? WriteQueueReason::BacklogPresent : WriteQueueReason::RetryableFailure
             );
+        }
 
         case pqueue::SubmitStatus::Dropped:
             return makeWriteResult(
@@ -556,7 +609,12 @@ WriteResult OutboxClient::send(ApiRequest request) {
             return makeWriteResult(WriteStatus::DroppedQueueFull);
 
         case pqueue::SubmitStatus::SendError:
-            return makeWriteResult(WriteStatus::DroppedPermanent);
+            return makeWriteResult(
+                WriteStatus::FailedTemporary,
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body
+            );
     }
 
     return makeWriteResult(WriteStatus::DroppedPermanent);
@@ -568,14 +626,17 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     const std::uint16_t maxDrain = config_.api.outbox.drainRateCap <= 0
         ? 1
         : static_cast<std::uint16_t>(config_.api.outbox.drainRateCap);
-    const pqueue::DrainResult drainResult = pqueue_->outbox.drainBurst(maxDrain);
+    const pqueue::DrainResult drainResult = pqueue_->outbox.drainUpTo(maxDrain);
     result.attempted = drainResult.attempts;
     result.sent = drainResult.sent;
-    result.dropped = drainResult.dropped +
-        drainResult.droppedMaxAttempts +
-        drainResult.corruptDropped;
+    result.dropped = drainResult.dropped + drainResult.corruptDropped;
     result.notDueYet = drainResult.notDue || drainResult.rateLimited;
     result.blockedByRetryableFailure = drainResult.sendError || drainResult.queueError;
+    if (drainResult.sent > 0 || drainResult.dropped > 0 || drainResult.corruptDropped > 0) {
+        logLine(LogLevel::Info,
+            "pqueue drain: sent=" + std::to_string(drainResult.sent) +
+            " dropped=" + std::to_string(drainResult.dropped + drainResult.corruptDropped));
+    }
     return result;
 }
 

@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from common import check_hard_ranges
 from models import SWITCHBOT_TYPE, SwitchbotReading
@@ -27,6 +29,78 @@ class ReadingOut(BaseModel):
     timestamp: datetime
     temperature_c: float
     humidity_pct: float
+
+
+class SensorIn(BaseModel):
+    mac: str
+    name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if self.name == "":
+            raise ValueError("name must not be empty")
+        return self
+
+
+class SensorsIn(BaseModel):
+    sensors: list[SensorIn]
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if not self.sensors:
+            raise ValueError("sensors must not be empty")
+        return self
+
+
+class SyncIntervalOut(BaseModel):
+    start: datetime
+    end: datetime
+
+
+class SensorOut(BaseModel):
+    mac: str
+    sensor_id: UUID
+    first_timestamp: datetime | None
+    latest_timestamp: datetime | None
+    sync_intervals: list[SyncIntervalOut]
+    sync_intervals_capped: bool = False
+
+
+class SyncWarningOut(BaseModel):
+    code: str
+    message: str
+
+
+class SensorsOut(BaseModel):
+    sensors: list[SensorOut]
+    warnings: list[SyncWarningOut] = Field(default_factory=list)
+
+
+class BulkIn(BaseModel):
+    sensor_id: UUID
+    readings: list[Any]
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if not self.readings:
+            raise ValueError("readings must not be empty")
+        return self
+
+
+class BulkErrorOut(BaseModel):
+    index: int
+    code: str
+    message: str
+
+
+class BulkOut(BaseModel):
+    status: str
+    received: int
+    created: int
+    duplicate: int
+    conflict: int
+    invalid: int
+    errors: list[BulkErrorOut]
 
 
 SENSOR = SensorSpec[ReadingIn, ReadingOut, SwitchbotReading](

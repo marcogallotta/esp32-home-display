@@ -3,7 +3,6 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <ctime>
 #include <cstdint>
 #include <string>
@@ -12,14 +11,19 @@
 #include "api/outbox_client.h"
 #include "api/state.h"
 #include "api_sync.h"
+#include "ble/event_queue.h"
 #include "ble/scanner.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
 #include "log.h"
+#include "network.h"
 #include "platform.h"
 #include "salah/types.h"
 #include "state.h"
 #include "switchbot/ble.h"
+#ifdef ARDUINO
+#include "switchbot/history_service.h"
+#endif
 #include "timing.h"
 #include "ui/display.h"
 #include "ui/state.h"
@@ -62,6 +66,10 @@ struct AppContext {
     TimingState timing;
     bool hasValidTime = false;
 
+#ifdef ARDUINO
+    switchbot::history::HistoryServiceState historyServiceState;
+#endif
+
     State currentState;
     State previousState;
 
@@ -73,20 +81,15 @@ struct AppContext {
 
     switchbot::Scanner switchbotScanner;
     xiaomi::Scanner xiaomiScanner;
+    ble::EventQueue bleEventQueue;
     ble::Scanner bleScanner;
-
-    std::atomic<bool> switchbotUpdatePending{false};
-    std::atomic<bool> xiaomiUpdatePending{false};
 
     explicit AppContext(const Config& cfg)
         : config(cfg),
           apiOutboxClient(config),
           switchbotScanner(config.switchbot),
           xiaomiScanner(config.xiaomi),
-          bleScanner([this](const ble::AdvertisementEvent& event) {
-              switchbotScanner.handleAdvertisement(event);
-              xiaomiScanner.handleAdvertisement(event);
-          }) {
+          bleScanner(bleEventQueue) {
     }
 };
 
@@ -114,16 +117,6 @@ void initStateStorage(AppContext& app) {
     logLine(LogLevel::Info, "API uses pqueue HTTP outbox");
 }
 
-void initCallbacks(AppContext& app) {
-    app.switchbotScanner.setUpdateCallback([&]() {
-        app.switchbotUpdatePending.store(true);
-    });
-
-    app.xiaomiScanner.setUpdateCallback([&]() {
-        app.xiaomiUpdatePending.store(true);
-    });
-}
-
 void initPlatform(AppContext& app) {
     app.hasValidTime = platform::initTime(app.config);
     app.bleScanner.start();
@@ -139,7 +132,6 @@ bool initApp(AppContext& app) {
     }
 
     initStateStorage(app);
-    initCallbacks(app);
     initPlatform(app);
     return true;
 }
@@ -196,8 +188,8 @@ void updateSalahIfDue(AppContext& app, std::time_t now) {
     markSalahUpdated(now2, app.timing);
 }
 
-void updateSwitchbotIfDue(AppContext& app, std::time_t now) {
-    if (!app.switchbotUpdatePending.exchange(false) && !areSensorsDue(now, app.timing)) {
+void updateSwitchbotIfDue(AppContext& app, std::time_t now, bool newData) {
+    if (!newData && !areSensorsDue(now, app.timing)) {
         return;
     }
 
@@ -205,8 +197,8 @@ void updateSwitchbotIfDue(AppContext& app, std::time_t now) {
     markSensorsUpdated(now, app.timing);
 }
 
-void updateXiaomiIfDue(AppContext& app, std::time_t now) {
-    if (!app.xiaomiUpdatePending.exchange(false) && !areXiaomiDue(now, app.timing)) {
+void updateXiaomiIfDue(AppContext& app, std::time_t now, bool newData) {
+    if (!newData && !areXiaomiDue(now, app.timing)) {
         return;
     }
 
@@ -243,10 +235,10 @@ void updateForecastIfDue(AppContext& app, std::time_t now) {
     }
 }
 
-void updateDomainState(AppContext& app, std::time_t now) {
+void updateDomainState(AppContext& app, std::time_t now, bool switchbotUpdated, bool xiaomiUpdated) {
     updateSalahIfDue(app, now);
-    updateSwitchbotIfDue(app, now);
-    updateXiaomiIfDue(app, now);
+    updateSwitchbotIfDue(app, now, switchbotUpdated);
+    updateXiaomiIfDue(app, now, xiaomiUpdated);
     updateForecastIfDue(app, now);
 }
 
@@ -323,44 +315,6 @@ void logDirtyRegions(const AppContext& app) {
     );
 }
 
-void renderUi(const AppContext& app, bool doFullDraw) {
-#ifdef ARDUINO
-    if (doFullDraw) {
-        drawAllRegions(app.currentState);
-        return;
-    }
-
-    if (app.currentUiState.dirty.salahName) {
-        drawSalahNameRegion(app.currentState);
-        updateSalahNameRegion();
-    }
-
-    if (app.currentUiState.dirty.minutes) {
-        drawMinutesRegion(app.currentState);
-        updateMinutesRegion();
-    }
-
-    const int visibleRows = std::min<int>(
-        static_cast<int>(app.currentState.switchbotSensors.size()),
-        kMaxVisibleSensorRows
-    );
-
-    for (int rowIndex = 0; rowIndex < visibleRows; ++rowIndex) {
-        if (app.currentUiState.dirty.sensorRows[rowIndex]) {
-            drawSensorRowRegion(app.currentState, rowIndex);
-            updateSensorRowRegion(rowIndex);
-        }
-    }
-
-    if (app.currentUiState.dirty.forecast) {
-        drawForecastRegion(app.currentState);
-        updateForecastRegion();
-    }
-#else
-    (void)app;
-    (void)doFullDraw;
-#endif
-}
 
 void logInvalidTimeApiSyncSkipped(std::uint64_t nowMs) {
     if (nowMs >= kInvalidTimeApiSyncErrorAfterMs) {
@@ -403,7 +357,7 @@ void syncOutputs(AppContext& app, std::time_t now) {
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);
     logDirtyRegions(app);
-    renderUi(app, doFullDraw);
+    renderUi(app.currentState, app.currentUiState, doFullDraw);
 }
 
 void sleepUntilNextDue(AppContext& app) {
@@ -412,14 +366,65 @@ void sleepUntilNextDue(AppContext& app) {
     platform::delayMs(delayMs);
 }
 
+void logHeapStats(const char* label, const platform::HeapStats& stats) {
+#ifdef ARDUINO
+    const int fragPct = stats.freeBytes > 0
+        ? static_cast<int>(100 - (stats.largestFreeBlock * 100 / stats.freeBytes))
+        : 0;
+    logLine(LogLevel::Debug,
+        std::string("heap ") + label +
+        ": free=" + std::to_string(stats.freeBytes) +
+        " largest=" + std::to_string(stats.largestFreeBlock) +
+        " frag=" + std::to_string(fragPct) + "%"
+    );
+#else
+    (void)label;
+    (void)stats;
+#endif
+}
+
 void tick(AppContext& app) {
     const std::time_t now = std::time(nullptr);
 
     std::swap(app.previousState, app.currentState);
     prepareCurrentState(app.currentState, app.previousState);
 
+    const platform::HeapStats heapPreBle = platform::heapStats();
     app.bleScanner.poll();
-    updateDomainState(app, now);
+
+    bool switchbotUpdated = false;
+    bool xiaomiUpdated = false;
+    int bleEventsProcessed = 0;
+    ble::AdvertisementEvent event;
+    while (app.bleEventQueue.pop(event)) {
+        if (app.switchbotScanner.handleAdvertisement(event)) switchbotUpdated = true;
+        if (app.xiaomiScanner.handleAdvertisement(event)) xiaomiUpdated = true;
+        ++bleEventsProcessed;
+    }
+
+    const platform::HeapStats heapPostBle = platform::heapStats();
+    logHeapStats("pre-BLE", heapPreBle);
+    logHeapStats("post-BLE", heapPostBle);
+#ifdef ARDUINO
+    if (bleEventsProcessed > 0) {
+        logLine(LogLevel::Debug,
+            "BLE drained " + std::to_string(bleEventsProcessed) +
+            " events, largest-block delta=" +
+            std::to_string(static_cast<int>(heapPostBle.largestFreeBlock) -
+                           static_cast<int>(heapPreBle.largestFreeBlock))
+        );
+    }
+#endif
+
+    updateDomainState(app, now, switchbotUpdated, xiaomiUpdated);
+#ifdef ARDUINO
+    switchbot::history::maybeRunStartupHistorySync(
+        app.config,
+        app.bleScanner,
+        app.hasValidTime,
+        app.historyServiceState
+    );
+#endif
     syncOutputs(app, now);
     sleepUntilNextDue(app);
 }
@@ -444,6 +449,9 @@ void run() {
 }
 
 #ifdef ARDUINO
+// Override weak symbol from framework main.cpp — mbedTLS SSL handshake needs ~8KB alone.
+size_t getArduinoLoopTaskStackSize() { return 16384; }
+
 void setup() {
     Serial.begin(115200);
     run();
@@ -453,7 +461,9 @@ void loop() {
 }
 #else
 int main() {
+    network::initCurl();
     run();
+    network::cleanupCurl();
     return 0;
 }
 #endif
