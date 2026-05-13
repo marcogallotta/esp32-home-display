@@ -18,7 +18,7 @@ def test_name_mismatch_is_rejected(client, api_key):
     )
 
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "result": "created"}
+    assert first.json() == {"result": "created", "warnings": []}
 
     assert second.status_code == 400
     assert second.json() == {"detail": "sensor name does not match existing sensor"}
@@ -38,7 +38,7 @@ def test_cross_sensor_type_mismatch_is_rejected(client, api_key):
     )
 
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "result": "created"}
+    assert first.json() == {"result": "created", "warnings": []}
 
     assert second.status_code == 400
     assert second.json() == {"detail": "sensor type does not match existing sensor"}

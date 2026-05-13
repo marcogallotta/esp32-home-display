@@ -235,7 +235,7 @@ def classify_existing_reading(
     data_fields: tuple[DataField, ...],
 ) -> dict[str, Any]:
     if existing_values is None:
-        return {"status": "ok", "result": "created"}
+        return {"result": "created", "warnings": []}
 
     warnings = []
     merged = False
@@ -262,12 +262,12 @@ def classify_existing_reading(
             )
 
     if warnings and merged:
-        return {"status": "ok", "result": "merged_with_conflict", "warnings": warnings}
+        return {"result": "merged_with_conflict", "warnings": warnings}
     if warnings:
-        return {"status": "ok", "result": "conflict", "warnings": warnings}
+        return {"result": "conflict", "warnings": warnings}
     if merged:
-        return {"status": "ok", "result": "merged"}
-    return {"status": "ok", "result": "duplicate"}
+        return {"result": "merged", "warnings": []}
+    return {"result": "duplicate", "warnings": []}
 
 
 def prepare_reading(reading: Any, sensor: SensorSpec) -> Any:
@@ -364,7 +364,7 @@ def ingest_reading(
     row = execute_reading_upsert(db, reading, sensor_row, sensor, commit=commit)
 
     if existing_values is None and row is not None and row.inserted:
-        return {"status": "ok", "result": "created"}
+        return {"result": "created", "warnings": []}
 
     return classify_existing_reading(existing_values, reading, sensor.data_fields)
 

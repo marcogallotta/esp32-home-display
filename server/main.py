@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
@@ -34,6 +34,11 @@ from service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class IngestResponse(BaseModel):
+    result: Literal["created", "duplicate", "merged", "conflict", "merged_with_conflict"]
+    warnings: list[dict[str, Any]]
 
 
 class SensorOut(BaseModel):
@@ -258,11 +263,11 @@ def create_app(config: Config) -> FastAPI:
             error_limit=BULK_ERROR_DETAIL_LIMIT,
         )
 
-    @device.post("/switchbot/reading")
+    @device.post("/switchbot/reading", response_model=IngestResponse)
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=sb.SENSOR)
 
-    @device.post("/xiaomi/reading")
+    @device.post("/xiaomi/reading", response_model=IngestResponse)
     def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 

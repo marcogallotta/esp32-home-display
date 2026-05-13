@@ -7,10 +7,7 @@ def test_switchbot_create_accepts_valid_payload(client, api_key):
     response = post_switchbot(client, api_key, make_switchbot_payload())
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert response.json() == {"result": "created", "warnings": []}
 
 
 @pytest.mark.parametrize(
@@ -148,10 +145,7 @@ def test_switchbot_create_accepts_soft_out_of_range_temperature_and_logs_warning
     response = post_switchbot(client, api_key, make_switchbot_payload(temperature_c=-25.0))
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "result": "created",
-    }
+    assert response.json() == {"result": "created", "warnings": []}
 
     messages = [record.getMessage() for record in caplog.records]
     assert any(

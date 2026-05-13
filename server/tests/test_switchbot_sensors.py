@@ -205,7 +205,7 @@ def test_switchbot_sensors_placeholder_allows_later_name_assignment(client, api_
 
     assert created.status_code == 200
     assert reading.status_code == 200
-    assert reading.json() == {"status": "ok", "result": "created"}
+    assert reading.json() == {"result": "created", "warnings": []}
     assert db_session.query(Sensor).one().name == "Bedroom"
 
 
