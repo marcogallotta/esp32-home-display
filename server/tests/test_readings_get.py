@@ -1,3 +1,5 @@
+import pytest
+
 from tests.helpers import (
     get_sensor_id,
     get_sensor_readings,
@@ -172,3 +174,85 @@ def test_xiaomi_get_returns_basic_fetch(authed_client, api_key):
             "conductivity_us_cm": payload.get("conductivity_us_cm"),
         }
     ]
+
+
+def test_xiaomi_get_normalizes_timestamp_to_utc(authed_client, api_key):
+    payload = make_xiaomi_payload(timestamp="2026-04-21T20:00:00+02:00")
+    post_xiaomi(authed_client, api_key, payload)
+    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
+
+    response = get_sensor_readings(authed_client, sensor_id)
+
+    assert response.status_code == 200
+    assert response.json()[0]["timestamp"] == "2026-04-21T18:00:00Z"
+
+
+@pytest.mark.parametrize(
+    ("param", "value"),
+    [
+        ("before", "2026-04-21T18:00:00"),
+        ("after", "2026-04-21T18:00:00"),
+        ("start_ts", "2026-04-21T18:00:00"),
+        ("end_ts", "2026-04-21T18:00:00"),
+    ],
+    ids=["before", "after", "start_ts", "end_ts"],
+)
+def test_get_rejects_naive_query_timestamp(authed_client, api_key, param, value):
+    payload = make_switchbot_payload()
+    post_switchbot(authed_client, api_key, payload)
+    sensor_id = get_sensor_id(authed_client, sensor_type="switchbot")
+
+    response = get_sensor_readings(authed_client, sensor_id, {param: value})
+
+    assert response.status_code == 400
+    assert param in response.json()["detail"]
+
+
+def test_get_before_after_offset_timezone_interpreted_as_utc(authed_client, api_key):
+    first = make_switchbot_payload(timestamp="2026-04-21T18:00:00Z", temperature_c=21.5)
+    middle = make_switchbot_payload(timestamp="2026-04-21T18:05:00Z", temperature_c=22.5)
+    last = make_switchbot_payload(timestamp="2026-04-21T18:10:00Z", temperature_c=23.5)
+
+    post_switchbot(authed_client, api_key, first)
+    post_switchbot(authed_client, api_key, middle)
+    post_switchbot(authed_client, api_key, last)
+    sensor_id = get_sensor_id(authed_client, sensor_type="switchbot")
+
+    # 20:02+02:00 == 18:02Z, 20:08+02:00 == 18:08Z — should match only middle
+    response = get_sensor_readings(
+        authed_client,
+        sensor_id,
+        {
+            "after": "2026-04-21T20:02:00+02:00",
+            "before": "2026-04-21T20:08:00+02:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["timestamp"] == middle["timestamp"]
+
+
+def test_get_start_ts_end_ts_offset_timezone_interpreted_as_utc(authed_client, api_key):
+    first = make_switchbot_payload(timestamp="2026-04-21T18:00:00Z", temperature_c=21.5)
+    middle = make_switchbot_payload(timestamp="2026-04-21T18:05:00Z", temperature_c=22.5)
+    last = make_switchbot_payload(timestamp="2026-04-21T18:10:00Z", temperature_c=23.5)
+
+    post_switchbot(authed_client, api_key, first)
+    post_switchbot(authed_client, api_key, middle)
+    post_switchbot(authed_client, api_key, last)
+    sensor_id = get_sensor_id(authed_client, sensor_type="switchbot")
+
+    # 20:02+02:00 == 18:02Z, 20:08+02:00 == 18:08Z — should match only middle
+    response = get_sensor_readings(
+        authed_client,
+        sensor_id,
+        {
+            "start_ts": "2026-04-21T20:02:00+02:00",
+            "end_ts": "2026-04-21T20:08:00+02:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["timestamp"] == middle["timestamp"]

@@ -8,6 +8,28 @@ from tests.helpers import (
 )
 
 
+@pytest.mark.parametrize(
+    ("timestamp", "expected_status"),
+    [
+        ("2026-04-21T18:00:00Z", 200),
+        ("2026-04-21T20:00:00+02:00", 200),
+        ("2026-04-21T18:00:00", 400),
+        (None, 422),
+    ],
+    ids=["utc", "offset timezone", "missing timezone", "missing field"],
+)
+def test_xiaomi_create_validates_timestamp(client, api_key, timestamp, expected_status):
+    payload = make_xiaomi_payload()
+    if timestamp is None:
+        del payload["timestamp"]
+    else:
+        payload["timestamp"] = timestamp
+
+    response = post_xiaomi(client, api_key, payload)
+
+    assert response.status_code == expected_status
+
+
 def test_xiaomi_create_accepts_partial_reading(client, api_key):
     payload = make_xiaomi_payload(
         temperature_c=None,

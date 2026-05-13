@@ -11,6 +11,7 @@ def main():
     Base.metadata.drop_all(engine)
 
     alembic_cfg = AlembicConfig("alembic.ini")
+    command.stamp(alembic_cfg, "base")
     command.upgrade(alembic_cfg, "head")
     print("database reset complete")
 
