@@ -1,3 +1,11 @@
+if (!window.CONFIG) {
+  ReactDOM.createRoot(document.getElementById("root")).render(
+    <div className="card error-card">
+      {window.__configError || "Dashboard config missing: static/config.js not found"}
+    </div>
+  );
+} else {
+
 function App() {
   const [range, setRange] = React.useState("24h");
   const [selectedSensorId, setSelectedSensorId] = React.useState("all");
@@ -413,3 +421,4 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+}
