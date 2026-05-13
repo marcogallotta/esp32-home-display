@@ -270,19 +270,17 @@ def classify_existing_reading(
     return {"status": "ok", "result": "duplicate"}
 
 
-def ingest_reading(
+def prepare_reading(reading: Any, sensor: SensorSpec) -> None:
+    reading.mac = validate_mac_address(reading.mac)
+    reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
+    warn_soft_ranges(reading, sensor.soft_ranges)
+
+
+def get_existing_values(
     db: Session,
     reading: Any,
     sensor: SensorSpec,
-    *,
-    commit: bool = True,
-):
-    reading.mac = validate_mac_address(reading.mac)
-    reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
-
-    warn_soft_ranges(reading, sensor.soft_ranges)
-    sensor_row = ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
-
+) -> dict[str, Any] | None:
     existing = db.execute(
         select(sensor.reading_model).where(
             sensor.reading_model.mac == reading.mac,
@@ -290,13 +288,23 @@ def ingest_reading(
         )
     ).scalar_one_or_none()
 
-    existing_values = None
-    if existing is not None:
-        existing_values = {
-            field.name: getattr(existing, field.name)
-            for field in sensor.data_fields
-        }
+    if existing is None:
+        return None
 
+    return {
+        field.name: getattr(existing, field.name)
+        for field in sensor.data_fields
+    }
+
+
+def execute_reading_upsert(
+    db: Session,
+    reading: Any,
+    sensor_row: Sensor,
+    sensor: SensorSpec,
+    *,
+    commit: bool,
+):
     values = reading.model_dump(exclude={"name"})
     values["sensor_id"] = sensor_row.id
 
@@ -331,13 +339,27 @@ def ingest_reading(
         row = db.execute(upsert_stmt).first()
         if commit:
             db.commit()
+        return row
     except IntegrityError as exc:
         if not commit:
             raise
         db.rollback()
         if not is_expected_unique_conflict(exc, sensor.unique_constraint_name):
             raise
-        row = None
+        return None
+
+
+def ingest_reading(
+    db: Session,
+    reading: Any,
+    sensor: SensorSpec,
+    *,
+    commit: bool = True,
+):
+    prepare_reading(reading, sensor)
+    sensor_row = ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
+    existing_values = get_existing_values(db, reading, sensor)
+    row = execute_reading_upsert(db, reading, sensor_row, sensor, commit=commit)
 
     if existing_values is None and row is not None and row.inserted:
         return {"status": "ok", "result": "created"}

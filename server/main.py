@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -29,6 +32,8 @@ from service import (
     list_sensors,
     verify_api_key,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SensorOut(BaseModel):
@@ -98,6 +103,29 @@ def create_app(config: Config) -> FastAPI:
     @app.exception_handler(ServerMisconfiguredError)
     def handle_server_misconfigured(_: Request, exc: ServerMisconfiguredError):
         return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path.endswith("/switchbot/bulk"):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            readings = body.get("readings") if isinstance(body, dict) else None
+            timestamps = [
+                r.get("timestamp")
+                for r in (readings or [])
+                if isinstance(r, dict) and "timestamp" in r
+            ]
+            logger.warning(
+                "switchbot/bulk rejected: detail=%s sensor_id=%s readings=%s first_ts=%s last_ts=%s",
+                exc.errors(),
+                body.get("sensor_id") if isinstance(body, dict) else None,
+                len(readings) if readings is not None else None,
+                timestamps[0] if timestamps else None,
+                timestamps[-1] if timestamps else None,
+            )
+        return await request_validation_exception_handler(request, exc)
 
     @app.get("/health")
     def health():
@@ -185,7 +213,25 @@ def create_app(config: Config) -> FastAPI:
         db: Session = Depends(get_db),
     ):
         max_readings = request.app.state.config.switchbot_bulk_max_readings
-        if len(payload.readings) > max_readings:
+        readings = payload.readings
+        timestamps = [
+            r.timestamp
+            for r in readings
+            if hasattr(r, "timestamp")
+        ]
+
+        def _log_rejection(detail: str):
+            logger.warning(
+                "switchbot/bulk rejected: detail=%s sensor_id=%s readings=%s first_ts=%s last_ts=%s",
+                detail,
+                payload.sensor_id,
+                len(readings),
+                timestamps[0] if timestamps else None,
+                timestamps[-1] if timestamps else None,
+            )
+
+        if len(readings) > max_readings:
+            _log_rejection(f"readings must contain at most {max_readings} items")
             raise HTTPException(
                 status_code=422,
                 detail=f"readings must contain at most {max_readings} items",
@@ -193,9 +239,11 @@ def create_app(config: Config) -> FastAPI:
 
         sensor_row = get_sensor_by_id(db, payload.sensor_id)
         if sensor_row is None:
+            _log_rejection("unknown sensor_id")
             raise HTTPException(status_code=422, detail="unknown sensor_id")
 
         if sensor_row.type != SWITCHBOT_TYPE:
+            _log_rejection("sensor_id is not a SwitchBot sensor")
             raise HTTPException(
                 status_code=422,
                 detail="sensor_id is not a SwitchBot sensor",
