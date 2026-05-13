@@ -8,6 +8,9 @@ from config import load_config
 from db import build_engine, build_session_factory
 from models import Base
 
+if os.getenv("ENV", "dev") != "test":
+    raise RuntimeError("Tests must be run with ENV=test")
+
 
 @pytest.fixture
 def app():
