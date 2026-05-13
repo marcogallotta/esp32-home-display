@@ -51,6 +51,10 @@ db-rm-all:
 	} || true
 
 db-reset-schema: db-start db-wait
+	@if [ "$(ENV)" != "test" ]; then \
+		printf "Reset schema on $(DB_NAME) ($(ENV))? [y/N] " && \
+		read ans && [ "$$ans" = "y" ] || exit 0; \
+	fi
 	python3 reset_db.py
 
 run-server:
