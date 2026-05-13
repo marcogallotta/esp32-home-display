@@ -21,7 +21,7 @@ class ReadingIn(BaseModel):
         if self.name == "":
             raise ValueError("name must not be empty")
 
-        check_hard_ranges(self, SENSOR.hard_ranges)
+        check_hard_ranges(self, SENSOR.data_fields)
         return self
 
 
@@ -109,14 +109,7 @@ SENSOR = SensorSpec[ReadingIn, ReadingOut, SwitchbotReading](
     reading_out=ReadingOut,
     unique_constraint_name="switchbot_readings_mac_timestamp_uniq",
     data_fields=(
-        DataField("temperature_c", SwitchbotReading.temperature_c),
-        DataField("humidity_pct", SwitchbotReading.humidity_pct),
+        DataField("temperature_c", SwitchbotReading.temperature_c, hard_range=(-40.0, 125.0), soft_range=(-20.0, 60.0)),
+        DataField("humidity_pct", SwitchbotReading.humidity_pct, hard_range=(0.0, 100.0)),
     ),
-    hard_ranges={
-        "temperature_c": (-40.0, 125.0),
-        "humidity_pct": (0.0, 100.0),
-    },
-    soft_ranges={
-        "temperature_c": (-20.0, 60.0),
-    },
 )

@@ -4,6 +4,7 @@ import logging
 import re
 
 from errors import BadRequestError
+from sensor_spec import DataField
 
 
 logger = logging.getLogger(__name__)
@@ -37,22 +38,40 @@ def check_range(name: str, value, min_value, max_value):
         raise ValueError(f"{name} must be in [{min_value}, {max_value}]")
 
 
-def check_hard_ranges(reading, hard_ranges: dict[str, tuple[int | float, int | float]]):
-    for field, (min_value, max_value) in hard_ranges.items():
-        check_range(field, getattr(reading, field), min_value, max_value)
+_MISSING = object()
+
+
+def _get_field(reading, field: str):
+    value = getattr(reading, field, _MISSING)
+    if value is _MISSING:
+        raise AttributeError(f"reading has no attribute '{field}'")
+    return value
+
+
+def check_hard_ranges(reading, data_fields: tuple[DataField, ...]):
+    for field in data_fields:
+        if field.hard_range is None:
+            continue
+        value = _get_field(reading, field.name)
+        if value is None:
+            continue
+        check_range(field.name, value, *field.hard_range)
 
 
 def warn_if_suspicious(metric: str, value, mac: str):
     logger.warning("Suspicious %s=%s for sensor %s", metric, value, mac)
 
 
-def warn_soft_ranges(reading, soft_ranges: dict[str, tuple[int | float, int | float]]):
-    for field, (min_value, max_value) in soft_ranges.items():
-        value = getattr(reading, field)
+def warn_soft_ranges(reading, data_fields: tuple[DataField, ...]):
+    for field in data_fields:
+        if field.soft_range is None:
+            continue
+        value = _get_field(reading, field.name)
         if value is None:
             continue
+        min_value, max_value = field.soft_range
         if value < min_value or value > max_value:
-            warn_if_suspicious(field, value, reading.mac)
+            warn_if_suspicious(field.name, value, reading.mac)
 
 
 def validate_mac_address(mac: str) -> str:

@@ -273,7 +273,7 @@ def classify_existing_reading(
 def prepare_reading(reading: Any, sensor: SensorSpec) -> None:
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
-    warn_soft_ranges(reading, sensor.soft_ranges)
+    warn_soft_ranges(reading, sensor.data_fields)
 
 
 def get_existing_values(

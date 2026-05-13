@@ -21,6 +21,8 @@ class ReadingLike(Protocol):
 class DataField:
     name: str
     column: InstrumentedAttribute
+    hard_range: Range | None = None
+    soft_range: Range | None = None
 
 
 ReadingT = TypeVar("ReadingT", bound=ReadingLike)
@@ -35,5 +37,3 @@ class SensorSpec(Generic[ReadingT, ReadingOutT, ReadingModelT]):
     reading_out: type[ReadingOutT]
     unique_constraint_name: str
     data_fields: tuple[DataField, ...]
-    hard_ranges: dict[str, Range]
-    soft_ranges: dict[str, Range]
