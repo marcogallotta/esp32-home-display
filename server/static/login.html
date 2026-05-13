@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Login</title>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <style>
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 260px;
+    }
+    input[type="password"] {
+      padding: 8px;
+      font-size: 1rem;
+    }
+    button[type="submit"] {
+      padding: 8px 16px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <form method="post" action="/login">
+    <h2>Dashboard Login</h2>
+    <input type="password" name="password" placeholder="Password" autofocus required />
+    <button type="submit">Log in</button>
+  </form>
+</body>
+</html>

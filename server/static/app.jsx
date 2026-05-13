@@ -6,6 +6,7 @@ function App() {
 
   const [sensors, setSensors] = React.useState([]);
   const [historyBySensorId, setHistoryBySensorId] = React.useState({});
+  const [zoomedHistoryBySensorId, setZoomedHistoryBySensorId] = React.useState(null);
   const [loadingSensors, setLoadingSensors] = React.useState(true);
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [sensorError, setSensorError] = React.useState("");
@@ -13,6 +14,54 @@ function App() {
   const [latestPollError, setLatestPollError] = React.useState("");
   const [lastLatestPollAt, setLastLatestPollAt] = React.useState(null);
   const [rangeWindow, setRangeWindow] = React.useState(window.sensorModel.buildRangeWindow("24h"));
+
+  const sensorsRef = React.useRef(sensors);
+  React.useEffect(() => { sensorsRef.current = sensors; }, [sensors]);
+
+  const rangeWindowRef = React.useRef(rangeWindow);
+  React.useEffect(() => { rangeWindowRef.current = rangeWindow; }, [rangeWindow]);
+
+  const zoomCacheRef = React.useRef(null);
+  React.useEffect(() => { zoomCacheRef.current = null; }, [range]);
+
+  React.useEffect(() => {
+    window.chartFactory.setZoomChangeCallback(async (zoomRange) => {
+      if (!zoomRange) {
+        setZoomedHistoryBySensorId(null);
+        return;
+      }
+      const { min, max } = zoomRange;
+      const rw = rangeWindowRef.current;
+      const zoomedDurationMs = max - min;
+      const originalDurationMs = rw.endMs - rw.startMs;
+      const maxPoints = Math.max(50, Math.round(rw.maxPoints * (zoomedDurationMs / originalDurationMs)));
+      const cache = zoomCacheRef.current;
+      if (cache && cache.startMs <= min && cache.endMs >= max && cache.maxPoints >= maxPoints) {
+        setZoomedHistoryBySensorId(cache.data);
+        return;
+      }
+
+      const zoomWindow = {
+        startTs: new Date(min).toISOString(),
+        endTs: new Date(max).toISOString(),
+        maxPoints,
+      };
+      try {
+        const entries = await Promise.all(
+          sensorsRef.current.map(async (sensor) => {
+            const rows = await window.api.fetchSensorReadings(sensor.id, zoomWindow);
+            return [sensor.id, window.sensorModel.normalizeReadings(rows)];
+          })
+        );
+        const result = Object.fromEntries(entries);
+        zoomCacheRef.current = { startMs: min, endMs: max, maxPoints, data: result };
+        setZoomedHistoryBySensorId(result);
+      } catch (err) {
+        // leave existing data in place if the fetch fails
+      }
+    });
+    return () => window.chartFactory.setZoomChangeCallback(null);
+  }, []);
 
   const tempCanvas = React.useRef(null);
   const humidityCanvas = React.useRef(null);
@@ -57,6 +106,8 @@ function App() {
 
     async function loadHistory() {
       const nextRangeWindow = window.sensorModel.buildRangeWindow(range);
+      setZoomedHistoryBySensorId(null);
+      window.chartFactory.clearZoomState();
       setLoadingHistory(true);
       setHistoryError("");
 
@@ -135,45 +186,49 @@ function App() {
     return selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
   }, [selectedSwitchbotSensor, switchbotSensors]);
 
+  const historyFor = React.useCallback((sensorId) => {
+    return (zoomedHistoryBySensorId?.[sensorId] ?? historyBySensorId[sensorId]) || [];
+  }, [zoomedHistoryBySensorId, historyBySensorId]);
+
   const tempDatasets = React.useMemo(() => {
     return switchbotSensorsToPlot.map((sensor) =>
       window.chartFactory.timeSeriesDataset(
         sensor.name,
-        historyBySensorId[sensor.id] || [],
+        historyFor(sensor.id),
         (row) => row.temperature_c == null ? null : window.metrics.round1(row.temperature_c)
       )
     );
-  }, [switchbotSensorsToPlot, historyBySensorId]);
+  }, [switchbotSensorsToPlot, historyFor]);
 
   const humidityDatasets = React.useMemo(() => {
     return switchbotSensorsToPlot.map((sensor) =>
       window.chartFactory.timeSeriesDataset(
         sensor.name,
-        historyBySensorId[sensor.id] || [],
+        historyFor(sensor.id),
         (row) => row.humidity_pct == null ? null : Math.round(row.humidity_pct)
       )
     );
-  }, [switchbotSensorsToPlot, historyBySensorId]);
+  }, [switchbotSensorsToPlot, historyFor]);
 
   const absHumidityDatasets = React.useMemo(() => {
     return switchbotSensorsToPlot.map((sensor) =>
       window.chartFactory.timeSeriesDataset(
         sensor.name,
-        historyBySensorId[sensor.id] || [],
+        historyFor(sensor.id),
         (row) => window.metrics.round1(window.metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct))
       )
     );
-  }, [switchbotSensorsToPlot, historyBySensorId]);
+  }, [switchbotSensorsToPlot, historyFor]);
 
   const vpdDatasets = React.useMemo(() => {
     return switchbotSensorsToPlot.map((sensor) =>
       window.chartFactory.timeSeriesDataset(
         sensor.name,
-        historyBySensorId[sensor.id] || [],
+        historyFor(sensor.id),
         (row) => window.metrics.round1(window.metrics.calcVpd(row.temperature_c, row.humidity_pct))
       )
     );
-  }, [switchbotSensorsToPlot, historyBySensorId]);
+  }, [switchbotSensorsToPlot, historyFor]);
 
   const xiaomiDatasets = React.useMemo(() => {
     if (xiaomiSensors.length === 0) return [];
@@ -182,11 +237,11 @@ function App() {
     return [
       window.chartFactory.timeSeriesDataset(
         `${sensor.name} ${xiaomiMetric.replaceAll("_", " ")}`,
-        historyBySensorId[sensor.id] || [],
+        historyFor(sensor.id),
         (row) => row[xiaomiMetric]
       ),
     ];
-  }, [xiaomiSensors, historyBySensorId, xiaomiMetric]);
+  }, [xiaomiSensors, historyFor, xiaomiMetric]);
 
   React.useEffect(() => {
     window.chartFactory.lineChart(tempCanvas.current, tempChart, tempDatasets, "°C", rangeWindow);

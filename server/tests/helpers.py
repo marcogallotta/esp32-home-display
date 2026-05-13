@@ -40,8 +40,8 @@ def post_xiaomi(client, api_key, payload):
     )
 
 
-def get_sensor_id(client, api_key, *, name="location A", sensor_type):
-    response = client.get("/sensors", headers=auth_headers(api_key))
+def get_sensor_id(client, *, name="location A", sensor_type):
+    response = client.get("/sensors")
     assert response.status_code == 200
 
     matches = [
@@ -54,10 +54,9 @@ def get_sensor_id(client, api_key, *, name="location A", sensor_type):
     return matches[0]["id"]
 
 
-def get_sensor_readings(client, api_key, sensor_id, params=None):
+def get_sensor_readings(client, sensor_id, params=None):
     return client.get(
         f"/sensors/{sensor_id}/readings",
-        headers=auth_headers(api_key),
         params=params or {},
     )
 

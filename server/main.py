@@ -3,10 +3,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.middleware.sessions import SessionMiddleware
 
 import switchbot as sb
 import xiaomi as xm
@@ -58,6 +59,11 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
     )
 
 
+def require_session(request: Request):
+    if not request.session.get("authenticated"):
+        raise UnauthorizedError("unauthorized")
+
+
 def get_db(request: Request):
     session_factory = request.app.state.session_factory
     db = session_factory()
@@ -77,6 +83,12 @@ def create_app(config: dict) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = session_factory
 
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=config["session_secret"],
+        https_only=config.get("session_secure", True),
+    )
+
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
     @app.exception_handler(BadRequestError)
@@ -91,13 +103,33 @@ def create_app(config: dict) -> FastAPI:
     def handle_server_misconfigured(_: Request, exc: ServerMisconfiguredError):
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-    protected = APIRouter(dependencies=[Depends(require_api_key)])
-
     @app.get("/health")
     def health():
         return {"ok": True}
 
-    @protected.get("/sensors", response_model=list[SensorOut])
+    @app.get("/login")
+    def login_page():
+        return FileResponse("static/login.html")
+
+    @app.post("/login")
+    async def login(request: Request):
+        form = await request.form()
+        password = str(form.get("password", ""))
+        expected = request.app.state.config.get("dashboard_password")
+        if not expected or password != expected:
+            raise UnauthorizedError("unauthorized")
+        request.session["authenticated"] = True
+        return RedirectResponse(url="/static/overview.html", status_code=303)
+
+    @app.post("/logout")
+    def logout(request: Request):
+        request.session.clear()
+        return RedirectResponse(url="/login", status_code=303)
+
+    device = APIRouter(dependencies=[Depends(require_api_key)])
+    dashboard = APIRouter(dependencies=[Depends(require_session)])
+
+    @dashboard.get("/sensors", response_model=list[SensorOut])
     def get_sensors(db: Session = Depends(get_db)):
         return [
             SensorOut(
@@ -108,7 +140,7 @@ def create_app(config: dict) -> FastAPI:
             for sensor in list_sensors(db)
         ]
 
-    @protected.get("/sensors/{sensor_id}/readings")
+    @dashboard.get("/sensors/{sensor_id}/readings")
     def get_sensor_readings(
         sensor_id: UUID,
         limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
@@ -135,7 +167,7 @@ def create_app(config: dict) -> FastAPI:
             sensor=SENSOR_SPECS[sensor_row.type],
         )
 
-    @protected.post("/switchbot/sensors", response_model=sb.SensorsOut)
+    @device.post("/switchbot/sensors", response_model=sb.SensorsOut)
     def create_switchbot_sensors(
         payload: sb.SensorsIn,
         request: Request,
@@ -163,7 +195,7 @@ def create_app(config: dict) -> FastAPI:
             ),
         )
 
-    @protected.post("/switchbot/bulk", response_model=sb.BulkOut)
+    @device.post("/switchbot/bulk", response_model=sb.BulkOut)
     def create_switchbot_bulk(
         payload: sb.BulkIn,
         request: Request,
@@ -200,15 +232,16 @@ def create_app(config: dict) -> FastAPI:
             error_limit=BULK_ERROR_DETAIL_LIMIT,
         )
 
-    @protected.post("/switchbot/reading")
+    @device.post("/switchbot/reading")
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=sb.SENSOR)
 
-    @protected.post("/xiaomi/reading")
+    @device.post("/xiaomi/reading")
     def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 
-    app.include_router(protected)
+    app.include_router(device)
+    app.include_router(dashboard)
     return app
 
 

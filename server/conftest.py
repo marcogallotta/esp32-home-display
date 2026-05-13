@@ -40,6 +40,19 @@ def api_key():
     config = load_config()
     return config["api_key"]
 
+
+@pytest.fixture
+def dashboard_password():
+    config = load_config()
+    return config["dashboard_password"]
+
+
+@pytest.fixture
+def authed_client(client, dashboard_password):
+    client.post("/login", data={"password": dashboard_password})
+    return client
+
+
 @pytest.fixture
 def db_session(app):
     session = app.state.session_factory()

@@ -72,16 +72,16 @@ def test_switchbot_bulk_is_idempotent_for_duplicate_upload(client, api_key):
 
 
 def test_switchbot_bulk_counts_conflicts_without_overwriting_existing_reading(
-    client,
+    authed_client,
     api_key,
     db_session,
 ):
     original = make_switchbot_payload(timestamp="2026-04-21T18:00:00Z", temperature_c=21.5)
-    post_switchbot(client, api_key, original)
-    sensor_id = get_sensor_id(client, api_key, sensor_type="switchbot")
+    post_switchbot(authed_client, api_key, original)
+    sensor_id = get_sensor_id(authed_client, sensor_type="switchbot")
 
     response = post_switchbot_bulk(
-        client,
+        authed_client,
         api_key,
         sensor_id,
         [bulk_reading(timestamp="2026-04-21T18:00:00Z", temperature_c=99.0)],
@@ -155,11 +155,11 @@ def test_switchbot_bulk_rejects_unknown_sensor_id(client, api_key):
     assert response.json() == {"detail": "unknown sensor_id"}
 
 
-def test_switchbot_bulk_rejects_non_switchbot_sensor_id(client, api_key):
-    post_xiaomi(client, api_key, make_xiaomi_payload())
-    sensor_id = get_sensor_id(client, api_key, sensor_type="xiaomi")
+def test_switchbot_bulk_rejects_non_switchbot_sensor_id(authed_client, api_key):
+    post_xiaomi(authed_client, api_key, make_xiaomi_payload())
+    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
 
-    response = post_switchbot_bulk(client, api_key, sensor_id, [bulk_reading()])
+    response = post_switchbot_bulk(authed_client, api_key, sensor_id, [bulk_reading()])
 
     assert response.status_code == 422
     assert response.json() == {"detail": "sensor_id is not a SwitchBot sensor"}
