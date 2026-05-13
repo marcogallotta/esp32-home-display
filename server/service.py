@@ -270,10 +270,12 @@ def classify_existing_reading(
     return {"status": "ok", "result": "duplicate"}
 
 
-def prepare_reading(reading: Any, sensor: SensorSpec) -> None:
-    reading.mac = validate_mac_address(reading.mac)
-    reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
-    warn_soft_ranges(reading, sensor.data_fields)
+def prepare_reading(reading: Any, sensor: SensorSpec) -> Any:
+    mac = validate_mac_address(reading.mac)
+    timestamp = normalize_timestamp_to_utc(reading.timestamp)
+    normalized = reading.model_copy(update={"mac": mac, "timestamp": timestamp})
+    warn_soft_ranges(normalized, sensor.data_fields)
+    return normalized
 
 
 def get_existing_values(
@@ -356,7 +358,7 @@ def ingest_reading(
     *,
     commit: bool = True,
 ):
-    prepare_reading(reading, sensor)
+    reading = prepare_reading(reading, sensor)
     sensor_row = ensure_sensor(db, reading.mac, reading.name, sensor.db_sensor_type)
     existing_values = get_existing_values(db, reading, sensor)
     row = execute_reading_upsert(db, reading, sensor_row, sensor, commit=commit)
