@@ -274,6 +274,8 @@ def ingest_reading(
     db: Session,
     reading: Any,
     sensor: SensorSpec,
+    *,
+    commit: bool = True,
 ):
     reading.mac = validate_mac_address(reading.mac)
     reading.timestamp = normalize_timestamp_to_utc(reading.timestamp)
@@ -327,8 +329,11 @@ def ingest_reading(
 
     try:
         row = db.execute(upsert_stmt).first()
-        db.commit()
+        if commit:
+            db.commit()
     except IntegrityError as exc:
+        if not commit:
+            raise
         db.rollback()
         if not is_expected_unique_conflict(exc, sensor.unique_constraint_name):
             raise
@@ -401,7 +406,7 @@ def bulk_result_counts(
 
         try:
             reading = reading_model(**{**raw, "mac": sensor_row.mac, "name": None})
-            row_result = ingest_reading(db=db, reading=reading, sensor=sensor)
+            row_result = ingest_reading(db=db, reading=reading, sensor=sensor, commit=False)
         except ValidationError as exc:
             result["invalid"] += 1
             add_bulk_error(
@@ -449,6 +454,7 @@ def bulk_result_counts(
                 message=f"unexpected ingest result: {row_status}",
             )
 
+    db.commit()
     return result
 
 
