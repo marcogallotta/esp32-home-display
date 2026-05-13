@@ -173,6 +173,63 @@ def test_switchbot_sensors_caps_sync_intervals_across_response(client, api_key, 
     assert body["warnings"][0]["code"] == "sync_intervals_capped"
 
 
+def test_switchbot_sensors_per_sensor_cap_returns_newest_intervals(client, api_key, app):
+    app.state.config.switchbot_sync_max_intervals_per_sensor = 2
+
+    for timestamp in [
+        "2026-04-21T18:00:00Z",
+        "2026-04-21T18:30:00Z",
+        "2026-04-21T19:00:00Z",
+        "2026-04-21T19:30:00Z",
+    ]:
+        post_switchbot(client, api_key, make_switchbot_payload(timestamp=timestamp))
+
+    response = post_switchbot_sensors(client, api_key, [{"mac": "AA:BB:CC:DD:EE:FF"}])
+
+    assert response.status_code == 200
+    body = response.json()
+    # 3 gaps total; cap is 2 — expect the 2 newest
+    assert body["sensors"][0]["sync_intervals"] == [
+        {"start": "2026-04-21T18:30:00Z", "end": "2026-04-21T19:00:00Z"},
+        {"start": "2026-04-21T19:00:00Z", "end": "2026-04-21T19:30:00Z"},
+    ]
+    assert body["sensors"][0]["sync_intervals_capped"] is True
+    # first_timestamp/latest_timestamp reflect true DB bounds, not the capped window
+    assert body["sensors"][0]["first_timestamp"] == "2026-04-21T18:00:00Z"
+    assert body["sensors"][0]["latest_timestamp"] == "2026-04-21T19:30:00Z"
+
+
+def test_switchbot_sensors_total_cap_returns_newest_intervals(client, api_key, app):
+    app.state.config.switchbot_sync_max_intervals_per_sensor = 10
+    app.state.config.switchbot_sync_max_intervals_total = 1
+
+    for mac in ["AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66"]:
+        for timestamp in [
+            "2026-04-21T18:00:00Z",
+            "2026-04-21T18:30:00Z",
+            "2026-04-21T19:00:00Z",
+        ]:
+            post_switchbot(client, api_key, make_switchbot_payload(mac=mac, timestamp=timestamp))
+
+    response = post_switchbot_sensors(
+        client,
+        api_key,
+        [{"mac": "AA:BB:CC:DD:EE:FF"}, {"mac": "11:22:33:44:55:66"}],
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    # first sensor gets 1 slot (total cap) — it should be the newest gap
+    assert body["sensors"][0]["sync_intervals"] == [
+        {"start": "2026-04-21T18:30:00Z", "end": "2026-04-21T19:00:00Z"},
+    ]
+    assert body["sensors"][0]["sync_intervals_capped"] is True
+    # second sensor gets 0 slots — remaining_total exhausted
+    assert body["sensors"][1]["sync_intervals"] == []
+    assert body["sensors"][1]["sync_intervals_capped"] is True
+    assert body["warnings"][0]["code"] == "sync_intervals_capped"
+
+
 def test_switchbot_sensors_is_idempotent(client, api_key, db_session):
     first = post_switchbot_sensors(
         client,

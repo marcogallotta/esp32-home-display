@@ -102,19 +102,15 @@ def build_sync_intervals(
     max_intervals: int,
 ) -> tuple[list[dict[str, datetime]], bool]:
     intervals: list[dict[str, datetime]] = []
-    capped = False
 
     for current, next_timestamp in zip(timestamps, timestamps[1:]):
         if next_timestamp - current < gap_threshold:
             continue
-
-        if len(intervals) >= max_intervals:
-            capped = True
-            continue
-
         intervals.append({"start": current, "end": next_timestamp})
 
-    return intervals, capped
+    if len(intervals) > max_intervals:
+        return (intervals[-max_intervals:] if max_intervals > 0 else []), True
+    return intervals, False
 
 
 def get_sensor_sync_state(
