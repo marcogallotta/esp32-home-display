@@ -1,10 +1,10 @@
 ENV ?= dev
 export ENV
 
-DB_NAME = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["name"])')
-DB_USER = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["user"])')
-DB_PORT = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["port"])')
-DB_PASSWORD = $(shell python3 -c 'from config import load_config; print(load_config()["database"]["password"])')
+DB_NAME = $(shell python3 -c 'from config import load_config; print(load_config().database.name)')
+DB_USER = $(shell python3 -c 'from config import load_config; print(load_config().database.user)')
+DB_PORT = $(shell python3 -c 'from config import load_config; print(load_config().database.port)')
+DB_PASSWORD = $(shell python3 -c 'from config import load_config; print(load_config().database.password)')
 
 DB_CONTAINER = postgres-$(ENV)
 DB_VOLUME = pgdata-$(ENV)

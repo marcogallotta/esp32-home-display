@@ -38,13 +38,13 @@ def client(app):
 @pytest.fixture
 def api_key():
     config = load_config()
-    return config["api_key"]
+    return config.api_key
 
 
 @pytest.fixture
 def dashboard_password():
     config = load_config()
-    return config["dashboard_password"]
+    return config.dashboard_password
 
 
 @pytest.fixture

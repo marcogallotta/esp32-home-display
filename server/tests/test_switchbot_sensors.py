@@ -85,7 +85,7 @@ def test_switchbot_sensors_returns_internal_sync_intervals_for_large_gaps(client
 
 
 def test_switchbot_sensors_uses_configured_gap_threshold(client, api_key, app):
-    app.state.config["switchbot_sync_gap_threshold_minutes"] = 30
+    app.state.config.switchbot_sync_gap_threshold_minutes = 30
     post_switchbot(client, api_key, make_switchbot_payload(timestamp="2026-04-21T18:00:00Z"))
     post_switchbot(client, api_key, make_switchbot_payload(timestamp="2026-04-21T18:25:00Z"))
     post_switchbot(client, api_key, make_switchbot_payload(timestamp="2026-04-21T18:55:00Z"))
@@ -106,7 +106,7 @@ def test_switchbot_sensors_uses_configured_gap_threshold(client, api_key, app):
 
 
 def test_switchbot_sensors_caps_sync_intervals_per_sensor(client, api_key, app, caplog):
-    app.state.config["switchbot_sync_max_intervals_per_sensor"] = 2
+    app.state.config.switchbot_sync_max_intervals_per_sensor = 2
     caplog.set_level(logging.WARNING)
 
     for timestamp in [
@@ -140,8 +140,8 @@ def test_switchbot_sensors_caps_sync_intervals_per_sensor(client, api_key, app, 
 
 
 def test_switchbot_sensors_caps_sync_intervals_across_response(client, api_key, app):
-    app.state.config["switchbot_sync_max_intervals_per_sensor"] = 10
-    app.state.config["switchbot_sync_max_intervals_total"] = 1
+    app.state.config.switchbot_sync_max_intervals_per_sensor = 10
+    app.state.config.switchbot_sync_max_intervals_total = 1
 
     for mac in ["AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66"]:
         post_switchbot(

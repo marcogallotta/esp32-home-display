@@ -174,7 +174,7 @@ def test_switchbot_bulk_rejects_empty_readings(client, api_key):
 
 
 def test_switchbot_bulk_rejects_more_than_configured_limit(client, api_key, app):
-    app.state.config["switchbot_bulk_max_readings"] = 1
+    app.state.config.switchbot_bulk_max_readings = 1
     sensor_id = resolve_switchbot_sensor_id(client, api_key)
 
     response = post_switchbot_bulk(

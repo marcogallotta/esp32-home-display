@@ -15,11 +15,8 @@ from common import (
     BULK_ERROR_DETAIL_LIMIT,
     READINGS_DEFAULT_LIMIT,
     READINGS_MAX_LIMIT,
-    SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
-    SWITCHBOT_SYNC_DEFAULT_GAP_THRESHOLD_MINUTES,
-    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
-    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL,
 )
+from config import Config, load_config
 from db import build_engine, build_session_factory
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import SWITCHBOT_TYPE, XIAOMI_TYPE
@@ -53,7 +50,7 @@ SENSOR_TYPE_NAMES = {
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)):
     verify_api_key(
-        expected_api_key=request.app.state.config.get("api_key"),
+        expected_api_key=request.app.state.config.api_key,
         provided_api_key=x_api_key,
     )
 
@@ -72,7 +69,7 @@ def get_db(request: Request):
         db.close()
 
 
-def create_app(config: dict) -> FastAPI:
+def create_app(config: Config) -> FastAPI:
     app = FastAPI()
 
     engine = build_engine(config)
@@ -84,8 +81,8 @@ def create_app(config: dict) -> FastAPI:
 
     app.add_middleware(
         SessionMiddleware,
-        secret_key=config["session_secret"],
-        https_only=config.get("session_secure", True),
+        secret_key=config.session_secret,
+        https_only=config.session_secure,
     )
 
     app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -114,7 +111,7 @@ def create_app(config: dict) -> FastAPI:
     async def login(request: Request):
         form = await request.form()
         password = str(form.get("password", ""))
-        expected = request.app.state.config.get("dashboard_password")
+        expected = request.app.state.config.dashboard_password
         if not expected or password != expected:
             raise UnauthorizedError("unauthorized")
         request.session["authenticated"] = True
@@ -176,22 +173,9 @@ def create_app(config: dict) -> FastAPI:
             db=db,
             requested_sensors=payload.sensors,
             sensor=sb.SENSOR,
-            gap_threshold_minutes=request.app.state.config.get(
-                "switchbot_sync_gap_threshold_minutes",
-                SWITCHBOT_SYNC_DEFAULT_GAP_THRESHOLD_MINUTES,
-            ),
-            max_intervals_per_sensor=int(
-                request.app.state.config.get(
-                    "switchbot_sync_max_intervals_per_sensor",
-                    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
-                )
-            ),
-            max_intervals_total=int(
-                request.app.state.config.get(
-                    "switchbot_sync_max_intervals_total",
-                    SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL,
-                )
-            ),
+            gap_threshold_minutes=request.app.state.config.switchbot_sync_gap_threshold_minutes,
+            max_intervals_per_sensor=request.app.state.config.switchbot_sync_max_intervals_per_sensor,
+            max_intervals_total=request.app.state.config.switchbot_sync_max_intervals_total,
         )
 
     @device.post("/switchbot/bulk", response_model=sb.BulkOut)
@@ -200,12 +184,7 @@ def create_app(config: dict) -> FastAPI:
         request: Request,
         db: Session = Depends(get_db),
     ):
-        max_readings = int(
-            request.app.state.config.get(
-                "switchbot_bulk_max_readings",
-                SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
-            )
-        )
+        max_readings = request.app.state.config.switchbot_bulk_max_readings
         if len(payload.readings) > max_readings:
             raise HTTPException(
                 status_code=422,
