@@ -352,6 +352,9 @@ void logWindowResult(const std::string& label,
     );
 }
 
+// 1 day of raw 1-min samples is ~1440 Sample structs, small enough for ESP32 heap.
+static constexpr std::uint32_t kSubwindowSeconds = 86400U;
+
 PlanTotals syncAndUploadWindow(const HistoryServiceDeps& deps,
                                const std::string& label,
                                const BackendSensorInfo& sensor,
@@ -361,12 +364,9 @@ PlanTotals syncAndUploadWindow(const HistoryServiceDeps& deps,
                                ISensorHistorySession& session) {
     PlanTotals totals;
 
-    SyncRequest request;
-    request.startEpoch = expandedStartEpoch(window, 60);
-    request.endEpoch = expandedEndEpoch(window, 60);
-    request.timeSyncEpoch = nowEpoch;
-    request.commandTimeoutMs = options.commandTimeoutMs;
-    request.progressLabel = label + " " + window.source;
+    if (window.pointCount == 0 || options.sampleIntervalSeconds == 0) {
+        return totals;
+    }
 
     logLine(
         LogLevel::Trace,
@@ -377,40 +377,70 @@ PlanTotals syncAndUploadWindow(const HistoryServiceDeps& deps,
         " to=" + formatIsoUtc(window.lastPointEpoch)
     );
 
-    const SyncResult sync = session.fetch(request);
+    const std::uint32_t interval = options.sampleIntervalSeconds;
+    const std::uint32_t chunkSpan = std::max(kSubwindowSeconds, interval);
+    std::uint32_t chunkFirst = window.firstPointEpoch;
+    // Preserve original expanded start for the first BLE request.
+    std::uint32_t chunkRawStart = expandedStartEpoch(window, 60);
 
-    const std::uint32_t deviceInterval = sync.metadata.intervalSeconds == 0 ? 60U : sync.metadata.intervalSeconds;
-    std::vector<BulkHistoryReading> selected = selectAlignedReadings(
-        sync.samples,
-        window,
-        options.sampleIntervalSeconds,
-        deviceInterval
-    );
-    totals.selectedReadings += static_cast<std::uint32_t>(selected.size());
+    while (chunkFirst <= window.lastPointEpoch) {
+        const std::uint32_t chunkLast = std::min(
+            chunkFirst + chunkSpan - interval,
+            window.lastPointEpoch
+        );
+        const bool isLastChunk = (chunkLast >= window.lastPointEpoch);
 
-    if (!sync.ok()) {
-        ++totals.syncFailures;
+        SyncRequest request;
+        request.startEpoch = chunkRawStart;
+        // Preserve original expanded end for the final BLE request.
+        request.endEpoch = isLastChunk ? expandedEndEpoch(window, 60) : chunkLast + 60;
+        request.timeSyncEpoch = nowEpoch;
+        request.commandTimeoutMs = options.commandTimeoutMs;
+        request.progressLabel = label + " " + window.source;
+
+        PlannedHistoryWindow subWindow = window;
+        subWindow.firstPointEpoch = chunkFirst;
+        subWindow.lastPointEpoch = chunkLast;
+        subWindow.pointCount = (chunkLast - chunkFirst) / interval + 1;
+
+        const SyncResult sync = session.fetch(request);
+
+        const std::uint32_t deviceInterval = sync.metadata.intervalSeconds == 0 ? 60U : sync.metadata.intervalSeconds;
+        std::vector<BulkHistoryReading> selected = selectAlignedReadings(
+            sync.samples,
+            subWindow,
+            options.sampleIntervalSeconds,
+            deviceInterval
+        );
+        totals.selectedReadings += static_cast<std::uint32_t>(selected.size());
+
+        if (!sync.ok()) {
+            ++totals.syncFailures;
+            if (!selected.empty()) {
+                addTotals(totals, uploadReadings(deps, label, sensor.sensorId, selected, options));
+            }
+            logLine(
+                LogLevel::Error,
+                "SwitchBot history sync failed: " + label +
+                " source=" + window.source +
+                " status=" + syncStatusName(sync.status) +
+                "; " + sync.message
+            );
+            return totals;
+        }
+
+        ++totals.syncedWindows;
+        logWindowResult(label, subWindow, sync, selected);
+
         if (!selected.empty()) {
             addTotals(totals, uploadReadings(deps, label, sensor.sensorId, selected, options));
         }
-        logLine(
-            LogLevel::Error,
-            "SwitchBot history sync failed: " + label +
-            " source=" + window.source +
-            " status=" + syncStatusName(sync.status) +
-            "; " + sync.message
-        );
-        return totals;
+
+        if (isLastChunk) break;
+        chunkRawStart = chunkFirst + chunkSpan - 60;
+        chunkFirst += chunkSpan;
     }
 
-    ++totals.syncedWindows;
-    logWindowResult(label, window, sync, selected);
-
-    if (selected.empty()) {
-        return totals;
-    }
-
-    addTotals(totals, uploadReadings(deps, label, sensor.sensorId, selected, options));
     return totals;
 }
 
