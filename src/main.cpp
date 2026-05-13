@@ -16,6 +16,9 @@
 #include "config.h"
 #include "forecast/openmeteo.h"
 #include "log.h"
+#ifdef ARDUINO
+#include "file_log.h"
+#endif
 #include "network.h"
 #include "platform.h"
 #include "salah/types.h"
@@ -437,6 +440,12 @@ void run() {
         logLine(LogLevel::Error, "Failed to load config");
         return;
     }
+
+#ifdef ARDUINO
+    if (!initFileLogging()) {
+        logLine(LogLevel::Warn, "File logging unavailable");
+    }
+#endif
 
     AppContext app(tmpConfig);
     if (!initApp(app)) {

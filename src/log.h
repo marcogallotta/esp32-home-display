@@ -28,6 +28,7 @@ enum class LogLevel {
 };
 
 const char* logLevelName(LogLevel level);
+std::string logTimestamp();
 void setLogMuted(bool muted);
 void logLine(LogLevel level, const std::string& msg);
 void rateLimitedLog(

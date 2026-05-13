@@ -7,6 +7,9 @@
 #include <string>
 
 #include "platform.h"
+#ifdef ARDUINO
+#include "file_log.h"
+#endif
 
 namespace {
 
@@ -115,13 +118,20 @@ void logLine(LogLevel level, const std::string& msg) {
         return;
     }
 
+    const std::string timestamp = logTimestamp();
+    const std::string levelName = logLevelName(level);
+
     platform::printLine(
         std::string(logLevelColour(level)) +
-        "[" + logTimestamp() + "] " +
-        "[" + logLevelName(level) + "] " +
+        "[" + timestamp + "] " +
+        "[" + levelName + "] " +
         msg +
         resetColour()
     );
+
+#ifdef ARDUINO
+    writeFileLog(level, "[" + timestamp + "] [" + levelName + "] " + msg);
+#endif
 }
 
 void rateLimitedLog(

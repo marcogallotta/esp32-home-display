@@ -7,3 +7,6 @@
 [submodule "third_party/doctest"]
 	path = third_party/doctest
 	url = https://github.com/doctest/doctest.git
+[submodule "third_party/FormatLog"]
+	path = third_party/FormatLog
+	url = https://github.com/RileyCornelius/FormatLog.git
