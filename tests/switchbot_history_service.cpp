@@ -325,6 +325,33 @@ TEST_CASE("history service: internal gaps each trigger a separate fetch and uplo
     CHECK_EQ(rec.uploads[1][0].timestampEpoch, gap2Start);
 }
 
+TEST_CASE("history service: large window is split into daily subwindow fetches") {
+    // 3 days → 3 daily chunks, each triggering a separate fetch.
+    // kNow = 2026-01-01T00:00:00Z (divisible by 86400 and 900)
+    const std::uint32_t windowSeconds = 3U * 86400U;
+    const std::uint32_t windowStart = kNow - windowSeconds;
+    const std::uint32_t samplesPerDay = 86400U / k15Min; // 96
+
+    Recorded rec;
+    std::vector<SyncResult> fetches;
+    for (int day = 0; day < 3; ++day) {
+        fetches.push_back(okFetch(makeSamplesAt(windowStart + day * 86400U, samplesPerDay)));
+    }
+    auto deps = buildDeps(rec, okLookup({makeNewSensor()}), SyncResult{}, fetches);
+
+    runHistorySync({"AA:BB:CC:DD:EE:FF"}, kLabels, kNow, testOptions(windowSeconds), deps);
+
+    REQUIRE(rec.fetchRequests.size() == 3U);
+    // Each chunk covers one day; start of chunk 2 should be 1 day after chunk 1.
+    CHECK_EQ(rec.fetchRequests[1].startEpoch, rec.fetchRequests[0].startEpoch + 86400U);
+    CHECK_EQ(rec.fetchRequests[2].startEpoch, rec.fetchRequests[0].startEpoch + 2U * 86400U);
+    // Three separate uploads, one per day.
+    CHECK_EQ(rec.uploads.size(), 3U);
+    for (const auto& batch : rec.uploads) {
+        CHECK_EQ(batch.size(), static_cast<std::size_t>(samplesPerDay));
+    }
+}
+
 TEST_CASE("history service: upload failure is recorded but later batches still run") {
     auto opts = testOptions(3600); // 4 readings in window
     opts.bulkBatchLimit = 2;       // 2 batches: first fails, second succeeds
