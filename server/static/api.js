@@ -1,8 +1,11 @@
 window.api = {
   async fetchJson(url) {
-    const res = await fetch(url, {
-      headers: { "X-api-key": window.CONFIG.apiKey },
-    });
+    const res = await fetch(url);
+
+    if (res.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -34,6 +37,6 @@ window.api = {
       maxPoints: 1,
     });
 
-    return rows.length ? rows[0] : null;
+    return rows && rows.length ? rows[0] : null;
   },
 };

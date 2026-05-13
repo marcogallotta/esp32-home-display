@@ -1,6 +1,6 @@
 window.CONFIG = {
-  apiKey: "YOUR_API_KEY",
   staleAfterMs: 2 * 60 * 60 * 1000,
+  latestPollMs: 60 * 1000,
   rangeConfig: {
     "24h": { hours: 24, maxPoints: 96 },
     "3d": { hours: 72, maxPoints: 144 },

@@ -1,5 +1,8 @@
 {
   "api_key": "dev-api-key",
+  "dashboard_password": "your-dashboard-password",
+  "session_secret": "a-long-random-secret-string",
+  "session_secure": false,
   "database": {
     "driver": "postgresql+psycopg",
     "host": "localhost",

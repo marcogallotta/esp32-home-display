@@ -20,15 +20,15 @@ def test_xiaomi_create_accepts_partial_reading(client, api_key):
     assert response.json()["result"] == "created"
 
 
-def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
+def test_xiaomi_create_merges_complementary_partial_readings(authed_client, api_key):
     first_payload = make_xiaomi_payload(temperature_c=21.5)
     second_payload = make_xiaomi_payload(
         temperature_c=None,
         moisture_pct=35,
     )
 
-    first = post_xiaomi(client, api_key, first_payload)
-    second = post_xiaomi(client, api_key, second_payload)
+    first = post_xiaomi(authed_client, api_key, first_payload)
+    second = post_xiaomi(authed_client, api_key, second_payload)
 
     assert first.status_code == 200
     assert first.json()["result"] == "created"
@@ -36,8 +36,8 @@ def test_xiaomi_create_merges_complementary_partial_readings(client, api_key):
     assert second.status_code == 200
     assert second.json()["result"] == "merged"
 
-    sensor_id = get_sensor_id(client, api_key, sensor_type="xiaomi")
-    fetch = get_sensor_readings(client, api_key, sensor_id)
+    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
+    fetch = get_sensor_readings(authed_client, sensor_id)
 
     assert fetch.status_code == 200
     assert fetch.json() == [
@@ -89,15 +89,15 @@ def test_xiaomi_create_returns_conflict_for_single_field_conflict(client, api_ke
     ]
 
 
-def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_are_mixed(client, api_key):
+def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_are_mixed(authed_client, api_key):
     first_payload = make_xiaomi_payload(temperature_c=21.5)
     second_payload = make_xiaomi_payload(
         temperature_c=22.5,
         moisture_pct=35,
     )
 
-    first = post_xiaomi(client, api_key, first_payload)
-    second = post_xiaomi(client, api_key, second_payload)
+    first = post_xiaomi(authed_client, api_key, first_payload)
+    second = post_xiaomi(authed_client, api_key, second_payload)
 
     assert first.status_code == 200
     assert first.json()["result"] == "created"
@@ -113,8 +113,8 @@ def test_xiaomi_create_returns_merged_with_conflict_when_conflict_and_new_data_a
         }
     ]
 
-    sensor_id = get_sensor_id(client, api_key, sensor_type="xiaomi")
-    fetch = get_sensor_readings(client, api_key, sensor_id)
+    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
+    fetch = get_sensor_readings(authed_client, sensor_id)
 
     assert fetch.status_code == 200
     assert fetch.json() == [
