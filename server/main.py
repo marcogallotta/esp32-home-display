@@ -20,7 +20,6 @@ from common import (
     SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
     SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL,
 )
-from config import load_config
 from db import build_engine, build_session_factory
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import SWITCHBOT_TYPE, XIAOMI_TYPE
@@ -243,6 +242,3 @@ def create_app(config: dict) -> FastAPI:
     app.include_router(device)
     app.include_router(dashboard)
     return app
-
-
-app = create_app(load_config())

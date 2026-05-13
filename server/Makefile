@@ -54,7 +54,7 @@ db-reset-schema: db-start db-wait
 	python3 reset_db.py
 
 run-server:
-	uvicorn main:app --reload --host 0.0.0.0 \
+	uvicorn wsgi:app --reload --host 0.0.0.0 \
 		--ssl-keyfile certs/key.pem \
 		--ssl-certfile certs/cert.pem \
 		--log-config logging.yaml
