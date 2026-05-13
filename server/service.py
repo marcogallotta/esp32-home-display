@@ -147,17 +147,17 @@ def get_or_create_sensors_with_sync_state(
     requested_sensors: list[Any],
     sensor: SensorSpec,
     *,
-    gap_threshold_minutes: int | float,
+    gap_threshold_minutes: int,
     max_intervals_per_sensor: int,
     max_intervals_total: int,
 ) -> dict[str, Any]:
     resolved = []
     warnings = []
-    remaining_total = max(0, max_intervals_total)
+    remaining_total = max_intervals_total
     any_capped = False
 
     gap_threshold = timedelta(minutes=gap_threshold_minutes)
-    per_sensor_limit = max(0, max_intervals_per_sensor)
+    per_sensor_limit = max_intervals_per_sensor
 
     for requested in requested_sensors:
         sensor_row = get_or_create_sensor_for_sync(
