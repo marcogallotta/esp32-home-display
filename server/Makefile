@@ -10,7 +10,12 @@ DB_PASSWORD := $(word 4,$(_DB_CONFIG))
 DB_CONTAINER := postgres-$(ENV)
 DB_VOLUME    := pgdata-$(ENV)
 
-.PHONY: db-start db-up db-stop db-rm db-reset-schema run-server test test-cov _db-wait
+APP_IMAGE     := home-display-server
+APP_CONTAINER := home-display-server
+
+.PHONY: db-start db-up db-stop db-rm db-reset-schema \
+        app-run-local app-image-build app-container-run app-container-stop \
+        test test-cov _db-wait
 
 db-start:
 	@if docker ps --format '{{.Names}}' | grep -qx $(DB_CONTAINER); then \
@@ -51,11 +56,26 @@ db-reset-schema: db-up
 	fi
 	python3 tools/reset_db.py
 
-run-server:
+app-run-local:
 	uvicorn app.wsgi:app --reload --host 0.0.0.0 \
 		--ssl-keyfile certs/key.pem \
 		--ssl-certfile certs/cert.pem \
 		--log-config config/logging.yaml
+
+app-image-build:
+	docker build -t $(APP_IMAGE) .
+
+app-container-run:
+	docker run --name $(APP_CONTAINER) \
+		-e ENV=$(ENV) \
+		-v $(PWD)/config/$(ENV).json:/app/config/$(ENV).json:ro \
+		-v $(PWD)/certs:/app/certs:ro \
+		-p 443:443 \
+		-d $(APP_IMAGE)
+
+app-container-stop:
+	docker stop $(APP_CONTAINER) || true
+	docker rm $(APP_CONTAINER) || true
 
 PYTEST_FLAGS ?=
 
