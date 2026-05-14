@@ -1,15 +1,16 @@
 ENV ?= dev
 export ENV
 
-DB_NAME = $(shell python3 -c 'from app.config import load_config; print(load_config().database.name)')
-DB_USER = $(shell python3 -c 'from app.config import load_config; print(load_config().database.user)')
-DB_PORT = $(shell python3 -c 'from app.config import load_config; print(load_config().database.port)')
-DB_PASSWORD = $(shell python3 -c 'from app.config import load_config; print(load_config().database.password)')
+_DB_CONFIG  := $(shell python3 -c 'from app.config import load_config; c = load_config(); print(c.database.name, c.database.user, c.database.port, c.database.password)')
+DB_NAME     := $(word 1,$(_DB_CONFIG))
+DB_USER     := $(word 2,$(_DB_CONFIG))
+DB_PORT     := $(word 3,$(_DB_CONFIG))
+DB_PASSWORD := $(word 4,$(_DB_CONFIG))
 
-DB_CONTAINER = postgres-$(ENV)
-DB_VOLUME = pgdata-$(ENV)
+DB_CONTAINER := postgres-$(ENV)
+DB_VOLUME    := pgdata-$(ENV)
 
-.PHONY: db-start db-wait db-stop db-rm-container db-rm-volume db-rm-all db-reset-schema run-server test
+.PHONY: db-start db-up db-stop db-rm db-reset-schema run-server test test-cov _db-wait
 
 db-start:
 	@if docker ps --format '{{.Names}}' | grep -qx $(DB_CONTAINER); then \
@@ -23,10 +24,12 @@ db-start:
 			-e POSTGRES_PASSWORD=$(DB_PASSWORD) \
 			-p 127.0.0.1:$(DB_PORT):5432 \
 			-v $(DB_VOLUME):/var/lib/postgresql \
-			-d postgres; \
+			-d postgres:16; \
 	fi
 
-db-wait:
+db-up: db-start _db-wait
+
+_db-wait:
 	@until docker exec $(DB_CONTAINER) pg_isready -U $(DB_USER) -d $(DB_NAME) >/dev/null 2>&1; do \
 		sleep 0.5; \
 	done
@@ -34,23 +37,14 @@ db-wait:
 db-stop:
 	docker stop $(DB_CONTAINER) || true
 
-db-rm-container: db-stop
-	@printf "Remove container $(DB_CONTAINER)? [y/N] " && \
-	read ans && [ "$$ans" = "y" ] && docker rm $(DB_CONTAINER) || true
-
-db-rm-volume:
-	@printf "Remove volume $(DB_VOLUME)? [y/N] " && \
-	read ans && [ "$$ans" = "y" ] && docker volume rm $(DB_VOLUME) || true
-
-db-rm-all:
+db-rm:
 	@printf "Remove container $(DB_CONTAINER) and volume $(DB_VOLUME)? [y/N] " && \
-	read ans && [ "$$ans" = "y" ] && { \
-		docker stop $(DB_CONTAINER) || true; \
-		docker rm $(DB_CONTAINER) || true; \
-		docker volume rm $(DB_VOLUME) || true; \
-	} || true
+	read ans && [ "$$ans" = "y" ] || exit 0; \
+	docker stop $(DB_CONTAINER) || true; \
+	docker rm $(DB_CONTAINER) || true; \
+	docker volume rm $(DB_VOLUME) || true
 
-db-reset-schema: db-start db-wait
+db-reset-schema: db-up
 	@if [ "$(ENV)" != "test" ]; then \
 		printf "Reset schema on $(DB_NAME) ($(ENV))? [y/N] " && \
 		read ans && [ "$$ans" = "y" ] || exit 0; \
@@ -63,10 +57,11 @@ run-server:
 		--ssl-certfile certs/cert.pem \
 		--log-config config/logging.yaml
 
+PYTEST_FLAGS ?=
+
 test:
 	ENV=test $(MAKE) db-reset-schema
-	ENV=test pytest -q
+	ENV=test pytest -q $(PYTEST_FLAGS)
 
-test-cov:
-	ENV=test $(MAKE) db-reset-schema
-	ENV=test pytest --cov=. --cov-report=term-missing
+test-cov: PYTEST_FLAGS = --cov=app --cov-report=term-missing
+test-cov: test
