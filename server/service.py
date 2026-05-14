@@ -270,7 +270,7 @@ def classify_existing_reading(
 
     for field in data_fields:
         existing_value = existing_values[field.name]
-        incoming_value = getattr(incoming, field.name)
+        incoming_value = field.getter(incoming)
 
         if incoming_value is None:
             continue

@@ -116,7 +116,7 @@ SENSOR = SensorSpec[ReadingIn, ReadingOut, SwitchbotReading](
     reading_out=ReadingOut,
     unique_constraint_name="switchbot_readings_mac_timestamp_uniq",
     data_fields=(
-        DataField("temperature_c", SwitchbotReading.temperature_c, hard_range=(-40.0, 125.0), soft_range=(-20.0, 60.0)),
-        DataField("humidity_pct", SwitchbotReading.humidity_pct, hard_range=(0.0, 100.0)),
+        DataField("temperature_c", SwitchbotReading.temperature_c, lambda r: r.temperature_c, hard_range=(-40.0, 125.0), soft_range=(-20.0, 60.0)),
+        DataField("humidity_pct", SwitchbotReading.humidity_pct, lambda r: r.humidity_pct, hard_range=(0.0, 100.0)),
     ),
 )

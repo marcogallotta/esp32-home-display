@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, TypeVar, Generic
+from typing import Any, Callable, Protocol, TypeVar, Generic
 
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
@@ -21,6 +21,7 @@ class ReadingLike(Protocol):
 class DataField:
     name: str
     column: InstrumentedAttribute
+    getter: Callable[[Any], Any]
     hard_range: Range | None = None
     soft_range: Range | None = None
 

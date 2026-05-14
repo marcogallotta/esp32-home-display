@@ -47,9 +47,9 @@ SENSOR = SensorSpec[ReadingIn, ReadingOut, XiaomiReading](
     reading_out=ReadingOut,
     unique_constraint_name="xiaomi_readings_mac_timestamp_uniq",
     data_fields=(
-        DataField("temperature_c", XiaomiReading.temperature_c, hard_range=(-40.0, 125.0), soft_range=(-20.0, 60.0)),
-        DataField("moisture_pct", XiaomiReading.moisture_pct, hard_range=(0, 100)),
-        DataField("light_lux", XiaomiReading.light_lux, hard_range=(0, 1_000_000), soft_range=(0, 200_000)),
-        DataField("conductivity_us_cm", XiaomiReading.conductivity_us_cm, hard_range=(0, 100_000), soft_range=(0, 10_000)),
+        DataField("temperature_c", XiaomiReading.temperature_c, lambda r: r.temperature_c, hard_range=(-40.0, 125.0), soft_range=(-20.0, 60.0)),
+        DataField("moisture_pct", XiaomiReading.moisture_pct, lambda r: r.moisture_pct, hard_range=(0, 100)),
+        DataField("light_lux", XiaomiReading.light_lux, lambda r: r.light_lux, hard_range=(0, 1_000_000), soft_range=(0, 200_000)),
+        DataField("conductivity_us_cm", XiaomiReading.conductivity_us_cm, lambda r: r.conductivity_us_cm, hard_range=(0, 100_000), soft_range=(0, 10_000)),
     ),
 )

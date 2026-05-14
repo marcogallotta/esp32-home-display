@@ -38,21 +38,11 @@ def check_range(name: str, value, min_value, max_value):
         raise ValueError(f"{name} must be in [{min_value}, {max_value}]")
 
 
-_MISSING = object()
-
-
-def _get_field(reading, field: str):
-    value = getattr(reading, field, _MISSING)
-    if value is _MISSING:
-        raise AttributeError(f"reading has no attribute '{field}'")
-    return value
-
-
 def check_hard_ranges(reading, data_fields: tuple[DataField, ...]):
     for field in data_fields:
         if field.hard_range is None:
             continue
-        value = _get_field(reading, field.name)
+        value = field.getter(reading)
         if value is None:
             continue
         check_range(field.name, value, *field.hard_range)
@@ -66,7 +56,7 @@ def warn_soft_ranges(reading, data_fields: tuple[DataField, ...]):
     for field in data_fields:
         if field.soft_range is None:
             continue
-        value = _get_field(reading, field.name)
+        value = field.getter(reading)
         if value is None:
             continue
         min_value, max_value = field.soft_range
