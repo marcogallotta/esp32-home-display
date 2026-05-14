@@ -1,5 +1,12 @@
 import threading
+from dataclasses import dataclass
 from typing import Protocol
+
+
+@dataclass
+class TokenBucketState:
+    tokens: float
+    updated_at: float
 
 
 class MapStore(Protocol):
