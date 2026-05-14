@@ -439,4 +439,121 @@ TEST_CASE("config validates wifi values") {
     }
 }
 
+TEST_CASE("config normalizes switchbot sensor MACs") {
+    SUBCASE("lowercase colon-separated is accepted and uppercased") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addSwitchbotSensor(doc);
+        sensor["mac"] = "aa:bb:cc:dd:ee:ff";
+        Config config;
+        REQUIRE(parses(doc, config));
+        REQUIRE(config.switchbot.sensors.size() == 1);
+        CHECK_EQ(config.switchbot.sensors[0].mac, "AA:BB:CC:DD:EE:FF");
+    }
+
+    SUBCASE("dash-separated is accepted and normalized") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addSwitchbotSensor(doc);
+        sensor["mac"] = "AA-BB-CC-DD-EE-FF";
+        Config config;
+        REQUIRE(parses(doc, config));
+        REQUIRE(config.switchbot.sensors.size() == 1);
+        CHECK_EQ(config.switchbot.sensors[0].mac, "AA:BB:CC:DD:EE:FF");
+    }
+
+    SUBCASE("unseparated is accepted and normalized") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addSwitchbotSensor(doc);
+        sensor["mac"] = "AABBCCDDEEFF";
+        Config config;
+        REQUIRE(parses(doc, config));
+        REQUIRE(config.switchbot.sensors.size() == 1);
+        CHECK_EQ(config.switchbot.sensors[0].mac, "AA:BB:CC:DD:EE:FF");
+    }
+
+    SUBCASE("invalid MAC is rejected") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addSwitchbotSensor(doc);
+        sensor["mac"] = "not-a-mac";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("too short is rejected") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addSwitchbotSensor(doc);
+        sensor["mac"] = "AA:BB:CC:DD:EE";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("duplicate MACs are rejected") {
+        auto doc = exampleConfig();
+        addSwitchbotSensor(doc);
+        addSwitchbotSensor(doc);
+        expectInvalid(doc);
+    }
+
+    SUBCASE("duplicate MACs in different forms are rejected") {
+        auto doc = exampleConfig();
+        JsonObject s1 = addSwitchbotSensor(doc);
+        s1["mac"] = "aa:bb:cc:dd:ee:ff";
+        JsonObject s2 = addSwitchbotSensor(doc);
+        s2["mac"] = "AA-BB-CC-DD-EE-FF";
+        expectInvalid(doc);
+    }
+}
+
+TEST_CASE("config normalizes xiaomi sensor MACs") {
+    SUBCASE("lowercase colon-separated is accepted and uppercased") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addXiaomiSensor(doc);
+        sensor["mac"] = "aa:bb:cc:dd:ee:ff";
+        Config config;
+        REQUIRE(parses(doc, config));
+        REQUIRE(config.xiaomi.sensors.size() == 1);
+        CHECK_EQ(config.xiaomi.sensors[0].mac, "AA:BB:CC:DD:EE:FF");
+    }
+
+    SUBCASE("dash-separated is accepted and normalized") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addXiaomiSensor(doc);
+        sensor["mac"] = "11-22-33-44-55-66";
+        Config config;
+        REQUIRE(parses(doc, config));
+        REQUIRE(config.xiaomi.sensors.size() == 1);
+        CHECK_EQ(config.xiaomi.sensors[0].mac, "11:22:33:44:55:66");
+    }
+
+    SUBCASE("unseparated is accepted and normalized") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addXiaomiSensor(doc);
+        sensor["mac"] = "112233445566";
+        Config config;
+        REQUIRE(parses(doc, config));
+        REQUIRE(config.xiaomi.sensors.size() == 1);
+        CHECK_EQ(config.xiaomi.sensors[0].mac, "11:22:33:44:55:66");
+    }
+
+    SUBCASE("invalid MAC is rejected") {
+        auto doc = exampleConfig();
+        JsonObject sensor = addXiaomiSensor(doc);
+        sensor["mac"] = "zz:zz:zz:zz:zz:zz";
+        expectInvalid(doc);
+    }
+
+    SUBCASE("duplicate MACs are rejected") {
+        auto doc = exampleConfig();
+        addXiaomiSensor(doc);
+        addXiaomiSensor(doc);
+        expectInvalid(doc);
+    }
+
+    SUBCASE("duplicate MACs in different forms are rejected") {
+        auto doc = exampleConfig();
+        JsonObject s1 = addXiaomiSensor(doc);
+        s1["mac"] = "11:22:33:44:55:66";
+        JsonObject s2 = addXiaomiSensor(doc);
+        s2["mac"] = "112233445566";
+        expectInvalid(doc);
+    }
+}
+
 } // namespace

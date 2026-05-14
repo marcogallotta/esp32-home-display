@@ -1,8 +1,41 @@
 #include "config.h"
 
 #include <ArduinoJson.h>
+#include <algorithm>
+#include <cctype>
 #include <iostream>
+#include <set>
 #include <string>
+
+namespace {
+
+std::string normalizeMac(const std::string& mac) {
+    std::string hex;
+    hex.reserve(12);
+    for (char c : mac) {
+        if (c == ':' || c == '-' || std::isspace(static_cast<unsigned char>(c))) {
+            continue;
+        }
+        if (!std::isxdigit(static_cast<unsigned char>(c))) {
+            return {};
+        }
+        hex.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (hex.size() != 12) {
+        return {};
+    }
+    std::string out;
+    out.reserve(17);
+    for (std::size_t i = 0; i < hex.size(); ++i) {
+        if (i != 0 && i % 2 == 0) {
+            out.push_back(':');
+        }
+        out.push_back(hex[i]);
+    }
+    return out;
+}
+
+}  // namespace
 
 bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     // Using a fixed-size for simplicity. You might need to adjust this based on your
@@ -324,25 +357,36 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
 
     config.switchbot.sensors.clear();
 
-    for (JsonObject s : sensors) {
-        if (!s["mac"].is<const char*>()) {
-            return fail("switchbot.sensors[].mac is not a string");
-        }
-        if (!s["name"].is<const char*>()) {
-            return fail("switchbot.sensors[].name is not a string");
-        }
-        if (!s["short_name"].is<const char*>()) {
-            return fail("switchbot.sensors[].short_name is not a string");
-        }
+    {
+        std::set<std::string> seenMacs;
+        for (JsonObject s : sensors) {
+            if (!s["mac"].is<const char*>()) {
+                return fail("switchbot.sensors[].mac is not a string");
+            }
+            if (!s["name"].is<const char*>()) {
+                return fail("switchbot.sensors[].name is not a string");
+            }
+            if (!s["short_name"].is<const char*>()) {
+                return fail("switchbot.sensors[].short_name is not a string");
+            }
 
-        SwitchbotSensorConfig sensor;
-        sensor.mac = s["mac"].as<const char*>();
-        sensor.name = s["name"].as<const char*>();
-        sensor.shortName = s["short_name"].as<const char*>();
-        if (!readOptionalBleAddressType(s, "address_type", sensor.addressType, "switchbot.sensors[].address_type")) {
-            return false;
+            const std::string normalized = normalizeMac(s["mac"].as<const char*>());
+            if (normalized.empty()) {
+                return fail("switchbot.sensors[].mac is invalid");
+            }
+            if (!seenMacs.insert(normalized).second) {
+                return fail("switchbot.sensors[].mac is a duplicate");
+            }
+
+            SwitchbotSensorConfig sensor;
+            sensor.mac = normalized;
+            sensor.name = s["name"].as<const char*>();
+            sensor.shortName = s["short_name"].as<const char*>();
+            if (!readOptionalBleAddressType(s, "address_type", sensor.addressType, "switchbot.sensors[].address_type")) {
+                return false;
+            }
+            config.switchbot.sensors.push_back(sensor);
         }
-        config.switchbot.sensors.push_back(sensor);
     }
 
     const JsonObject xiaomi = json["xiaomi"];
@@ -365,22 +409,33 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
 
     config.xiaomi.sensors.clear();
 
-    for (JsonObject s : xiaomiSensors) {
-        if (!s["mac"].is<const char*>()) {
-            return fail("xiaomi.sensors[].mac is not a string");
-        }
-        if (!s["name"].is<const char*>()) {
-            return fail("xiaomi.sensors[].name is not a string");
-        }
-        if (!s["short_name"].is<const char*>()) {
-            return fail("xiaomi.sensors[].short_name is not a string");
-        }
+    {
+        std::set<std::string> seenMacs;
+        for (JsonObject s : xiaomiSensors) {
+            if (!s["mac"].is<const char*>()) {
+                return fail("xiaomi.sensors[].mac is not a string");
+            }
+            if (!s["name"].is<const char*>()) {
+                return fail("xiaomi.sensors[].name is not a string");
+            }
+            if (!s["short_name"].is<const char*>()) {
+                return fail("xiaomi.sensors[].short_name is not a string");
+            }
 
-        XiaomiSensorConfig sensor;
-        sensor.mac = s["mac"].as<const char*>();
-        sensor.name = s["name"].as<const char*>();
-        sensor.shortName = s["short_name"].as<const char*>();
-        config.xiaomi.sensors.push_back(sensor);
+            const std::string normalized = normalizeMac(s["mac"].as<const char*>());
+            if (normalized.empty()) {
+                return fail("xiaomi.sensors[].mac is invalid");
+            }
+            if (!seenMacs.insert(normalized).second) {
+                return fail("xiaomi.sensors[].mac is a duplicate");
+            }
+
+            XiaomiSensorConfig sensor;
+            sensor.mac = normalized;
+            sensor.name = s["name"].as<const char*>();
+            sensor.shortName = s["short_name"].as<const char*>();
+            config.xiaomi.sensors.push_back(sensor);
+        }
     }
 
     const JsonObject wifi = json["wifi"];
