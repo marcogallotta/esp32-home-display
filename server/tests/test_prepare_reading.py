@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-import switchbot
-import xiaomi
-from service import prepare_reading
+from app import switchbot
+from app import xiaomi
+from app.service import prepare_reading
 
 
 TZ_PLUS2 = timezone(timedelta(hours=2))

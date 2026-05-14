@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from models import SwitchbotReading
+from app.models import SwitchbotReading
 from tests.helpers import (
     make_switchbot_payload,
     make_xiaomi_payload,

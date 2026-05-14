@@ -1,9 +1,9 @@
 from alembic import command
 from alembic.config import Config as AlembicConfig
 
-from config import load_config
-from db import build_engine
-from models import Base
+from app.config import load_config
+from app.db import build_engine
+from app.models import Base
 
 
 def main():

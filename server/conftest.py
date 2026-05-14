@@ -3,10 +3,10 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from config import load_config
-from db import build_engine, build_session_factory
-from main import create_app
-from models import Base
+from app.config import load_config
+from app.db import build_engine, build_session_factory
+from app.main import create_app
+from app.models import Base
 
 
 if os.getenv("ENV", "dev") != "test":

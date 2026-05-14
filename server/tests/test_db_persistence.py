@@ -1,4 +1,4 @@
-from models import SwitchbotReading, XiaomiReading
+from app.models import SwitchbotReading, XiaomiReading
 from tests.helpers import make_switchbot_payload, make_xiaomi_payload, post_switchbot, post_xiaomi
 
 

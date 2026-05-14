@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from models import SWITCHBOT_TYPE, Sensor, SwitchbotReading
+from app.models import SWITCHBOT_TYPE, Sensor, SwitchbotReading
 from tests.helpers import (
     make_switchbot_payload,
     make_xiaomi_payload,

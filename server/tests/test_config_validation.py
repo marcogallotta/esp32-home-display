@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from config import Config, DatabaseConfig, load_config, validate_config
+from app.config import Config, DatabaseConfig, load_config, validate_config
 
 
 def _db():

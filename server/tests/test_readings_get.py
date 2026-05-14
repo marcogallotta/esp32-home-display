@@ -1,11 +1,11 @@
 import pytest
 from sqlalchemy import select
 
-import switchbot as sb
-import xiaomi as xm
-from errors import BadRequestError
-from models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
-from service import fetch_readings
+from app import switchbot as sb
+from app import xiaomi as xm
+from app.errors import BadRequestError
+from app.models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
+from app.service import fetch_readings
 from tests.helpers import (
     get_sensor_id,
     get_sensor_readings,

@@ -4,9 +4,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from common import check_hard_ranges
-from models import SWITCHBOT_TYPE, SwitchbotReading
-from sensor_spec import DataField, SensorSpec
+from .common import check_hard_ranges
+from .models import SWITCHBOT_TYPE, SwitchbotReading
+from .sensor_spec import DataField, SensorSpec
 
 
 class ReadingIn(BaseModel):

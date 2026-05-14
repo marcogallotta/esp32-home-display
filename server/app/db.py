@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
 
-from config import Config
+from .config import Config
 
 
 def build_database_url(config: Config) -> URL:

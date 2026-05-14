@@ -12,15 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import literal_column
 
-from common import (
+from .common import (
     normalize_timestamp_to_utc,
     validate_mac_address,
     validate_query_timestamp,
     warn_soft_ranges,
 )
-from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
-from models import Sensor
-from sensor_spec import DataField, SensorSpec
+from .errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
+from .models import Sensor
+from .sensor_spec import DataField, SensorSpec
 
 
 logger = logging.getLogger(__name__)

@@ -1,10 +1,10 @@
 ENV ?= dev
 export ENV
 
-DB_NAME = $(shell python3 -c 'from config import load_config; print(load_config().database.name)')
-DB_USER = $(shell python3 -c 'from config import load_config; print(load_config().database.user)')
-DB_PORT = $(shell python3 -c 'from config import load_config; print(load_config().database.port)')
-DB_PASSWORD = $(shell python3 -c 'from config import load_config; print(load_config().database.password)')
+DB_NAME = $(shell python3 -c 'from app.config import load_config; print(load_config().database.name)')
+DB_USER = $(shell python3 -c 'from app.config import load_config; print(load_config().database.user)')
+DB_PORT = $(shell python3 -c 'from app.config import load_config; print(load_config().database.port)')
+DB_PASSWORD = $(shell python3 -c 'from app.config import load_config; print(load_config().database.password)')
 
 DB_CONTAINER = postgres-$(ENV)
 DB_VOLUME = pgdata-$(ENV)
@@ -58,7 +58,7 @@ db-reset-schema: db-start db-wait
 	python3 reset_db.py
 
 run-server:
-	uvicorn wsgi:app --reload --host 0.0.0.0 \
+	uvicorn app.wsgi:app --reload --host 0.0.0.0 \
 		--ssl-keyfile certs/key.pem \
 		--ssl-certfile certs/cert.pem \
 		--log-config logging.yaml

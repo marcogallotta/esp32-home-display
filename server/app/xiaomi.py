@@ -2,9 +2,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-from common import check_hard_ranges
-from models import XIAOMI_TYPE, XiaomiReading
-from sensor_spec import DataField, SensorSpec
+from .common import check_hard_ranges
+from .models import XIAOMI_TYPE, XiaomiReading
+from .sensor_spec import DataField, SensorSpec
 
 
 class ReadingIn(BaseModel):

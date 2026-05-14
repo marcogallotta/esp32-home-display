@@ -13,18 +13,18 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-import switchbot as sb
-import xiaomi as xm
-from common import (
+from . import switchbot as sb
+from . import xiaomi as xm
+from .common import (
     BULK_ERROR_DETAIL_LIMIT,
     READINGS_DEFAULT_LIMIT,
     READINGS_MAX_LIMIT,
     validate_mac_address,
 )
-from config import Config
-from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
-from models import SWITCHBOT_TYPE, XIAOMI_TYPE
-from service import (
+from .config import Config
+from .errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
+from .models import SWITCHBOT_TYPE, XIAOMI_TYPE
+from .service import (
     bulk_result_counts,
     fetch_latest_readings,
     fetch_readings,
@@ -37,7 +37,7 @@ from service import (
 
 logger = logging.getLogger(__name__)
 
-_STATIC_DIR = Path(__file__).parent / "static"
+_STATIC_DIR = Path(__file__).parent.parent / "static"
 
 
 class IngestResponse(BaseModel):

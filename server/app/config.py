@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from common import (
+from .common import (
     SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
     SWITCHBOT_SYNC_DEFAULT_GAP_THRESHOLD_MINUTES,
     SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
@@ -140,7 +140,7 @@ def load_config(config_dir: Path | None = None) -> Config:
     if env not in _KNOWN_ENVS:
         raise ValueError(f"Unknown ENV={env!r}; must be one of: {', '.join(sorted(_KNOWN_ENVS))}")
     if config_dir is None:
-        config_dir = Path(__file__).parent / "config"
+        config_dir = Path(__file__).parent.parent / "config"
     path = config_dir / f"{env}.json"
 
     with path.open(encoding="utf-8") as f:

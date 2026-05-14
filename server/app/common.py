@@ -3,8 +3,8 @@ from enum import Enum
 import logging
 import re
 
-from errors import BadRequestError
-from sensor_spec import DataField
+from .errors import BadRequestError
+from .sensor_spec import DataField
 
 
 logger = logging.getLogger(__name__)
