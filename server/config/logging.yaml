@@ -25,10 +25,12 @@ loggers:
   uvicorn.error:
     handlers: [console]
     level: INFO
+    propagate: false
 
   uvicorn.access:
     handlers: [access_console]
     level: INFO
+    propagate: false
 
 root:
   handlers: [console]
