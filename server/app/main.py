@@ -107,10 +107,17 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         burst=rl.esp32_app.burst,
         limiter=limiter,
     )
-    esp32_write_limit = make_rate_limiter(
-        "esp32_app:write",
-        limit=rl.esp32_app.write.limit,
-        period=rl.esp32_app.write.period,
+    esp32_live_write_limit = make_rate_limiter(
+        "esp32_app:live_write",
+        limit=rl.esp32_app.live_write.limit,
+        period=rl.esp32_app.live_write.period,
+        burst=rl.esp32_app.burst,
+        limiter=limiter,
+    )
+    esp32_bulk_write_limit = make_rate_limiter(
+        "esp32_app:bulk_write",
+        limit=rl.esp32_app.bulk_write.limit,
+        period=rl.esp32_app.bulk_write.period,
         burst=rl.esp32_app.burst,
         limiter=limiter,
     )
@@ -267,7 +274,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             max_intervals_total=request.app.state.config.switchbot_sync_max_intervals_total,
         )
 
-    @device.post("/switchbot/bulk", response_model=sb.BulkOut, dependencies=[Depends(esp32_write_limit)])
+    @device.post("/switchbot/bulk", response_model=sb.BulkOut, dependencies=[Depends(esp32_bulk_write_limit)])
     def create_switchbot_bulk(
         payload: sb.BulkIn,
         request: Request,
@@ -319,11 +326,11 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             error_limit=BULK_ERROR_DETAIL_LIMIT,
         )
 
-    @device.post("/switchbot/reading", response_model=IngestResponse, dependencies=[Depends(esp32_write_limit)])
+    @device.post("/switchbot/reading", response_model=IngestResponse, dependencies=[Depends(esp32_live_write_limit)])
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=sb.SENSOR)
 
-    @device.post("/xiaomi/reading", response_model=IngestResponse, dependencies=[Depends(esp32_write_limit)])
+    @device.post("/xiaomi/reading", response_model=IngestResponse, dependencies=[Depends(esp32_live_write_limit)])
     def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 
