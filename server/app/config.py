@@ -45,21 +45,10 @@ class Esp32AppRateLimits:
 
 
 @dataclass
-class FrontendRateLimits:
-    read: RateLimit
-    write: RateLimit
-
-
-@dataclass
-class LoginRateLimits:
-    write: RateLimit
-
-
-@dataclass
 class RateLimitsConfig:
     esp32_app: Esp32AppRateLimits
-    frontend: FrontendRateLimits
-    login: LoginRateLimits
+    frontend: RateLimit
+    login: RateLimit
 
 
 def _default_rate_limits() -> RateLimitsConfig:
@@ -69,13 +58,8 @@ def _default_rate_limits() -> RateLimitsConfig:
             write=RateLimit(limit=10, period=60),
             burst=True,
         ),
-        frontend=FrontendRateLimits(
-            read=RateLimit(limit=30, period=60),
-            write=RateLimit(limit=5, period=60),
-        ),
-        login=LoginRateLimits(
-            write=RateLimit(limit=3, period=60),
-        ),
+        frontend=RateLimit(limit=30, period=60),
+        login=RateLimit(limit=3, period=60),
     )
 
 
@@ -191,9 +175,8 @@ def validate_config(config: Config, env: str) -> None:
     _validate_rate_limit(errors, "rate_limits.esp32_app.write", rl.esp32_app.write)
     if not isinstance(rl.esp32_app.burst, bool):
         errors.append("rate_limits.esp32_app.burst: must be a boolean")
-    _validate_rate_limit(errors, "rate_limits.frontend.read", rl.frontend.read)
-    _validate_rate_limit(errors, "rate_limits.frontend.write", rl.frontend.write)
-    _validate_rate_limit(errors, "rate_limits.login.write", rl.login.write)
+    _validate_rate_limit(errors, "rate_limits.frontend", rl.frontend)
+    _validate_rate_limit(errors, "rate_limits.login", rl.login)
 
     if errors:
         raise ValueError("Invalid configuration:\n" + "\n".join(f"  {e}" for e in errors))
@@ -239,11 +222,6 @@ def _parse_rate_limits(raw: dict) -> RateLimitsConfig:
             write=_rl(esp["write"]),
             burst=esp.get("burst", True),
         ),
-        frontend=FrontendRateLimits(
-            read=_rl(fe["read"]),
-            write=_rl(fe["write"]),
-        ),
-        login=LoginRateLimits(
-            write=_rl(login["write"]),
-        ),
+        frontend=_rl(fe),
+        login=_rl(login),
     )
