@@ -8,6 +8,7 @@ from db import build_engine, build_session_factory
 from main import create_app
 from models import Base
 
+
 if os.getenv("ENV", "dev") != "test":
     raise RuntimeError("Tests must be run with ENV=test")
 
@@ -36,13 +37,13 @@ def client(app):
 
 
 @pytest.fixture
-def api_key():
-    return load_config().api_key
+def api_key(app):
+    return app.state.config.api_key
 
 
 @pytest.fixture
-def dashboard_password():
-    return load_config().dashboard_password
+def dashboard_password(app):
+    return app.state.config.dashboard_password
 
 
 @pytest.fixture
