@@ -13,7 +13,7 @@
     "login": {"limit": 3, "period": 60}
   },
   "switchbot_sync_gap_threshold_minutes": 20,
-  "switchbot_sync_max_intervals_per_sensor": 100,
-  "switchbot_sync_max_intervals_total": 1000,
-  "switchbot_bulk_max_readings": 500
+  "switchbot_sync_max_intervals_per_sensor": 20,
+  "switchbot_sync_max_intervals_total": 50,
+  "switchbot_bulk_max_readings": 200
 }

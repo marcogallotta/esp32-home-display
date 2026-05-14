@@ -69,7 +69,7 @@ struct SwitchbotHistoryConfig {
     std::uint32_t sampleIntervalSeconds = 15U * 60U;
     std::uint32_t newSensorWindowSeconds = 68U * 24U * 60U * 60U;
     std::uint32_t historyLimitSeconds = 68U * 24U * 60U * 60U;
-    std::uint32_t bulkBatchLimit = 1000;
+    std::uint32_t bulkBatchLimit = 100;
 };
 
 struct SwitchbotConfig {
