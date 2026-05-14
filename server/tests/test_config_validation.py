@@ -217,10 +217,9 @@ def test_load_config_fails_on_invalid_field(tmp_path, monkeypatch):
     }
     _write_config(tmp_path, "dev", cfg_data)
     monkeypatch.setenv("ENV", "dev")
-    monkeypatch.chdir(tmp_path)
 
     with pytest.raises(ValueError, match="session_secret"):
-        load_config()
+        load_config(config_dir=tmp_path / "config")
 
 
 def test_load_config_rejects_unknown_env(monkeypatch):
@@ -239,7 +238,6 @@ def test_load_config_fails_on_missing_field(tmp_path, monkeypatch):
     }
     _write_config(tmp_path, "dev", cfg_data)
     monkeypatch.setenv("ENV", "dev")
-    monkeypatch.chdir(tmp_path)
 
     with pytest.raises(ValueError, match="session_secret"):
-        load_config()
+        load_config(config_dir=tmp_path / "config")

@@ -123,11 +123,13 @@ _KNOWN_ENVS = {"dev", "test", "prod"}
 _REQUIRED_KEYS = {"api_key", "session_secret", "dashboard_password", "database"}
 
 
-def load_config() -> Config:
+def load_config(config_dir: Path | None = None) -> Config:
     env = os.getenv("ENV", "dev")
     if env not in _KNOWN_ENVS:
         raise ValueError(f"Unknown ENV={env!r}; must be one of: {', '.join(sorted(_KNOWN_ENVS))}")
-    path = Path("config") / f"{env}.json"
+    if config_dir is None:
+        config_dir = Path(__file__).parent / "config"
+    path = config_dir / f"{env}.json"
 
     with path.open(encoding="utf-8") as f:
         data = json.load(f)

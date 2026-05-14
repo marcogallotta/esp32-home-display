@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -19,8 +20,7 @@ from common import (
     READINGS_DEFAULT_LIMIT,
     READINGS_MAX_LIMIT,
 )
-from config import Config, load_config
-from db import build_engine, build_session_factory
+from config import Config
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import SWITCHBOT_TYPE, XIAOMI_TYPE
 from service import (
@@ -34,6 +34,8 @@ from service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 class IngestResponse(BaseModel):
@@ -79,11 +81,8 @@ def get_db(request: Request):
         db.close()
 
 
-def create_app(config: Config) -> FastAPI:
+def create_app(config: Config, engine, session_factory) -> FastAPI:
     app = FastAPI()
-
-    engine = build_engine(config)
-    session_factory = build_session_factory(engine)
 
     app.state.config = config
     app.state.engine = engine
@@ -95,7 +94,7 @@ def create_app(config: Config) -> FastAPI:
         https_only=config.session_secure,
     )
 
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
     @app.exception_handler(BadRequestError)
     def handle_bad_request(_: Request, exc: BadRequestError):
@@ -138,7 +137,7 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/login")
     def login_page():
-        return FileResponse("static/login.html")
+        return FileResponse(_STATIC_DIR / "login.html")
 
     @app.post("/login")
     async def login(request: Request):

@@ -3,9 +3,9 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from main import create_app
 from config import load_config
 from db import build_engine, build_session_factory
+from main import create_app
 from models import Base
 
 if os.getenv("ENV", "dev") != "test":
@@ -15,16 +15,13 @@ if os.getenv("ENV", "dev") != "test":
 @pytest.fixture
 def app():
     config = load_config()
-    app = create_app(config)
-
     engine = build_engine(config)
     session_factory = build_session_factory(engine)
 
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
-    app.state.engine = engine
-    app.state.session_factory = session_factory
+    app = create_app(config, engine, session_factory)
 
     try:
         yield app
@@ -40,14 +37,12 @@ def client(app):
 
 @pytest.fixture
 def api_key():
-    config = load_config()
-    return config.api_key
+    return load_config().api_key
 
 
 @pytest.fixture
 def dashboard_password():
-    config = load_config()
-    return config.dashboard_password
+    return load_config().dashboard_password
 
 
 @pytest.fixture
