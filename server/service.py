@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from math import ceil
 from typing import Any
@@ -24,6 +24,9 @@ from sensor_spec import DataField, SensorSpec
 
 
 logger = logging.getLogger(__name__)
+
+SYNC_RETENTION_DAYS = 68
+SYNC_TIMESTAMPS_MAX = 20_000
 
 
 def verify_api_key(expected_api_key: str | None, provided_api_key: str | None):
@@ -85,14 +88,36 @@ def get_or_create_sensor_for_sync(
     return sensor
 
 
-def get_sensor_timestamps(db: Session, sensor_id: UUID, sensor: SensorSpec) -> list[datetime]:
-    return list(
-        db.execute(
-            select(sensor.reading_model.timestamp)
-            .where(sensor.reading_model.sensor_id == sensor_id)
-            .order_by(sensor.reading_model.timestamp.asc())
-        ).scalars()
+def get_sensor_timestamp_bounds(
+    db: Session, sensor_id: UUID, sensor: SensorSpec
+) -> tuple[datetime | None, datetime | None]:
+    row = db.execute(
+        select(
+            func.min(sensor.reading_model.timestamp),
+            func.max(sensor.reading_model.timestamp),
+        ).where(sensor.reading_model.sensor_id == sensor_id)
+    ).one()
+    return row[0], row[1]
+
+
+def get_sensor_timestamps(
+    db: Session,
+    sensor_id: UUID,
+    sensor: SensorSpec,
+    *,
+    after: datetime | None = None,
+    limit: int | None = None,
+) -> list[datetime]:
+    stmt = (
+        select(sensor.reading_model.timestamp)
+        .where(sensor.reading_model.sensor_id == sensor_id)
+        .order_by(sensor.reading_model.timestamp.desc())
     )
+    if after is not None:
+        stmt = stmt.where(sensor.reading_model.timestamp >= after)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return sorted(db.execute(stmt).scalars())
 
 
 def build_sync_intervals(
@@ -121,7 +146,17 @@ def get_sensor_sync_state(
     gap_threshold: timedelta,
     max_intervals: int,
 ) -> dict[str, Any]:
-    timestamps = get_sensor_timestamps(db, sensor_row.id, sensor)
+    now = datetime.now(timezone.utc)
+    retention_cutoff = now - timedelta(days=SYNC_RETENTION_DAYS)
+
+    first_ts, latest_ts = get_sensor_timestamp_bounds(db, sensor_row.id, sensor)
+    timestamps = get_sensor_timestamps(
+        db,
+        sensor_row.id,
+        sensor,
+        after=retention_cutoff,
+        limit=SYNC_TIMESTAMPS_MAX,
+    )
     intervals, capped = build_sync_intervals(
         timestamps,
         gap_threshold=gap_threshold,
@@ -131,8 +166,8 @@ def get_sensor_sync_state(
     return {
         "mac": sensor_row.mac,
         "sensor_id": sensor_row.id,
-        "first_timestamp": timestamps[0] if timestamps else None,
-        "latest_timestamp": timestamps[-1] if timestamps else None,
+        "first_timestamp": first_ts,
+        "latest_timestamp": latest_ts,
         "sync_intervals": intervals,
         "sync_intervals_capped": capped,
     }

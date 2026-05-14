@@ -1,7 +1,10 @@
 import logging
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from models import SWITCHBOT_TYPE, Sensor
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from models import SWITCHBOT_TYPE, Sensor, SwitchbotReading
 from tests.helpers import (
     make_switchbot_payload,
     make_xiaomi_payload,
@@ -288,3 +291,58 @@ def test_switchbot_sensors_rejects_cross_type_mac(client, api_key):
 
     assert response.status_code == 400
     assert response.json() == {"detail": "sensor type does not match existing sensor"}
+
+
+def test_switchbot_sensors_respects_retention_and_timestamp_cap(client, api_key, db_session, monkeypatch):
+    """Timestamps outside 68-day window and beyond the cap are excluded from gap analysis,
+    while first_timestamp/latest_timestamp always reflect true DB min/max."""
+    import service
+    monkeypatch.setattr(service, "SYNC_TIMESTAMPS_MAX", 20)
+
+    mac = "AA:BB:CC:DD:EE:FF"
+
+    resp = post_switchbot_sensors(client, api_key, [{"mac": mac}])
+    assert resp.status_code == 200
+    sensor_id = UUID(resp.json()["sensors"][0]["sensor_id"])
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    # Outside the 68-day retention window — must not contribute to sync intervals
+    t_old = now - timedelta(days=70)
+
+    # Oldest timestamp inside the retention window.
+    # With 21 in-window timestamps and cap=20, this one is dropped by the cap.
+    # A 30-min gap from t0→t1 would appear if t0 were included; its absence proves the cap.
+    t0 = now - timedelta(days=67)
+    t1 = t0 + timedelta(minutes=30)
+
+    # 21 in-window timestamps: t0, then t1 and 19 more at 1-min intervals (no gaps ≥ 20 min)
+    in_window = [t0] + [t1 + timedelta(minutes=i) for i in range(20)]
+    t_latest = in_window[-1]
+
+    db_session.execute(
+        pg_insert(SwitchbotReading)
+        .values([
+            {"sensor_id": sensor_id, "mac": mac, "timestamp": ts, "temperature_c": 21.0, "humidity_pct": 50.0}
+            for ts in [t_old, *in_window]
+        ])
+        .on_conflict_do_nothing()
+    )
+    db_session.commit()
+
+    response = post_switchbot_sensors(client, api_key, [{"mac": mac}])
+    assert response.status_code == 200
+    sensor = response.json()["sensors"][0]
+
+    def fmt(ts: datetime) -> str:
+        return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # True DB bounds are preserved regardless of retention/cap
+    assert sensor["first_timestamp"] == fmt(t_old)
+    assert sensor["latest_timestamp"] == fmt(t_latest)
+
+    # No gap from t_old→t0 (retention excludes t_old)
+    # No gap from t0→t1 (cap drops t0; only newest 20 in-window are processed)
+    # Remaining processed timestamps are 1 min apart — no gaps ≥ 20 min
+    assert sensor["sync_intervals"] == []
+    assert sensor["sync_intervals_capped"] is False
