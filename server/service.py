@@ -437,58 +437,88 @@ def bulk_result_counts(
     result: dict[str, Any] = {
         "status": "ok",
         "received": len(raw_readings),
+        "succeeded": 0,
         "created": 0,
         "duplicate": 0,
         "conflict": 0,
         "invalid": 0,
         "errors": [],
+        "failed": [],
     }
 
     for index, raw in enumerate(raw_readings):
         if not isinstance(raw, dict):
             result["invalid"] += 1
+            reason = "reading must be an object"
             add_bulk_error(
                 result["errors"],
                 error_limit=error_limit,
                 index=index,
                 code="invalid_reading",
-                message="reading must be an object",
+                message=reason,
             )
+            result["failed"].append({"index": index, "reason": reason})
             continue
 
+        savepoint = db.begin_nested()
         try:
             reading = reading_model(**{**raw, "mac": sensor_row.mac, "name": None})
             row_result = ingest_reading(db=db, reading=reading, sensor=sensor, commit=False)
+            savepoint.commit()
         except ValidationError as exc:
+            savepoint.rollback()
             result["invalid"] += 1
+            reason = validation_error_message(exc)
             add_bulk_error(
                 result["errors"],
                 error_limit=error_limit,
                 index=index,
                 code="invalid_reading",
-                message=validation_error_message(exc),
+                message=reason,
             )
+            result["failed"].append({"index": index, "reason": reason})
             continue
         except BadRequestError as exc:
+            savepoint.rollback()
             result["invalid"] += 1
+            reason = str(exc)
             add_bulk_error(
                 result["errors"],
                 error_limit=error_limit,
                 index=index,
                 code="invalid_reading",
-                message=str(exc),
+                message=reason,
             )
+            result["failed"].append({"index": index, "reason": reason})
+            continue
+        except Exception as exc:
+            savepoint.rollback()
+            logger.error("bulk ingest db error at index %d: %s", index, exc)
+            result["invalid"] += 1
+            reason = "internal error"
+            add_bulk_error(
+                result["errors"],
+                error_limit=error_limit,
+                index=index,
+                code="db_error",
+                message=reason,
+            )
+            result["failed"].append({"index": index, "reason": reason})
             continue
 
         row_status = row_result.get("result")
         if row_status == "created":
             result["created"] += 1
+            result["succeeded"] += 1
         elif row_status == "duplicate":
             result["duplicate"] += 1
+            result["succeeded"] += 1
         elif row_status == "merged":
             result["created"] += 1
+            result["succeeded"] += 1
         elif row_status in {"conflict", "merged_with_conflict"}:
             result["conflict"] += 1
+            result["succeeded"] += 1
             add_bulk_error(
                 result["errors"],
                 error_limit=error_limit,
@@ -498,13 +528,15 @@ def bulk_result_counts(
             )
         else:
             result["invalid"] += 1
+            reason = f"unexpected ingest result: {row_status}"
             add_bulk_error(
                 result["errors"],
                 error_limit=error_limit,
                 index=index,
                 code="unexpected_result",
-                message=f"unexpected ingest result: {row_status}",
+                message=reason,
             )
+            result["failed"].append({"index": index, "reason": reason})
 
     db.commit()
     return result

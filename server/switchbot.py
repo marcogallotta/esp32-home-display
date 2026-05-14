@@ -93,14 +93,21 @@ class BulkErrorOut(BaseModel):
     message: str
 
 
+class BulkFailedRow(BaseModel):
+    index: int
+    reason: str
+
+
 class BulkOut(BaseModel):
     status: str
     received: int
+    succeeded: int
     created: int
     duplicate: int
     conflict: int
     invalid: int
     errors: list[BulkErrorOut]
+    failed: list[BulkFailedRow]
 
 
 SENSOR = SensorSpec[ReadingIn, ReadingOut, SwitchbotReading](

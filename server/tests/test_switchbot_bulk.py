@@ -39,11 +39,13 @@ def test_switchbot_bulk_inserts_multiple_readings(client, api_key, db_session):
     assert response.json() == {
         "status": "ok",
         "received": 2,
+        "succeeded": 2,
         "created": 2,
         "duplicate": 0,
         "conflict": 0,
         "invalid": 0,
         "errors": [],
+        "failed": [],
     }
     assert db_session.query(SwitchbotReading).count() == 2
 
@@ -63,11 +65,13 @@ def test_switchbot_bulk_is_idempotent_for_duplicate_upload(client, api_key):
     assert second.json() == {
         "status": "ok",
         "received": 2,
+        "succeeded": 2,
         "created": 0,
         "duplicate": 2,
         "conflict": 0,
         "invalid": 0,
         "errors": [],
+        "failed": [],
     }
 
 
@@ -189,3 +193,44 @@ def test_switchbot_bulk_rejects_more_than_configured_limit(client, api_key, app)
 
     assert response.status_code == 422
     assert response.json() == {"detail": "readings must contain at most 1 items"}
+
+
+def test_switchbot_bulk_reports_succeeded_and_failed_for_mixed_batch(client, api_key, db_session):
+    sensor_id = resolve_switchbot_sensor_id(client, api_key)
+
+    readings = [
+        bulk_reading(timestamp=f"2026-04-21T18:{i:02d}:00Z")
+        for i in range(9)
+    ]
+    readings.append(bulk_reading(timestamp="2026-04-21T18:09:00"))  # missing timezone → invalid
+
+    response = post_switchbot_bulk(client, api_key, sensor_id, readings)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["received"] == 10
+    assert body["succeeded"] == 9
+    assert body["created"] == 9
+    assert body["invalid"] == 1
+    assert len(body["failed"]) == 1
+    assert body["failed"][0]["index"] == 9
+    assert "reason" in body["failed"][0]
+    assert db_session.query(SwitchbotReading).count() == 9
+
+
+def test_switchbot_bulk_all_valid_has_empty_failed(client, api_key, db_session):
+    sensor_id = resolve_switchbot_sensor_id(client, api_key)
+
+    readings = [
+        bulk_reading(timestamp=f"2026-04-21T18:{i:02d}:00Z")
+        for i in range(5)
+    ]
+
+    response = post_switchbot_bulk(client, api_key, sensor_id, readings)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["received"] == 5
+    assert body["succeeded"] == 5
+    assert body["failed"] == []
+    assert db_session.query(SwitchbotReading).count() == 5
