@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import (
@@ -32,6 +32,54 @@ SYNC_MAX_INTERVALS_TOTAL_RANGE = (1, 100_000)
 
 
 @dataclass
+class RateLimit:
+    limit: int
+    period: int
+
+
+@dataclass
+class Esp32AppRateLimits:
+    read: RateLimit
+    write: RateLimit
+    burst: bool = True
+
+
+@dataclass
+class FrontendRateLimits:
+    read: RateLimit
+    write: RateLimit
+
+
+@dataclass
+class LoginRateLimits:
+    write: RateLimit
+
+
+@dataclass
+class RateLimitsConfig:
+    esp32_app: Esp32AppRateLimits
+    frontend: FrontendRateLimits
+    login: LoginRateLimits
+
+
+def _default_rate_limits() -> RateLimitsConfig:
+    return RateLimitsConfig(
+        esp32_app=Esp32AppRateLimits(
+            read=RateLimit(limit=60, period=60),
+            write=RateLimit(limit=10, period=60),
+            burst=True,
+        ),
+        frontend=FrontendRateLimits(
+            read=RateLimit(limit=30, period=60),
+            write=RateLimit(limit=5, period=60),
+        ),
+        login=LoginRateLimits(
+            write=RateLimit(limit=3, period=60),
+        ),
+    )
+
+
+@dataclass
 class DatabaseConfig:
     driver: str
     host: str
@@ -52,6 +100,7 @@ class Config:
     switchbot_sync_max_intervals_per_sensor: int = SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR
     switchbot_sync_max_intervals_total: int = SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL
     switchbot_bulk_max_readings: int = SWITCHBOT_BULK_DEFAULT_MAX_READINGS
+    rate_limits: RateLimitsConfig = field(default_factory=_default_rate_limits)
 
 
 def _check_str(errors: list[str], name: str, value: object) -> bool:
@@ -59,6 +108,16 @@ def _check_str(errors: list[str], name: str, value: object) -> bool:
         errors.append(f"{name}: must be a string")
         return False
     return True
+
+
+def _check_positive_int(errors: list[str], name: str, value: object) -> None:
+    if _check_int(errors, name, value) and value <= 0:  # type: ignore[operator]
+        errors.append(f"{name}: must be a positive integer")
+
+
+def _validate_rate_limit(errors: list[str], prefix: str, rl: RateLimit) -> None:
+    _check_positive_int(errors, f"{prefix}.limit", rl.limit)
+    _check_positive_int(errors, f"{prefix}.period", rl.period)
 
 
 def _check_int(errors: list[str], name: str, value: object) -> bool:
@@ -127,6 +186,15 @@ def validate_config(config: Config, env: str) -> None:
         if not (lo <= config.switchbot_sync_max_intervals_total <= hi):
             errors.append(f"switchbot_sync_max_intervals_total: must be in [{lo}, {hi}]")
 
+    rl = config.rate_limits
+    _validate_rate_limit(errors, "rate_limits.esp32_app.read", rl.esp32_app.read)
+    _validate_rate_limit(errors, "rate_limits.esp32_app.write", rl.esp32_app.write)
+    if not isinstance(rl.esp32_app.burst, bool):
+        errors.append("rate_limits.esp32_app.burst: must be a boolean")
+    _validate_rate_limit(errors, "rate_limits.frontend.read", rl.frontend.read)
+    _validate_rate_limit(errors, "rate_limits.frontend.write", rl.frontend.write)
+    _validate_rate_limit(errors, "rate_limits.login.write", rl.login.write)
+
     if errors:
         raise ValueError("Invalid configuration:\n" + "\n".join(f"  {e}" for e in errors))
 
@@ -151,6 +219,31 @@ def load_config(config_dir: Path | None = None) -> Config:
         raise ValueError(f"Missing required config fields: {', '.join(sorted(missing))}")
 
     raw_db = data.pop("database")
-    config = Config(database=DatabaseConfig(**raw_db), **data)
+    raw_rl = data.pop("rate_limits", None)
+    rate_limits = _parse_rate_limits(raw_rl) if raw_rl is not None else _default_rate_limits()
+    config = Config(database=DatabaseConfig(**raw_db), rate_limits=rate_limits, **data)
     validate_config(config, env)
     return config
+
+
+def _parse_rate_limits(raw: dict) -> RateLimitsConfig:
+    def _rl(d: dict) -> RateLimit:
+        return RateLimit(**d)
+
+    esp = raw["esp32_app"]
+    fe = raw["frontend"]
+    login = raw["login"]
+    return RateLimitsConfig(
+        esp32_app=Esp32AppRateLimits(
+            read=_rl(esp["read"]),
+            write=_rl(esp["write"]),
+            burst=esp.get("burst", True),
+        ),
+        frontend=FrontendRateLimits(
+            read=_rl(fe["read"]),
+            write=_rl(fe["write"]),
+        ),
+        login=LoginRateLimits(
+            write=_rl(login["write"]),
+        ),
+    )

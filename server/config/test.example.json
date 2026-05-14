@@ -10,5 +10,19 @@
     "name": "eps32_test",
     "user": "postgres",
     "password": "your-test-password"
+  },
+  "rate_limits": {
+    "esp32_app": {
+      "read":  {"limit": 60, "period": 60},
+      "write": {"limit": 10, "period": 60},
+      "burst": true
+    },
+    "frontend": {
+      "read":  {"limit": 30, "period": 60},
+      "write": {"limit":  5, "period": 60}
+    },
+    "login": {
+      "write": {"limit":  3, "period": 60}
+    }
   }
 }
