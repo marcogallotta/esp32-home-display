@@ -153,7 +153,7 @@ bool shouldSendXiaomiLux(
     }
 
     const auto fractionThreshold = static_cast<std::uint32_t>(*lastSent.lux * policy.luxDeltaFraction);
-    const auto threshold = std::min(policy.luxDeltaCap, fractionThreshold);
+    const auto threshold = std::max(1u, std::min(policy.luxDeltaCap, fractionThreshold));
     return optionalDeltaAtLeast(current.lux, lastSent.lux, threshold);
 }
 

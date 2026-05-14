@@ -315,3 +315,11 @@ TEST_CASE("xiaomi writes an unchanged reading when the configured heartbeat expi
 
     CHECK(api::shouldSendXiaomi(config, heartbeatReading, lastSent));
 }
+
+TEST_CASE("xiaomi ignores unchanged lux at zero (dark room, sensor capped)") {
+    const Config config = testConfig();
+    const auto lastSent = xiaomiReading().withLux(0).build();
+    const auto sameReading = xiaomiReading().withLux(0).build();
+
+    CHECK_FALSE(api::shouldSendXiaomi(config, sameReading, lastSent));
+}
