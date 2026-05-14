@@ -616,6 +616,7 @@ def fetch_readings(
     end_ts: datetime | None,
     max_points: int | None,
     sensor: SensorSpec,
+    expected_type: int,
 ):
     mac = validate_mac_address(mac)
     before = validate_query_timestamp("before", before)
@@ -638,8 +639,11 @@ def fetch_readings(
     if start_ts is not None and (before is not None or after is not None):
         raise BadRequestError("start_ts/end_ts cannot be combined with before/after")
 
-    if get_sensor_by_mac(db, mac) is None:
+    sensor_row = get_sensor_by_mac(db, mac)
+    if sensor_row is None:
         return []
+    if sensor_row.type != expected_type:
+        raise BadRequestError("sensor type mismatch")
 
     if start_ts is not None and end_ts is not None:
         return fetch_window_readings(

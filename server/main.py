@@ -194,6 +194,7 @@ def create_app(config: Config) -> FastAPI:
             end_ts=end_ts,
             max_points=max_points,
             sensor=SENSOR_SPECS[sensor_row.type],
+            expected_type=sensor_row.type,
         )
 
     @device.post("/switchbot/sensors", response_model=sb.SensorsOut)

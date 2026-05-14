@@ -1,5 +1,11 @@
 import pytest
+from sqlalchemy import select
 
+import switchbot as sb
+import xiaomi as xm
+from errors import BadRequestError
+from models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
+from service import fetch_readings
 from tests.helpers import (
     get_sensor_id,
     get_sensor_readings,
@@ -256,3 +262,62 @@ def test_get_start_ts_end_ts_offset_timezone_interpreted_as_utc(authed_client, a
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["timestamp"] == middle["timestamp"]
+
+
+def _call_fetch_readings(db, mac, expected_type, sensor):
+    return fetch_readings(
+        db=db,
+        mac=mac,
+        limit=100,
+        before=None,
+        after=None,
+        start_ts=None,
+        end_ts=None,
+        max_points=None,
+        sensor=sensor,
+        expected_type=expected_type,
+    )
+
+
+def test_fetch_readings_rejects_xiaomi_sensor_when_switchbot_expected(
+    authed_client, api_key, db_session
+):
+    post_xiaomi(authed_client, api_key, make_xiaomi_payload())
+    sensor = db_session.execute(
+        select(Sensor).where(Sensor.type == XIAOMI_TYPE)
+    ).scalar_one()
+
+    with pytest.raises(BadRequestError):
+        _call_fetch_readings(db_session, sensor.mac, SWITCHBOT_TYPE, sb.SENSOR)
+
+
+def test_fetch_readings_rejects_switchbot_sensor_when_xiaomi_expected(
+    authed_client, api_key, db_session
+):
+    post_switchbot(authed_client, api_key, make_switchbot_payload())
+    sensor = db_session.execute(
+        select(Sensor).where(Sensor.type == SWITCHBOT_TYPE)
+    ).scalar_one()
+
+    with pytest.raises(BadRequestError):
+        _call_fetch_readings(db_session, sensor.mac, XIAOMI_TYPE, xm.SENSOR)
+
+
+def test_fetch_readings_accepts_matching_switchbot_type(authed_client, api_key):
+    post_switchbot(authed_client, api_key, make_switchbot_payload())
+    sensor_id = get_sensor_id(authed_client, sensor_type="switchbot")
+
+    response = get_sensor_readings(authed_client, sensor_id)
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_fetch_readings_accepts_matching_xiaomi_type(authed_client, api_key):
+    post_xiaomi(authed_client, api_key, make_xiaomi_payload())
+    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
+
+    response = get_sensor_readings(authed_client, sensor_id)
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
