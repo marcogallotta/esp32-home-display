@@ -10,6 +10,11 @@ from common import (
     SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL,
 )
 
+_PROD_WEAK_API_KEYS = {
+    "dev-api-key",
+    "test-api-key",
+}
+
 _PROD_WEAK_SECRETS = {
     "a-long-random-secret-string",
     "test-session-secret",
@@ -67,6 +72,11 @@ def _check_int(errors: list[str], name: str, value: object) -> bool:
 def validate_config(config: Config, env: str) -> None:
     errors: list[str] = []
 
+    api_key_ok = _check_str(errors, "api_key", config.api_key)
+    if api_key_ok and not config.api_key:
+        errors.append("api_key: required")
+        api_key_ok = False
+
     secret_ok = _check_str(errors, "session_secret", config.session_secret)
     if secret_ok and not config.session_secret:
         errors.append("session_secret: required")
@@ -82,6 +92,8 @@ def validate_config(config: Config, env: str) -> None:
         errors.append("session_secure: must be a boolean")
 
     if env == "prod":
+        if api_key_ok and config.api_key and config.api_key in _PROD_WEAK_API_KEYS:
+            errors.append("api_key: must not be a known default")
         if secret_ok and config.session_secret and (
             len(config.session_secret) < 32
             or config.session_secret in _PROD_WEAK_SECRETS

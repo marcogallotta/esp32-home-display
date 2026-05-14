@@ -48,6 +48,35 @@ def test_valid_prod_config_passes():
     validate_config(cfg, env="prod")
 
 
+# --- api_key ---
+
+def test_empty_api_key_fails():
+    with pytest.raises(ValueError, match="api_key: required"):
+        validate_config(_config(api_key=""), env="dev")
+
+
+def test_non_string_api_key_fails():
+    cfg = _config()
+    cfg.api_key = 123  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="api_key: must be a string"):
+        validate_config(cfg, env="dev")
+
+
+def test_valid_api_key_passes():
+    validate_config(_config(api_key="some-valid-key"), env="dev")
+
+
+def test_prod_rejects_weak_api_key():
+    cfg = _config(
+        api_key="dev-api-key",
+        session_secret="a" * 32,
+        dashboard_password="strongpassword1",
+        session_secure=True,
+    )
+    with pytest.raises(ValueError, match="api_key: must not be a known default"):
+        validate_config(cfg, env="prod")
+
+
 # --- Required fields ---
 
 def test_empty_session_secret_fails():
