@@ -17,6 +17,17 @@ services:
     env_file: config/env
     volumes:
       - ./certs:/app/certs:ro
+      - ./app:/app/app:ro
+      - ./config:/app/config:ro
+      - ./static:/app/static:ro
+      - ./alembic:/app/alembic:ro
+      - ./tools:/app/tools:ro
+    command: ["uvicorn", "app.wsgi:app",
+      "--host", "0.0.0.0",
+      "--ssl-keyfile", "certs/key.pem",
+      "--ssl-certfile", "certs/cert.pem",
+      "--log-config", "config/logging.yaml",
+      "--reload"]
     ports:
       - "8000:8000"
     depends_on:

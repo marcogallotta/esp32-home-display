@@ -25,6 +25,8 @@ services:
       DATABASE_PASSWORD: test
     volumes:
       - ./certs:/app/certs:ro
+      - ./app:/app/app:ro
+      - ./config:/app/config:ro
     depends_on:
       db-test:
         condition: service_healthy
