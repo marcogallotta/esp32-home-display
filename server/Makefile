@@ -61,7 +61,7 @@ run-server:
 	uvicorn app.wsgi:app --reload --host 0.0.0.0 \
 		--ssl-keyfile certs/key.pem \
 		--ssl-certfile certs/cert.pem \
-		--log-config logging.yaml
+		--log-config config/logging.yaml
 
 test:
 	ENV=test $(MAKE) db-reset-schema
