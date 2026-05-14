@@ -651,7 +651,7 @@ void maybeRunStartupHistorySync(const Config& config,
 
     HistoryServiceDeps deps;
     deps.sensorLookup = [&](const std::vector<std::string>& m) {
-        return postSensorLookup(config, m);
+        return postSensorLookup(config, m, labelsByMac);
     };
     deps.sessionFactory = [](const std::string& mac) {
         return std::make_unique<SensorHistorySession>(mac);

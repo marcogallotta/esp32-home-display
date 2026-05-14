@@ -3,6 +3,7 @@
 #include "doctest/doctest.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,24 @@ TEST_CASE("switchbot history backend parses UTC timestamps") {
 TEST_CASE("switchbot history backend builds sensor lookup payload") {
     const std::string payload = switchbot::history::makeSensorLookupPayload({"AA:BB:CC:DD:EE:FF"});
     CHECK(payload.find("\"mac\":\"AA:BB:CC:DD:EE:FF\"") != std::string::npos);
+    CHECK(payload.find("\"name\"") == std::string::npos);
+}
+
+TEST_CASE("switchbot history backend includes name in payload when label is set") {
+    const std::map<std::string, std::string> labels{{"AA:BB:CC:DD:EE:FF", "Living Room"}};
+    const std::string payload = switchbot::history::makeSensorLookupPayload({"AA:BB:CC:DD:EE:FF"}, labels);
+    CHECK(payload.find("\"mac\":\"AA:BB:CC:DD:EE:FF\"") != std::string::npos);
+    CHECK(payload.find("\"name\":\"Living Room\"") != std::string::npos);
+}
+
+TEST_CASE("switchbot history backend omits name in payload when label is missing or empty") {
+    const std::map<std::string, std::string> emptyLabel{{"AA:BB:CC:DD:EE:FF", ""}};
+    const std::string payloadEmpty = switchbot::history::makeSensorLookupPayload({"AA:BB:CC:DD:EE:FF"}, emptyLabel);
+    CHECK(payloadEmpty.find("\"name\"") == std::string::npos);
+
+    const std::map<std::string, std::string> missingLabel{{"11:22:33:44:55:66", "Other"}};
+    const std::string payloadMissing = switchbot::history::makeSensorLookupPayload({"AA:BB:CC:DD:EE:FF"}, missingLabel);
+    CHECK(payloadMissing.find("\"name\"") == std::string::npos);
 }
 
 TEST_CASE("switchbot history backend parses sensor lookup response") {

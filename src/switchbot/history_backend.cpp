@@ -286,12 +286,17 @@ std::string formatIsoUtc(std::uint32_t epoch) {
     return std::string(buf);
 }
 
-std::string makeSensorLookupPayload(const std::vector<std::string>& normalizedMacs) {
-    DynamicJsonDocument doc(512 + normalizedMacs.size() * 48);
+std::string makeSensorLookupPayload(const std::vector<std::string>& normalizedMacs,
+                                    const std::map<std::string, std::string>& labelsByMac) {
+    DynamicJsonDocument doc(512 + normalizedMacs.size() * 96);
     JsonArray sensors = doc.createNestedArray("sensors");
     for (const std::string& mac : normalizedMacs) {
         JsonObject sensor = sensors.createNestedObject();
         sensor["mac"] = mac;
+        const auto it = labelsByMac.find(mac);
+        if (it != labelsByMac.end() && !it->second.empty()) {
+            sensor["name"] = it->second;
+        }
     }
 
     std::string out;
@@ -372,8 +377,10 @@ SensorLookupResult parseSensorLookupResponse(const std::string& body, int httpSt
     return result;
 }
 
-SensorLookupResult postSensorLookup(const Config& config, const std::vector<std::string>& normalizedMacs) {
-    const std::string payload = makeSensorLookupPayload(normalizedMacs);
+SensorLookupResult postSensorLookup(const Config& config,
+                                    const std::vector<std::string>& normalizedMacs,
+                                    const std::map<std::string, std::string>& labelsByMac) {
+    const std::string payload = makeSensorLookupPayload(normalizedMacs, labelsByMac);
     const network::Headers headers{{"x-api-key", config.api.apiKey}};
     const network::HttpResponse response = network::platform(config.wifi).httpPost(
         apiUrl(config, "/switchbot/sensors"),

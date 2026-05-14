@@ -4,6 +4,7 @@
 #include "history_protocol.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -77,9 +78,12 @@ std::string formatIsoUtc(std::uint32_t epoch);
 
 std::string apiUrl(const Config& config, const char* path);
 
-std::string makeSensorLookupPayload(const std::vector<std::string>& normalizedMacs);
+std::string makeSensorLookupPayload(const std::vector<std::string>& normalizedMacs,
+                                    const std::map<std::string, std::string>& labelsByMac = {});
 SensorLookupResult parseSensorLookupResponse(const std::string& body, int httpStatusCode = 200);
-SensorLookupResult postSensorLookup(const Config& config, const std::vector<std::string>& normalizedMacs);
+SensorLookupResult postSensorLookup(const Config& config,
+                                    const std::vector<std::string>& normalizedMacs,
+                                    const std::map<std::string, std::string>& labelsByMac = {});
 
 std::string makeBulkUploadPayload(const std::string& sensorId, const std::vector<BulkHistoryReading>& readings);
 BulkUploadResult parseBulkUploadResponse(const std::string& body, int httpStatusCode = 200);
