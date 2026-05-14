@@ -52,11 +52,8 @@ def reconcile_sensor_name(sensor: Sensor, name: str | None):
     if name is None or sensor.name == name:
         return
 
-    if sensor.name == sensor.mac:
-        sensor.name = name
-        return
-
-    raise BadRequestError("sensor name does not match existing sensor")
+    logger.warning("sensor name changed from %s → %s", sensor.name, name)
+    sensor.name = name
 
 
 def get_or_create_sensor_for_sync(
