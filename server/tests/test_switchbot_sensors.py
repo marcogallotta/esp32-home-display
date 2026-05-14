@@ -296,7 +296,7 @@ def test_switchbot_sensors_rejects_cross_type_mac(client, api_key):
 def test_switchbot_sensors_respects_retention_and_timestamp_cap(client, api_key, db_session, monkeypatch):
     """Timestamps outside 68-day window and beyond the cap are excluded from gap analysis,
     while first_timestamp/latest_timestamp always reflect true DB min/max."""
-    import service
+    import app.service as service
     monkeypatch.setattr(service, "SYNC_TIMESTAMPS_MAX", 20)
 
     mac = "AA:BB:CC:DD:EE:FF"
