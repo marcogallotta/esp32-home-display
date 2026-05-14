@@ -30,13 +30,10 @@ window.api = {
     );
   },
 
-  async fetchLatestSensorReading(sensorId) {
-    const rows = await this.fetchSensorReadings(sensorId, {
-      startTs: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-      endTs: new Date().toISOString(),
-      maxPoints: 1,
-    });
-
-    return rows && rows.length ? rows[0] : null;
+  async fetchLatestReadings(macs) {
+    const params = macs && macs.length
+      ? "?" + macs.map((m) => `mac=${encodeURIComponent(m)}`).join("&")
+      : "";
+    return this.fetchJson(`/sensors/latest${params}`);
   },
 };

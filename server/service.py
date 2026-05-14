@@ -553,6 +553,45 @@ def rows_to_models(rows, reading_out: Any, selected_fields: list[str]):
     ]
 
 
+def fetch_latest_readings(
+    db: Session,
+    sensor_specs: dict[int, "SensorSpec"],
+    macs: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    results = []
+    for spec in sensor_specs.values():
+        model = spec.reading_model
+        data_field_cols = [f.column.label(f.name) for f in spec.data_fields]
+        row_num = func.row_number().over(
+            partition_by=model.sensor_id,
+            order_by=model.timestamp.desc(),
+        ).label("rn")
+
+        subq = select(
+            model.sensor_id.label("sensor_id"),
+            model.mac.label("mac"),
+            model.timestamp.label("timestamp"),
+            *data_field_cols,
+            row_num,
+        ).subquery()
+
+        stmt = select(subq).where(subq.c.rn == 1)
+        if macs:
+            stmt = stmt.where(subq.c.mac.in_(macs))
+
+        for row in db.execute(stmt).all():
+            reading = {f.name: row._mapping[f.name] for f in spec.data_fields}
+            results.append(
+                {
+                    "mac": row.mac,
+                    "sensor_id": row.sensor_id,
+                    "latest_timestamp": row.timestamp,
+                    "reading": reading,
+                }
+            )
+    return results
+
+
 def fetch_raw_readings(
     db: Session,
     mac: str,

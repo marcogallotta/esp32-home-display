@@ -19,12 +19,14 @@ from common import (
     BULK_ERROR_DETAIL_LIMIT,
     READINGS_DEFAULT_LIMIT,
     READINGS_MAX_LIMIT,
+    validate_mac_address,
 )
 from config import Config
 from errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from models import SWITCHBOT_TYPE, XIAOMI_TYPE
 from service import (
     bulk_result_counts,
+    fetch_latest_readings,
     fetch_readings,
     get_or_create_sensors_with_sync_state,
     get_sensor_by_id,
@@ -47,6 +49,17 @@ class SensorOut(BaseModel):
     id: UUID
     name: str
     type: str
+
+
+class LatestReadingOut(BaseModel):
+    mac: str
+    sensor_id: UUID
+    latest_timestamp: datetime
+    reading: dict[str, Any]
+
+
+class LatestSensorsOut(BaseModel):
+    sensors: list[LatestReadingOut]
 
 
 SENSOR_SPECS = {
@@ -167,6 +180,15 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             )
             for sensor in list_sensors(db)
         ]
+
+    @dashboard.get("/sensors/latest", response_model=LatestSensorsOut)
+    def get_sensors_latest(
+        mac: Annotated[list[str] | None, Query()] = None,
+        db: Session = Depends(get_db),
+    ):
+        macs = [validate_mac_address(m) for m in mac] if mac else None
+        readings = fetch_latest_readings(db, SENSOR_SPECS, macs=macs)
+        return LatestSensorsOut(sensors=readings)
 
     @dashboard.get("/sensors/{sensor_id}/readings")
     def get_sensor_readings(

@@ -146,20 +146,18 @@ function App() {
 
     async function pollLatest() {
       try {
-        const latestEntries = await Promise.all(
-          sensors.map(async (sensor) => {
-            const latest = await window.api.fetchLatestSensorReading(sensor.id);
-            return [sensor.id, latest];
-          })
-        );
+        const data = await window.api.fetchLatestReadings();
 
         if (cancelled) return;
 
         setHistoryBySensorId((prev) => {
           const next = { ...prev };
-          for (const [sensorId, latest] of latestEntries) {
-            if (!latest) continue;
-            next[sensorId] = window.sensorModel.mergeLatestIntoRows(next[sensorId] || [], latest);
+          for (const item of data.sensors) {
+            const row = { timestamp: item.latest_timestamp, ...item.reading };
+            next[item.sensor_id] = window.sensorModel.mergeLatestIntoRows(
+              next[item.sensor_id] || [],
+              row
+            );
           }
           return next;
         });
