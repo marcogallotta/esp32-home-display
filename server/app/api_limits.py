@@ -85,7 +85,8 @@ def make_rate_limiter(
     _lim = limiter or _limiter
 
     async def dependency(request: Request) -> None:
-        key = f"{base_key}:{request.client.host}" if per_ip else base_key
+        host = request.client.host if request.client else "unknown"
+        key = f"{base_key}:{host}" if per_ip else base_key
         retry_after = _lim.consume(key, capacity, rate)
         if retry_after is not None:
             raise HTTPException(

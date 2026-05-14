@@ -21,6 +21,7 @@ from .common import (
     READINGS_MAX_LIMIT,
     validate_mac_address,
 )
+from .api_limits import MemoryMapStore, TokenBucketLimiter, make_rate_limiter
 from .config import Config
 from .errors import BadRequestError, ServerMisconfiguredError, UnauthorizedError
 from .models import SWITCHBOT_TYPE, XIAOMI_TYPE
@@ -97,6 +98,39 @@ def get_db(request: Request):
 def create_app(config: Config, engine, session_factory) -> FastAPI:
     app = FastAPI()
 
+    rl = config.rate_limits
+    limiter = TokenBucketLimiter(MemoryMapStore())
+    esp32_read_limit = make_rate_limiter(
+        "esp32_app:read",
+        limit=rl.esp32_app.read.limit,
+        period=rl.esp32_app.read.period,
+        burst=rl.esp32_app.burst,
+        limiter=limiter,
+    )
+    esp32_write_limit = make_rate_limiter(
+        "esp32_app:write",
+        limit=rl.esp32_app.write.limit,
+        period=rl.esp32_app.write.period,
+        burst=rl.esp32_app.burst,
+        limiter=limiter,
+    )
+    frontend_limit = make_rate_limiter(
+        "frontend",
+        limit=rl.frontend.limit,
+        period=rl.frontend.period,
+        burst=True,
+        per_ip=True,
+        limiter=limiter,
+    )
+    login_limit = make_rate_limiter(
+        "login",
+        limit=rl.login.limit,
+        period=rl.login.period,
+        burst=True,
+        per_ip=True,
+        limiter=limiter,
+    )
+
     app.state.config = config
     app.state.engine = engine
     app.state.session_factory = session_factory
@@ -152,7 +186,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
     def login_page():
         return FileResponse(_STATIC_DIR / "login.html")
 
-    @app.post("/login")
+    @app.post("/login", dependencies=[Depends(login_limit)])
     async def login(request: Request):
         form = await request.form()
         password = str(form.get("password", ""))
@@ -168,7 +202,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         return RedirectResponse(url="/login", status_code=303)
 
     device = APIRouter(dependencies=[Depends(require_api_key)])
-    dashboard = APIRouter(dependencies=[Depends(require_session)])
+    dashboard = APIRouter(dependencies=[Depends(require_session), Depends(frontend_limit)])
 
     @dashboard.get("/sensors", response_model=list[SensorOut])
     def get_sensors(db: Session = Depends(get_db)):
@@ -218,7 +252,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             expected_type=sensor_row.type,
         )
 
-    @device.post("/switchbot/sensors", response_model=sb.SensorsOut)
+    @device.post("/switchbot/sensors", response_model=sb.SensorsOut, dependencies=[Depends(esp32_read_limit)])
     def create_switchbot_sensors(
         payload: sb.SensorsIn,
         request: Request,
@@ -233,7 +267,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             max_intervals_total=request.app.state.config.switchbot_sync_max_intervals_total,
         )
 
-    @device.post("/switchbot/bulk", response_model=sb.BulkOut)
+    @device.post("/switchbot/bulk", response_model=sb.BulkOut, dependencies=[Depends(esp32_write_limit)])
     def create_switchbot_bulk(
         payload: sb.BulkIn,
         request: Request,
@@ -285,11 +319,11 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             error_limit=BULK_ERROR_DETAIL_LIMIT,
         )
 
-    @device.post("/switchbot/reading", response_model=IngestResponse)
+    @device.post("/switchbot/reading", response_model=IngestResponse, dependencies=[Depends(esp32_write_limit)])
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=sb.SENSOR)
 
-    @device.post("/xiaomi/reading", response_model=IngestResponse)
+    @device.post("/xiaomi/reading", response_model=IngestResponse, dependencies=[Depends(esp32_write_limit)])
     def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 
