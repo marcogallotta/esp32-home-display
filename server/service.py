@@ -567,17 +567,18 @@ def fetch_latest_readings(
             order_by=model.timestamp.desc(),
         ).label("rn")
 
-        subq = select(
+        inner = select(
             model.sensor_id.label("sensor_id"),
             model.mac.label("mac"),
             model.timestamp.label("timestamp"),
             *data_field_cols,
             row_num,
-        ).subquery()
+        )
+        if macs:
+            inner = inner.where(model.mac.in_(macs))
+        subq = inner.subquery()
 
         stmt = select(subq).where(subq.c.rn == 1)
-        if macs:
-            stmt = stmt.where(subq.c.mac.in_(macs))
 
         for row in db.execute(stmt).all():
             reading = {f.name: row._mapping[f.name] for f in spec.data_fields}
