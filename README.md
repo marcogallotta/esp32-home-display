@@ -78,7 +78,7 @@ cp data/config.json.example data/config.json
 ```bash
 pip install -r server/requirements.txt
 cp server/config/dev.example.json server/config/dev.json
-cd server && ./gen_certs.sh
+cd server && ./tools/gen_certs.sh
 ```
 
 Copy the generated cert into `data/` and reference it in `config.json` under `api.pem_file`.

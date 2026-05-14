@@ -55,7 +55,7 @@ db-reset-schema: db-start db-wait
 		printf "Reset schema on $(DB_NAME) ($(ENV))? [y/N] " && \
 		read ans && [ "$$ans" = "y" ] || exit 0; \
 	fi
-	python3 reset_db.py
+	python3 tools/reset_db.py
 
 run-server:
 	uvicorn app.wsgi:app --reload --host 0.0.0.0 \
