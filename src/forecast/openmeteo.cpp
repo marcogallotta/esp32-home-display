@@ -76,7 +76,7 @@ bool parseForecastJson(const std::string& json, ForecastData& out) {
     out.count = n;
 
     for (int i = 0; i < n; ++i) {
-        out.days[i].date = time[i].as<const char*>();
+        out.days[i].date = time[i].as<std::string>();
         out.days[i].weatherCode = weatherCode[i] | 0;
         out.days[i].tempMax = tempMax[i] | 0.0f;
         out.days[i].tempMin = tempMin[i] | 0.0f;

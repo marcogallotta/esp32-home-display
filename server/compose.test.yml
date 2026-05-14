@@ -27,6 +27,7 @@ services:
       - ./certs:/app/certs:ro
       - ./app:/app/app:ro
       - ./config:/app/config:ro
+      - ./tests:/app/tests:ro
     depends_on:
       db-test:
         condition: service_healthy

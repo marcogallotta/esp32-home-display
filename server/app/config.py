@@ -40,7 +40,8 @@ class RateLimit:
 @dataclass
 class Esp32AppRateLimits:
     read: RateLimit
-    write: RateLimit
+    live_write: RateLimit
+    bulk_write: RateLimit
     burst: bool = True
 
 
@@ -55,7 +56,8 @@ def _default_rate_limits() -> RateLimitsConfig:
     return RateLimitsConfig(
         esp32_app=Esp32AppRateLimits(
             read=RateLimit(limit=60, period=60),
-            write=RateLimit(limit=10, period=60),
+            live_write=RateLimit(limit=10, period=60),
+            bulk_write=RateLimit(limit=120, period=60),
             burst=True,
         ),
         frontend=RateLimit(limit=30, period=60),
@@ -172,7 +174,8 @@ def validate_config(config: Config, env: str) -> None:
 
     rl = config.rate_limits
     _validate_rate_limit(errors, "rate_limits.esp32_app.read", rl.esp32_app.read)
-    _validate_rate_limit(errors, "rate_limits.esp32_app.write", rl.esp32_app.write)
+    _validate_rate_limit(errors, "rate_limits.esp32_app.live_write", rl.esp32_app.live_write)
+    _validate_rate_limit(errors, "rate_limits.esp32_app.bulk_write", rl.esp32_app.bulk_write)
     if not isinstance(rl.esp32_app.burst, bool):
         errors.append("rate_limits.esp32_app.burst: must be a boolean")
     _validate_rate_limit(errors, "rate_limits.frontend", rl.frontend)
@@ -241,7 +244,8 @@ def _parse_rate_limits(raw: dict) -> RateLimitsConfig:
     return RateLimitsConfig(
         esp32_app=Esp32AppRateLimits(
             read=_rl(esp["read"]),
-            write=_rl(esp["write"]),
+            live_write=_rl(esp["live_write"]),
+            bulk_write=_rl(esp["bulk_write"]),
             burst=esp.get("burst", True),
         ),
         frontend=_rl(fe),

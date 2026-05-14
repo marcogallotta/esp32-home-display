@@ -179,7 +179,8 @@ void updateSalahIfDue(AppContext& app, std::time_t now) {
     }
 
     const std::time_t now2 = std::time(nullptr);
-    const std::tm localTime = *std::localtime(&now2);
+    std::tm localTime;
+    localtime_r(&now2, &localTime);
     updateSalahState(
         app.config,
         localTime,

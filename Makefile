@@ -32,6 +32,8 @@ PQUEUE_SRC := \
 	pqueue/src/pqueue/http/outbox.cpp \
 	pqueue/src/pqueue/http/posix_curl_transport.cpp \
 	pqueue/src/pqueue/http/request_envelope.cpp \
+	pqueue/src/pqueue/append_log_common.cpp \
+	pqueue/src/pqueue/append_log_store.cpp \
 	pqueue/src/pqueue/file_store.cpp \
 	pqueue/src/pqueue/internal/lock_owner.cpp \
 	pqueue/src/pqueue/diagnostics.cpp \
