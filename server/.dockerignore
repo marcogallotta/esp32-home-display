@@ -4,8 +4,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-tests/
 certs/
-config/*.json
+config/env
 .claude/
 .gitignore

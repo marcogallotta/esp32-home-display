@@ -1,0 +1,19 @@
+{
+  "session_secure": true,
+  "database": {
+    "driver": "postgresql+psycopg"
+  },
+  "rate_limits": {
+    "esp32_app": {
+      "read":  {"limit": 60, "period": 60},
+      "write": {"limit": 10, "period": 60},
+      "burst": true
+    },
+    "frontend": {"limit": 30, "period": 60},
+    "login": {"limit": 3, "period": 60}
+  },
+  "switchbot_sync_gap_threshold_minutes": 30,
+  "switchbot_sync_max_intervals_per_sensor": 100,
+  "switchbot_sync_max_intervals_total": 1000,
+  "switchbot_bulk_max_readings": 500
+}

@@ -220,35 +220,43 @@ def test_limit_as_bool_fails():
 
 # --- load_config() startup boundary ---
 
-def _write_config(tmp_path, env_name, cfg_data):
+def _write_app_json(tmp_path):
     config_dir = tmp_path / "config"
     config_dir.mkdir(exist_ok=True)
-    (config_dir / f"{env_name}.json").write_text(json.dumps(cfg_data))
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+    }))
+    return config_dir
 
 
-_BASE_DB = {
-    "driver": "postgresql+psycopg",
-    "host": "localhost",
-    "port": 5432,
-    "name": "test",
-    "user": "postgres",
-    "password": "test",
-}
+def _set_base_env(monkeypatch, **overrides):
+    env = {
+        "ENV": "dev",
+        "API_KEY": "key",
+        "SESSION_SECRET": "test-session-secret",
+        "DASHBOARD_PASSWORD": "test-dashboard-password",
+        "SESSION_SECURE": "false",
+        "DATABASE_HOST": "localhost",
+        "DATABASE_PORT": "5432",
+        "DATABASE_NAME": "test",
+        "DATABASE_USER": "postgres",
+        "DATABASE_PASSWORD": "test",
+    }
+    env.update(overrides)
+    for k, v in env.items():
+        if v is None:
+            monkeypatch.delenv(k, raising=False)
+        else:
+            monkeypatch.setenv(k, v)
 
 
 def test_load_config_fails_on_invalid_field(tmp_path, monkeypatch):
-    cfg_data = {
-        "api_key": "key",
-        "dashboard_password": "",
-        "session_secret": "",
-        "session_secure": False,
-        "database": _BASE_DB,
-    }
-    _write_config(tmp_path, "dev", cfg_data)
-    monkeypatch.setenv("ENV", "dev")
+    config_dir = _write_app_json(tmp_path)
+    _set_base_env(monkeypatch, SESSION_SECRET="")
 
     with pytest.raises(ValueError, match="session_secret"):
-        load_config(config_dir=tmp_path / "config")
+        load_config(config_dir=config_dir)
 
 
 def test_load_config_rejects_unknown_env(monkeypatch):
@@ -258,15 +266,8 @@ def test_load_config_rejects_unknown_env(monkeypatch):
 
 
 def test_load_config_fails_on_missing_field(tmp_path, monkeypatch):
-    cfg_data = {
-        "api_key": "key",
-        "dashboard_password": "test-dashboard-password",
-        # session_secret intentionally omitted
-        "session_secure": False,
-        "database": _BASE_DB,
-    }
-    _write_config(tmp_path, "dev", cfg_data)
-    monkeypatch.setenv("ENV", "dev")
+    config_dir = _write_app_json(tmp_path)
+    _set_base_env(monkeypatch, SESSION_SECRET=None)
 
-    with pytest.raises(ValueError, match="session_secret"):
-        load_config(config_dir=tmp_path / "config")
+    with pytest.raises(ValueError, match="SESSION_SECRET"):
+        load_config(config_dir=config_dir)

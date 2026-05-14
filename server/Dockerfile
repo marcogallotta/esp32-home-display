@@ -8,13 +8,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic/ alembic/
 COPY alembic.ini .
 COPY app/ app/
-COPY config/logging.yaml config/
+COPY config/logging.yaml config/app.json config/
 COPY static/ static/
+COPY tests/ tests/
 COPY tools/ tools/
+COPY conftest.py .
 
 ENV ENV=dev
 
-EXPOSE 443
+EXPOSE 8000
 
 CMD ["uvicorn", "app.wsgi:app", \
      "--host", "0.0.0.0", \

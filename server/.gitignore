@@ -1,6 +1,7 @@
 __pycache__
 .coverage
 .secrets
+config/env
 certs
 get.sh
 static/config.js

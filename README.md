@@ -48,8 +48,7 @@ Current embedded target:
 
 ### Backend
 
-- Docker (for Postgres)
-- Python 3
+See `server/README.md`.
 
 ## Setup
 
@@ -72,16 +71,6 @@ Copy the config example:
 ```bash
 cp data/config.json.example data/config.json
 ```
-
-### Backend dependencies
-
-```bash
-pip install -r server/requirements.txt
-cp server/config/dev.example.json server/config/dev.json
-cd server && ./tools/gen_certs.sh
-```
-
-Copy the generated cert into `data/` and reference it in `config.json` under `api.pem_file`.
 
 ## Build
 
@@ -119,21 +108,7 @@ pio device monitor
 
 ## Backend
 
-The backend is a FastAPI server backed by PostgreSQL (run via Docker). It stores sensor history uploaded by the device and serves a browser-based graph view.
-
-```bash
-cd server
-make db-start       # start Postgres in Docker
-make run-server     # start uvicorn (HTTPS)
-```
-
-Run tests:
-
-```bash
-make test
-```
-
-The graph UI is at `https://localhost/static/overview.html`.
+See `server/README.md`.
 
 ## Configuration
 

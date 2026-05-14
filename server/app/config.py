@@ -183,28 +183,50 @@ def validate_config(config: Config, env: str) -> None:
 
 
 _KNOWN_ENVS = {"dev", "test", "prod"}
-_REQUIRED_KEYS = {"api_key", "session_secret", "dashboard_password", "database"}
+
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if value is None:
+        raise ValueError(f"{name} environment variable is required")
+    return value
 
 
 def load_config(config_dir: Path | None = None) -> Config:
     env = os.getenv("ENV", "dev")
     if env not in _KNOWN_ENVS:
         raise ValueError(f"Unknown ENV={env!r}; must be one of: {', '.join(sorted(_KNOWN_ENVS))}")
+
     if config_dir is None:
         config_dir = Path(__file__).parent.parent / "config"
-    path = config_dir / f"{env}.json"
 
-    with path.open(encoding="utf-8") as f:
+    with (config_dir / "app.json").open(encoding="utf-8") as f:
         data = json.load(f)
 
-    missing = _REQUIRED_KEYS - data.keys()
-    if missing:
-        raise ValueError(f"Missing required config fields: {', '.join(sorted(missing))}")
-
-    raw_db = data.pop("database")
+    raw_db = data.pop("database", {})
     raw_rl = data.pop("rate_limits", None)
     rate_limits = _parse_rate_limits(raw_rl) if raw_rl is not None else _default_rate_limits()
-    config = Config(database=DatabaseConfig(**raw_db), rate_limits=rate_limits, **data)
+
+    data["api_key"] = _require_env("API_KEY")
+    data["session_secret"] = _require_env("SESSION_SECRET")
+    data["dashboard_password"] = _require_env("DASHBOARD_PASSWORD")
+
+    session_secure_env = os.environ.get("SESSION_SECURE")
+    if session_secure_env is not None:
+        if session_secure_env.lower() not in ("true", "false"):
+            raise ValueError(f"SESSION_SECURE must be 'true' or 'false', got {session_secure_env!r}")
+        data["session_secure"] = session_secure_env.lower() == "true"
+
+    db = DatabaseConfig(
+        driver=raw_db.get("driver", "postgresql+psycopg"),
+        host=_require_env("DATABASE_HOST"),
+        port=int(_require_env("DATABASE_PORT")),
+        name=_require_env("DATABASE_NAME"),
+        user=_require_env("DATABASE_USER"),
+        password=_require_env("DATABASE_PASSWORD"),
+    )
+
+    config = Config(database=db, rate_limits=rate_limits, **data)
     validate_config(config, env)
     return config
 
