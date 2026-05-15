@@ -6,4 +6,5 @@ openssl req -x509 \
     -out certs/cert.pem \
     -days 365 \
     -nodes \
-    -subj "/CN=laptop.local"
+    -subj "/CN=laptop.local" \
+    -addext "subjectAltName=DNS:laptop.local,DNS:localhost,IP:127.0.0.1"
