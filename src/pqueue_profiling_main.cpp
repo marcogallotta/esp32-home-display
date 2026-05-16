@@ -524,6 +524,86 @@ void runReadAtPhaseBreakdown() {
     Serial.printf("  total avg=%llu us\n", (openUs + readUs + closeUs) / kIter);
 }
 
+void runRotationCostCurve() {
+    // Measures the marginal cost of one rotation under the dual-root design:
+    //   segment create  = open("w") + write 20B header + flush + close
+    //   root publish    = open("w") + write N bytes + flush + close, alternating A/B slots
+    // Amortized per-enqueue cost = rotation_total / records_per_segment.
+
+    const uint32_t kIter = 20;
+    static const uint32_t kSegHeaderBytes = 20;
+    static const uint32_t kRecordBytes = 492;
+    static const uint32_t kEventBytes = kRecordBytes + 24; // payload + kEnqueueOverheadBytes
+
+    struct RootSize { uint32_t bytes; const char* label; };
+    static const RootSize kRootSizes[] = {
+        { 64,  "64B"  },
+        { 128, "128B" },
+        { 256, "256B" },
+    };
+    static const uint32_t kSegSizes[] = {4096, 8192, 16384, 32768};
+    static const uint32_t kNumRootSizes = 3;
+
+    const char* kSegFile = "/pqueue_prof_rot_s";
+    const char* kRootA   = "/pqueue_prof_rot_a";
+    const char* kRootB   = "/pqueue_prof_rot_b";
+
+    const std::string segHeader(kSegHeaderBytes, '\0');
+
+    uint64_t segCreateUs = 0;
+    for (uint32_t i = 0; i < kIter; ++i) {
+        const int64_t t0 = esp_timer_get_time();
+        File f = LittleFS.open(kSegFile, "w");
+        if (f) {
+            f.write(reinterpret_cast<const uint8_t*>(segHeader.data()), kSegHeaderBytes);
+            f.flush();
+            f.close();
+        }
+        segCreateUs += static_cast<uint64_t>(esp_timer_get_time() - t0);
+        LittleFS.remove(kSegFile);
+    }
+    const uint64_t segCreateAvg = segCreateUs / kIter;
+
+    uint64_t rootAvgs[kNumRootSizes] = {};
+    for (uint32_t ri = 0; ri < kNumRootSizes; ++ri) {
+        const std::string rootData(kRootSizes[ri].bytes, '\0');
+        uint64_t rootUs = 0;
+        for (uint32_t i = 0; i < kIter; ++i) {
+            const char* kRoot = (i % 2 == 0) ? kRootA : kRootB;
+            const int64_t t0 = esp_timer_get_time();
+            File f = LittleFS.open(kRoot, "w");
+            if (f) {
+                f.write(reinterpret_cast<const uint8_t*>(rootData.data()), kRootSizes[ri].bytes);
+                f.flush();
+                f.close();
+            }
+            rootUs += static_cast<uint64_t>(esp_timer_get_time() - t0);
+        }
+        LittleFS.remove(kRootA);
+        LittleFS.remove(kRootB);
+        rootAvgs[ri] = rootUs / kIter;
+    }
+
+    Serial.printf("rotation cost (%u iters, %uB record, 24B overhead):\n", kIter, kRecordBytes);
+    Serial.printf("  segment create avg=%llu us\n\n", segCreateAvg);
+    Serial.printf("  %-6s  %12s  %12s\n", "root", "root_pub_us", "rotation_us");
+    for (uint32_t ri = 0; ri < kNumRootSizes; ++ri) {
+        Serial.printf("  %-6s  %12llu  %12llu\n",
+            kRootSizes[ri].label, rootAvgs[ri], segCreateAvg + rootAvgs[ri]);
+    }
+
+    // Amortization table using 128B root as representative candidate
+    const uint64_t rotAvg = segCreateAvg + rootAvgs[1];
+    Serial.printf("\namortized rotation overhead per enqueue (128B root, rotation=%llu us):\n", rotAvg);
+    Serial.printf("  %-8s  %12s  %14s\n", "seg_size", "recs/seg", "amort_us/enq");
+    for (const uint32_t segSize : kSegSizes) {
+        if (segSize <= kSegHeaderBytes) continue;
+        const uint32_t recsPerSeg = (segSize - kSegHeaderBytes) / kEventBytes;
+        if (recsPerSeg == 0) continue;
+        Serial.printf("  %-8u  %12u  %14llu\n", segSize, recsPerSeg, rotAvg / recsPerSeg);
+    }
+}
+
 void printResult(const ScenarioResult& r) {
     Serial.printf("%-22s %4uB  avg=%6llu us  min=%6llu us  max=%6llu us\n",
         r.name, r.recordSizeBytes, r.timings.avg(),
@@ -559,6 +639,8 @@ void setup() {
     runWriteAtLargeFile();
     Serial.println();
     runReadAtPhaseBreakdown();
+    Serial.println();
+    runRotationCostCurve();
     Serial.println();
 
     for (const uint32_t recordSize : kRecordSizes) {
