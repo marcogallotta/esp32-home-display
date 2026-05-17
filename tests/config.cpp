@@ -76,14 +76,8 @@ DynamicJsonDocument exampleWithoutOptionalFields() {
     return doc;
 }
 
-JsonObject addSwitchbotSensor(DynamicJsonDocument& doc) {
-    JsonArray sensors;
-    if (doc["switchbot"]["sensors"].is<JsonArray>()) {
-        sensors = doc["switchbot"]["sensors"].as<JsonArray>();
-    } else {
-        sensors = doc["switchbot"].createNestedArray("sensors");
-    }
-
+JsonObject appendSwitchbotSensor(DynamicJsonDocument& doc) {
+    JsonArray sensors = doc["switchbot"]["sensors"].as<JsonArray>();
     JsonObject sensor = sensors.createNestedObject();
     sensor["mac"] = "AA:BB:CC:DD:EE:FF";
     sensor["name"] = "Room 1";
@@ -91,19 +85,25 @@ JsonObject addSwitchbotSensor(DynamicJsonDocument& doc) {
     return sensor;
 }
 
-JsonObject addXiaomiSensor(DynamicJsonDocument& doc) {
-    JsonArray sensors;
-    if (doc["xiaomi"]["sensors"].is<JsonArray>()) {
-        sensors = doc["xiaomi"]["sensors"].as<JsonArray>();
-    } else {
-        sensors = doc["xiaomi"].createNestedArray("sensors");
-    }
+JsonObject addSwitchbotSensor(DynamicJsonDocument& doc) {
+    doc["switchbot"].remove("sensors");
+    doc["switchbot"].createNestedArray("sensors");
+    return appendSwitchbotSensor(doc);
+}
 
+JsonObject appendXiaomiSensor(DynamicJsonDocument& doc) {
+    JsonArray sensors = doc["xiaomi"]["sensors"].as<JsonArray>();
     JsonObject sensor = sensors.createNestedObject();
     sensor["mac"] = "11:22:33:44:55:66";
     sensor["name"] = "Plant 1";
     sensor["short_name"] = "P1";
     return sensor;
+}
+
+JsonObject addXiaomiSensor(DynamicJsonDocument& doc) {
+    doc["xiaomi"].remove("sensors");
+    doc["xiaomi"].createNestedArray("sensors");
+    return appendXiaomiSensor(doc);
 }
 
 void checkDefaults(const Config& config) {
@@ -487,7 +487,7 @@ TEST_CASE("config normalizes switchbot sensor MACs") {
     SUBCASE("duplicate MACs are rejected") {
         auto doc = exampleConfig();
         addSwitchbotSensor(doc);
-        addSwitchbotSensor(doc);
+        appendSwitchbotSensor(doc);
         expectInvalid(doc);
     }
 
@@ -495,7 +495,7 @@ TEST_CASE("config normalizes switchbot sensor MACs") {
         auto doc = exampleConfig();
         JsonObject s1 = addSwitchbotSensor(doc);
         s1["mac"] = "aa:bb:cc:dd:ee:ff";
-        JsonObject s2 = addSwitchbotSensor(doc);
+        JsonObject s2 = appendSwitchbotSensor(doc);
         s2["mac"] = "AA-BB-CC-DD-EE-FF";
         expectInvalid(doc);
     }
@@ -542,7 +542,7 @@ TEST_CASE("config normalizes xiaomi sensor MACs") {
     SUBCASE("duplicate MACs are rejected") {
         auto doc = exampleConfig();
         addXiaomiSensor(doc);
-        addXiaomiSensor(doc);
+        appendXiaomiSensor(doc);
         expectInvalid(doc);
     }
 
@@ -550,7 +550,7 @@ TEST_CASE("config normalizes xiaomi sensor MACs") {
         auto doc = exampleConfig();
         JsonObject s1 = addXiaomiSensor(doc);
         s1["mac"] = "11:22:33:44:55:66";
-        JsonObject s2 = addXiaomiSensor(doc);
+        JsonObject s2 = appendXiaomiSensor(doc);
         s2["mac"] = "112233445566";
         expectInvalid(doc);
     }
