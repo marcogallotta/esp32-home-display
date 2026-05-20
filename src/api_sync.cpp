@@ -12,7 +12,8 @@ constexpr std::int64_t kXiaomiPendingWindowSeconds = 60;
 bool isAccepted(api::BackendWriteResult result) {
     return result == api::BackendWriteResult::Created ||
            result == api::BackendWriteResult::Duplicate ||
-           result == api::BackendWriteResult::Merged;
+           result == api::BackendWriteResult::Merged ||
+           result == api::BackendWriteResult::MergedWithConflict;
 }
 
 bool hasValidApiTimestamp(const std::optional<std::int64_t>& timestamp) {
@@ -50,13 +51,15 @@ const char* writeStatusName(api::WriteStatus status) {
 const char* backendWriteResultName(api::BackendWriteResult result) {
     switch (result) {
         case api::BackendWriteResult::Failed:
-            return "failed";
+            return "parse_failed";
         case api::BackendWriteResult::Created:
             return "created";
         case api::BackendWriteResult::Duplicate:
             return "duplicate";
         case api::BackendWriteResult::Merged:
             return "merged";
+        case api::BackendWriteResult::MergedWithConflict:
+            return "merged_with_conflict";
         case api::BackendWriteResult::Conflict:
             return "conflict";
     }
@@ -86,6 +89,7 @@ void logApiWriteResult(
         response.status == api::WriteStatus::DroppedQueueFull ||
         response.status == api::WriteStatus::FailedTemporary ||
         response.backendResult == api::BackendWriteResult::Conflict ||
+        response.backendResult == api::BackendWriteResult::MergedWithConflict ||
         response.backendResult == api::BackendWriteResult::Failed
             ? LogLevel::Warn
             : LogLevel::Info;

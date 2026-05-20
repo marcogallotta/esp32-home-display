@@ -26,6 +26,9 @@ BackendWriteResult parseBackendWriteResult(const network::HttpResponse& response
     if (resultStr == "merged") {
         return BackendWriteResult::Merged;
     }
+    if (resultStr == "merged_with_conflict") {
+        return BackendWriteResult::MergedWithConflict;
+    }
     if (resultStr == "conflict") {
         return BackendWriteResult::Conflict;
     }
