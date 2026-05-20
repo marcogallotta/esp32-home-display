@@ -60,7 +60,7 @@ def _default_rate_limits() -> RateLimitsConfig:
             bulk_write=RateLimit(limit=120, period=60),
             burst=True,
         ),
-        frontend=RateLimit(limit=30, period=60),
+        frontend=RateLimit(limit=120, period=60),
         login=RateLimit(limit=3, period=60),
     )
 

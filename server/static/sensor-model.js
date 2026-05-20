@@ -10,12 +10,17 @@ window.sensorModel = {
     const cfg = window.CONFIG.rangeConfig[range] || window.CONFIG.rangeConfig["24h"];
     const endMs = Date.now();
     const startMs = endMs - cfg.hours * 60 * 60 * 1000;
+    const forecastEndMs = cfg.forecastDays
+      ? endMs + cfg.forecastDays * 24 * 60 * 60 * 1000
+      : endMs;
 
     return {
       startMs,
       endMs,
       startTs: new Date(startMs).toISOString(),
       endTs: new Date(endMs).toISOString(),
+      forecastEndMs,
+      forecastEndTs: new Date(forecastEndMs).toISOString(),
       maxPoints: cfg.maxPoints,
     };
   },

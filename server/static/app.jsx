@@ -66,10 +66,21 @@ function App() {
         return;
       }
 
+      const nowMs = Date.now();
+      if (min >= nowMs) {
+        setZoomedHistoryBySensorId({});
+        return;
+      }
+
+      // Fetch a padded window (3× zoom duration) so panning doesn't re-fetch
+      const pad = zoomedDurationMs;
+      const fetchStart = Math.max(rw.startMs, min - pad);
+      const fetchEnd = Math.min(nowMs, max + pad);
+      const fetchMaxPoints = Math.max(50, Math.round(maxPoints * (fetchEnd - fetchStart) / zoomedDurationMs));
       const zoomWindow = {
-        startTs: new Date(min).toISOString(),
-        endTs: new Date(max).toISOString(),
-        maxPoints,
+        startTs: new Date(fetchStart).toISOString(),
+        endTs: new Date(fetchEnd).toISOString(),
+        maxPoints: fetchMaxPoints,
       };
       try {
         const entries = await Promise.all(
@@ -79,7 +90,7 @@ function App() {
           })
         );
         const result = Object.fromEntries(entries);
-        zoomCacheRef.current = { startMs: min, endMs: max, maxPoints, data: result };
+        zoomCacheRef.current = { startMs: fetchStart, endMs: fetchEnd, maxPoints: fetchMaxPoints, data: result };
         setZoomedHistoryBySensorId(result);
       } catch (err) {
         // leave existing data in place if the fetch fails
@@ -165,7 +176,8 @@ function App() {
       const rw = window.sensorModel.buildRangeWindow(range);
       setOutdoorError("");
       try {
-        const data = await window.api.fetchOpenMeteoWeather(rw.startTs, rw.endTs);
+        const alwaysForecastEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        const data = await window.api.fetchOpenMeteoWeather(rw.startTs, alwaysForecastEnd);
         setOutdoorWeather(Array.isArray(data) ? data : []);
       } catch {
         setOutdoorError("Outdoor weather unavailable");
