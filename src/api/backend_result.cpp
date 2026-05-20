@@ -11,13 +11,8 @@ BackendWriteResult parseBackendWriteResult(const network::HttpResponse& response
         return BackendWriteResult::Failed;
     }
 
-    const char* status = doc["status"];
     const char* result = doc["result"];
-    if (status == nullptr || result == nullptr) {
-        return BackendWriteResult::Failed;
-    }
-
-    if (std::string(status) != "ok") {
+    if (result == nullptr) {
         return BackendWriteResult::Failed;
     }
 
