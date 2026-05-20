@@ -30,6 +30,11 @@ window.api = {
     );
   },
 
+  async fetchOpenMeteoWeather(startTs, endTs) {
+    const params = new URLSearchParams({ start_ts: startTs, end_ts: endTs });
+    return this.fetchJson(`/openmeteo/weather?${params.toString()}`);
+  },
+
   async fetchLatestReadings(macs) {
     const params = macs && macs.length
       ? "?" + macs.map((m) => `mac=${encodeURIComponent(m)}`).join("&")

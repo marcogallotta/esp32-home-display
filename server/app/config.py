@@ -87,6 +87,7 @@ class Config:
     switchbot_sync_max_intervals_total: int = SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_TOTAL
     switchbot_bulk_max_readings: int = SWITCHBOT_BULK_DEFAULT_MAX_READINGS
     rate_limits: RateLimitsConfig = field(default_factory=_default_rate_limits)
+    openmeteo: dict = field(default_factory=dict)
 
 
 def _check_str(errors: list[str], name: str, value: object) -> bool:
