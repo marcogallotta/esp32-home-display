@@ -27,7 +27,7 @@ def _round_hour(dt: datetime) -> datetime:
     return dt.replace(minute=0, second=0, microsecond=0)
 
 
-def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, float]) -> list[dict] | None:
+def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, tuple[float, float]]) -> list[dict] | None:
     now = datetime.now(timezone.utc)
     train_start = now - timedelta(days=_TRAIN_DAYS)
 
@@ -53,11 +53,12 @@ def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, float]) -> 
 
     X, y = [], []
     for hour, temp in hourly_avg.items():
-        outdoor = om_by_hour.get(hour)
-        if outdoor is None:
+        entry = om_by_hour.get(hour)
+        if entry is None:
             continue
+        outdoor, radiation = entry
         h = hour.hour
-        X.append([1.0, outdoor, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
+        X.append([1.0, outdoor, radiation, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
         y.append(temp)
 
     if len(X) < 24:
@@ -70,9 +71,9 @@ def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, float]) -> 
     for hour_dt in sorted(om_by_hour):
         if hour_dt < forecast_start:
             continue
-        outdoor = om_by_hour[hour_dt]
+        outdoor, radiation = om_by_hour[hour_dt]
         h = hour_dt.hour
-        x = np.array([1.0, outdoor, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
+        x = np.array([1.0, outdoor, radiation, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
         predictions.append({
             "timestamp": hour_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "temperature_c": round(float(np.dot(coeffs, x)), 1),
@@ -102,12 +103,12 @@ def get_temperature_predictions(request: Request):
         logger.exception("Failed to fetch OpenMeteo data for prediction")
         return JSONResponse(status_code=502, content={"detail": "Prediction unavailable"})
 
-    om_by_hour: dict[datetime, float] = {}
+    om_by_hour: dict[datetime, tuple[float, float]] = {}
     for pt in om_data:
         if pt.get("temperature_2m") is None:
             continue
         ts = datetime.fromisoformat(pt["timestamp"].replace("Z", "+00:00"))
-        om_by_hour[_round_hour(ts)] = pt["temperature_2m"]
+        om_by_hour[_round_hour(ts)] = (pt["temperature_2m"], pt.get("shortwave_radiation") or 0.0)
 
     db = request.app.state.session_factory()
     try:
