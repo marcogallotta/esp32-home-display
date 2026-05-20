@@ -71,16 +71,10 @@ function App() {
         setZoomedHistoryBySensorId({});
         return;
       }
-
-      // Fetch a padded window (3× zoom duration) so panning doesn't re-fetch
-      const pad = zoomedDurationMs;
-      const fetchStart = Math.max(rw.startMs, min - pad);
-      const fetchEnd = Math.min(nowMs, max + pad);
-      const fetchMaxPoints = Math.max(50, Math.round(maxPoints * (fetchEnd - fetchStart) / zoomedDurationMs));
       const zoomWindow = {
-        startTs: new Date(fetchStart).toISOString(),
-        endTs: new Date(fetchEnd).toISOString(),
-        maxPoints: fetchMaxPoints,
+        startTs: new Date(min).toISOString(),
+        endTs: new Date(Math.min(max, nowMs)).toISOString(),
+        maxPoints,
       };
       try {
         const entries = await Promise.all(
@@ -90,7 +84,7 @@ function App() {
           })
         );
         const result = Object.fromEntries(entries);
-        zoomCacheRef.current = { startMs: fetchStart, endMs: fetchEnd, maxPoints: fetchMaxPoints, data: result };
+        zoomCacheRef.current = { startMs: min, endMs: max, maxPoints, data: result };
         setZoomedHistoryBySensorId(result);
       } catch (err) {
         // leave existing data in place if the fetch fails
