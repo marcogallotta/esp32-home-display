@@ -37,6 +37,7 @@ function App() {
   const [openMeteoData, setOutdoorWeather] = React.useState([]);
   const [openMeteoError, setOutdoorError] = React.useState("");
   const [tempPredictions, setTempPredictions] = React.useState([]);
+  const [showOpenMeteo, setShowOpenMeteo] = React.useState(true);
   const [latestPollError, setLatestPollError] = React.useState("");
   const [lastLatestPollAt, setLastLatestPollAt] = React.useState(null);
   const [rangeWindow, setRangeWindow] = React.useState(window.sensorModel.buildRangeWindow("24h"));
@@ -245,6 +246,30 @@ function App() {
     return (zoomedHistoryBySensorId?.[sensorId] ?? historyBySensorId[sensorId]) || [];
   }, [zoomedHistoryBySensorId, historyBySensorId]);
 
+  const forecastSummary = React.useMemo(() => {
+    if (openMeteoData.length === 0) return { currentTemp: null, todayHigh: null, todayLow: null, currentWind: null, todayRain: null };
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const currentHour = now.toISOString().slice(0, 14) + "00:00Z";
+    let currentTemp = null, currentWind = null;
+    let todayHigh = -Infinity, todayLow = Infinity, todayRain = 0;
+    for (const pt of openMeteoData) {
+      if (pt.timestamp === currentHour) { currentTemp = pt.temperature_2m; currentWind = pt.wind_speed_10m; }
+      if (pt.timestamp.startsWith(todayStr)) {
+        if (pt.temperature_2m != null) { todayHigh = Math.max(todayHigh, pt.temperature_2m); todayLow = Math.min(todayLow, pt.temperature_2m); }
+        if (pt.rain != null) todayRain += pt.rain;
+        if (pt.showers != null) todayRain += pt.showers;
+      }
+    }
+    return {
+      currentTemp,
+      todayHigh: todayHigh === -Infinity ? null : Math.round(todayHigh * 10) / 10,
+      todayLow: todayLow === Infinity ? null : Math.round(todayLow * 10) / 10,
+      currentWind,
+      todayRain: Math.round(todayRain * 10) / 10,
+    };
+  }, [openMeteoData]);
+
   const _OUTDOOR_COLOR = "rgb(0, 150, 80)";
 
   function _openMeteoDatasets(rows, valueFn) {
@@ -344,24 +369,25 @@ function App() {
   }, [tempPredictions, switchbotSensorsToPlot]);
 
   const tempDatasets = React.useMemo(() => {
-    const omDatasets = selectedSwitchbotSensor ? [] : openMeteoTempDatasets;
+    const omDatasets = showOpenMeteo && !selectedSwitchbotSensor ? openMeteoTempDatasets : [];
+    const predDatasets = showOpenMeteo ? tempPredictionDatasets : [];
     return [
       ...switchbotSensorsToPlot.map((sensor) =>
         _sensorDataset(sensor, historyFor(sensor.id), (row) => row.temperature_c == null ? null : window.metrics.round1(row.temperature_c))
       ),
       ...omDatasets,
-      ...tempPredictionDatasets,
+      ...predDatasets,
     ];
-  }, [switchbotSensorsToPlot, selectedSwitchbotSensor, historyFor, openMeteoTempDatasets, tempPredictionDatasets]);
+  }, [switchbotSensorsToPlot, selectedSwitchbotSensor, showOpenMeteo, historyFor, openMeteoTempDatasets, tempPredictionDatasets]);
 
   const humidityDatasets = React.useMemo(() => {
     return [
       ...switchbotSensorsToPlot.map((sensor) =>
         _sensorDataset(sensor, historyFor(sensor.id), (row) => row.humidity_pct == null ? null : Math.round(row.humidity_pct))
       ),
-      ...openMeteoHumidityDatasets,
+      ...(showOpenMeteo ? openMeteoHumidityDatasets : []),
     ];
-  }, [switchbotSensorsToPlot, historyFor, openMeteoHumidityDatasets]);
+  }, [switchbotSensorsToPlot, showOpenMeteo, historyFor, openMeteoHumidityDatasets]);
 
   const absHumidityDatasets = React.useMemo(() => {
     return [
@@ -370,9 +396,9 @@ function App() {
           (row) => window.metrics.round1(window.metrics.calcAbsoluteHumidity(row.temperature_c, row.humidity_pct))
         )
       ),
-      ...openMeteoAbsHumidityDatasets,
+      ...(showOpenMeteo ? openMeteoAbsHumidityDatasets : []),
     ];
-  }, [switchbotSensorsToPlot, historyFor, openMeteoAbsHumidityDatasets]);
+  }, [switchbotSensorsToPlot, showOpenMeteo, historyFor, openMeteoAbsHumidityDatasets]);
 
   const vpdDatasets = React.useMemo(() => {
     return [
@@ -381,9 +407,9 @@ function App() {
           (row) => window.metrics.round1(window.metrics.calcVpd(row.temperature_c, row.humidity_pct))
         )
       ),
-      ...openMeteoVpdDatasets,
+      ...(showOpenMeteo ? openMeteoVpdDatasets : []),
     ];
-  }, [switchbotSensorsToPlot, historyFor, openMeteoVpdDatasets]);
+  }, [switchbotSensorsToPlot, showOpenMeteo, historyFor, openMeteoVpdDatasets]);
 
   const xiaomiDatasets = React.useMemo(() => {
     if (xiaomiSensors.length === 0) return [];

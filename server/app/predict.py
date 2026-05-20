@@ -18,7 +18,7 @@ router = APIRouter()
 _CACHE_TTL = 30 * 60
 _TRAIN_DAYS = 7
 _FORECAST_DAYS = 7
-_EXCLUDE_NAMES = {"Bed"}
+_EXCLUDE_NAMES: set[str] = set()
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
@@ -27,7 +27,7 @@ def _round_hour(dt: datetime) -> datetime:
     return dt.replace(minute=0, second=0, microsecond=0)
 
 
-def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, tuple[float, float]]) -> list[dict] | None:
+def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, tuple[float, float, float]]) -> list[dict] | None:
     now = datetime.now(timezone.utc)
     train_start = now - timedelta(days=_TRAIN_DAYS)
 
@@ -56,9 +56,9 @@ def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, tuple[float
         entry = om_by_hour.get(hour)
         if entry is None:
             continue
-        outdoor, radiation = entry
+        outdoor, radiation, cloud = entry
         h = hour.hour
-        X.append([1.0, outdoor, radiation, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
+        X.append([1.0, outdoor, radiation, cloud, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
         y.append(temp)
 
     if len(X) < 24:
@@ -71,9 +71,9 @@ def _fit_and_predict(sensor_mac: str, db, om_by_hour: dict[datetime, tuple[float
     for hour_dt in sorted(om_by_hour):
         if hour_dt < forecast_start:
             continue
-        outdoor, radiation = om_by_hour[hour_dt]
+        outdoor, radiation, cloud = om_by_hour[hour_dt]
         h = hour_dt.hour
-        x = np.array([1.0, outdoor, radiation, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
+        x = np.array([1.0, outdoor, radiation, cloud, np.sin(2 * np.pi * h / 24), np.cos(2 * np.pi * h / 24)])
         predictions.append({
             "timestamp": hour_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "temperature_c": round(float(np.dot(coeffs, x)), 1),
@@ -108,7 +108,7 @@ def get_temperature_predictions(request: Request):
         if pt.get("temperature_2m") is None:
             continue
         ts = datetime.fromisoformat(pt["timestamp"].replace("Z", "+00:00"))
-        om_by_hour[_round_hour(ts)] = (pt["temperature_2m"], pt.get("shortwave_radiation") or 0.0)
+        om_by_hour[_round_hour(ts)] = (pt["temperature_2m"], pt.get("shortwave_radiation") or 0.0, pt.get("cloud_cover") or 0.0)
 
     db = request.app.state.session_factory()
     try:
