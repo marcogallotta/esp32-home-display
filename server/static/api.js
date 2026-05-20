@@ -35,6 +35,10 @@ window.api = {
     return this.fetchJson(`/openmeteo/weather?${params.toString()}`);
   },
 
+  async fetchTemperaturePredictions() {
+    return this.fetchJson("/predict/temperature");
+  },
+
   async fetchLatestReadings(macs) {
     const params = macs && macs.length
       ? "?" + macs.map((m) => `mac=${encodeURIComponent(m)}`).join("&")

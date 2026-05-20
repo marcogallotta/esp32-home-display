@@ -36,6 +36,7 @@ function App() {
   const [historyError, setHistoryError] = React.useState("");
   const [openMeteoData, setOutdoorWeather] = React.useState([]);
   const [openMeteoError, setOutdoorError] = React.useState("");
+  const [tempPredictions, setTempPredictions] = React.useState([]);
   const [latestPollError, setLatestPollError] = React.useState("");
   const [lastLatestPollAt, setLastLatestPollAt] = React.useState(null);
   const [rangeWindow, setRangeWindow] = React.useState(window.sensorModel.buildRangeWindow("24h"));
@@ -182,6 +183,12 @@ function App() {
   }, [range]);
 
   React.useEffect(() => {
+    window.api.fetchTemperaturePredictions()
+      .then((data) => setTempPredictions(Array.isArray(data) ? data : []))
+      .catch(() => setTempPredictions([]));
+  }, []);
+
+  React.useEffect(() => {
     if (sensors.length === 0) return;
 
     let cancelled = false;
@@ -320,14 +327,32 @@ function App() {
     ];
   }, [openMeteoData]);
 
+  const tempPredictionDatasets = React.useMemo(() => {
+    const visibleNames = new Set(switchbotSensorsToPlot.map((s) => s.name));
+    return tempPredictions
+      .filter((pred) => visibleNames.has(pred.sensor_name))
+      .map((pred) => ({
+        label: `${pred.sensor_name} predicted`,
+        data: pred.predictions.map((p) => ({ x: new Date(p.timestamp), y: p.temperature_c })),
+        borderColor: _SENSOR_COLORS[pred.sensor_name] || "rgb(128,128,128)",
+        backgroundColor: "transparent",
+        borderDash: [5, 5],
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.15,
+      }));
+  }, [tempPredictions, switchbotSensorsToPlot]);
+
   const tempDatasets = React.useMemo(() => {
+    const omDatasets = selectedSwitchbotSensor ? [] : openMeteoTempDatasets;
     return [
       ...switchbotSensorsToPlot.map((sensor) =>
         _sensorDataset(sensor, historyFor(sensor.id), (row) => row.temperature_c == null ? null : window.metrics.round1(row.temperature_c))
       ),
-      ...openMeteoTempDatasets,
+      ...omDatasets,
+      ...tempPredictionDatasets,
     ];
-  }, [switchbotSensorsToPlot, historyFor, openMeteoTempDatasets]);
+  }, [switchbotSensorsToPlot, selectedSwitchbotSensor, historyFor, openMeteoTempDatasets, tempPredictionDatasets]);
 
   const humidityDatasets = React.useMemo(() => {
     return [

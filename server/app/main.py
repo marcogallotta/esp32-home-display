@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import openmeteo
+from . import openmeteo, predict
 from . import switchbot as sb
 from . import xiaomi as xm
 from .common import (
@@ -338,4 +338,5 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
     app.include_router(device)
     app.include_router(dashboard)
     app.include_router(openmeteo.router, dependencies=[Depends(require_session), Depends(frontend_limit)])
+    app.include_router(predict.router, dependencies=[Depends(require_session), Depends(frontend_limit)])
     return app
