@@ -92,12 +92,16 @@ function App() {
   const humidityCanvas = React.useRef(null);
   const absHumidityCanvas = React.useRef(null);
   const vpdCanvas = React.useRef(null);
+  const precipCanvas = React.useRef(null);
+  const windCanvas = React.useRef(null);
   const xiaomiCanvas = React.useRef(null);
 
   const tempChart = React.useRef(null);
   const humidityChart = React.useRef(null);
   const absHumidityChart = React.useRef(null);
   const vpdChart = React.useRef(null);
+  const precipChart = React.useRef(null);
+  const windChart = React.useRef(null);
   const xiaomiChart = React.useRef(null);
 
   const sensorGroups = React.useMemo(() => window.sensorModel.splitByType(sensors), [sensors]);
@@ -282,6 +286,34 @@ function App() {
     );
   }, [openMeteoData]);
 
+  const openMeteoPrecipDatasets = React.useMemo(() => {
+    if (openMeteoData.length === 0) return [];
+    return [
+      ..._openMeteoDatasets(openMeteoData, (r) => r.rain != null && r.showers != null ? window.metrics.round1(r.rain + r.showers) : null).map((ds) => ({ ...ds, label: ds.label.replace("OpenMeteo", "Rain"), borderColor: "rgb(30, 80, 180)" })),
+      ..._openMeteoDatasets(openMeteoData, (r) => r.snowfall).map((ds) => ({ ...ds, label: ds.label.replace("OpenMeteo", "Snow"), borderColor: "rgb(140, 200, 240)" })),
+    ];
+  }, [openMeteoData]);
+
+  const openMeteoWindDatasets = React.useMemo(() => {
+    if (openMeteoData.length === 0) return [];
+    const warn = (ctx, threshold, defaultColor) =>
+      ctx.p0.parsed.y >= threshold || ctx.p1.parsed.y >= threshold ? "rgb(220, 40, 40)" : defaultColor;
+    return [
+      ..._openMeteoDatasets(openMeteoData, (r) => r.wind_speed_10m).map((ds) => ({
+        ...ds,
+        label: ds.label.replace("OpenMeteo", "Wind"),
+        borderColor: "rgb(60, 120, 210)",
+        segment: { borderColor: (ctx) => warn(ctx, 15, "rgb(60, 120, 210)") },
+      })),
+      ..._openMeteoDatasets(openMeteoData, (r) => r.wind_gusts_10m).map((ds) => ({
+        ...ds,
+        label: ds.label.replace("OpenMeteo", "Gusts"),
+        borderColor: "rgb(40, 40, 40)",
+        segment: { borderColor: (ctx) => warn(ctx, 50, "rgb(40, 40, 40)") },
+      })),
+    ];
+  }, [openMeteoData]);
+
   const tempDatasets = React.useMemo(() => {
     return [
       ...switchbotSensorsToPlot.map((sensor) =>
@@ -360,6 +392,22 @@ function App() {
   }, [showDerivedCharts, vpdDatasets, rangeWindow]);
 
   React.useEffect(() => {
+    if (!showDerivedCharts) {
+      window.chartFactory.destroy(precipChart);
+      return;
+    }
+    window.chartFactory.lineChart(precipCanvas.current, precipChart, openMeteoPrecipDatasets, "mm", rangeWindow);
+  }, [showDerivedCharts, openMeteoPrecipDatasets, rangeWindow]);
+
+  React.useEffect(() => {
+    if (!showDerivedCharts) {
+      window.chartFactory.destroy(windChart);
+      return;
+    }
+    window.chartFactory.lineChart(windCanvas.current, windChart, openMeteoWindDatasets, "km/h", rangeWindow);
+  }, [showDerivedCharts, openMeteoWindDatasets, rangeWindow]);
+
+  React.useEffect(() => {
     if (xiaomiDatasets.length === 0) {
       window.chartFactory.destroy(xiaomiChart);
       return;
@@ -411,6 +459,8 @@ function App() {
                 humidityChart,
                 absHumidityChart,
                 vpdChart,
+                precipChart,
+                windChart,
                 xiaomiChart,
               ])
             }
@@ -482,6 +532,16 @@ function App() {
               title="Air VPD"
               right={<div className="hint">Derived from air temp + RH</div>}
               canvasRef={vpdCanvas}
+            />
+            <window.ChartCard
+              title="Precipitation"
+              right={<div className="hint">OpenMeteo · rain+showers mm, snow cm</div>}
+              canvasRef={precipCanvas}
+            />
+            <window.ChartCard
+              title="Wind"
+              right={<div className="hint">OpenMeteo · 10m · km/h</div>}
+              canvasRef={windCanvas}
             />
           </>
         )}

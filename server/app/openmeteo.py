@@ -12,7 +12,7 @@ router = APIRouter()
 
 _ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-_HOURLY_VARS = "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation,wind_speed_10m,shortwave_radiation"
+_HOURLY_VARS = "temperature_2m,relative_humidity_2m,dew_point_2m,rain,showers,snowfall,wind_speed_10m,wind_gusts_10m,shortwave_radiation"
 
 _DEFAULT_LAT = 45.737
 _DEFAULT_LON = 7.321
