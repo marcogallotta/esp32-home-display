@@ -374,10 +374,20 @@ If the new type should appear in the dashboard, update the frontend static files
 
 ---
 
-## Levoit AH controller config (future)
+## Levoit AH controller
 
-Config parsing and validation for a future external Levoit absolute-humidity controller is
-wired; the controller itself is not implemented.
+An external process (`tools/run_levoit_ah_controller.py`) runs a control loop that:
+
+1. Fetches the latest SwitchBot sensor reading from `GET /sensors/latest`.
+2. Computes the target relative humidity needed to hit a configured absolute humidity setpoint
+   (Magnus formula).
+3. Compares against the current device target (fetched via pyvesync) and sends a new target only
+   if the difference exceeds `humidity_change_threshold`.
+
+The controller is **not** a FastAPI background task — it runs as a separate process or compose
+service. No database access; all state is live-fetched each iteration.
+
+### Config
 
 `levoit_ah_controller` section in `app.json`:
 
@@ -388,30 +398,53 @@ wired; the controller itself is not implemented.
 }
 ```
 
-- `switchbot_mac`: MAC of the SwitchBot sensor whose latest reading will drive the controller.
-  The future controller will call `GET /sensors/latest` (no query param) and match this MAC in
-  the response body -- the MAC is never exposed as a GET query parameter.
-- `target_absolute_humidity`: interpreted internally as g/m^3. The key name is intentionally
-  human-readable and does not include units.
-- `server_base_url`: base URL the controller uses to call the server API. No default; set via
-  `SERVER_BASE_URL` env var. Example: `"https://laptop.local:8000/"`. TLS verification
-  uses the system certificate store; self-signed certs require a deliberate `--insecure` flag
-  (not yet implemented) rather than silent bypass.
+- `switchbot_mac`: MAC of the SwitchBot sensor. Matched against response body of
+  `GET /sensors/latest`; never used as a query parameter.
+- `target_absolute_humidity`: target in g/m³.
 
-App-level defaults (`LevoitAhControllerConfig` dataclass; overrideable in `app.json`):
+App-level defaults (overrideable in `app.json`):
 
 ```
-minimum_humidity = 40            # percent
-maximum_humidity = 60            # percent
-reading_max_age_seconds = 900
-poll_interval_seconds = 300
-minimum_command_interval_seconds = 300
-humidity_change_threshold = 2.0
+minimum_humidity           = 40     # % — lower clamp on commanded RH
+maximum_humidity           = 60     # % — upper clamp on commanded RH
+poll_interval_seconds      = 300
+humidity_change_threshold  = 1.0    # % — minimum change to trigger a command
 ```
 
-VeSync credentials for the future controller live in the env file
-(`VESYNC_USERNAME`, `VESYNC_PASSWORD`, `VESYNC_DEVICE_CID`); they are not required by
-`load_config` yet.
+Env vars (in `config/env`):
+
+```
+SERVER_BASE_URL       — base URL of the server API, e.g. https://laptop.local:8000/
+VESYNC_USERNAME       — VeSync account email
+VESYNC_PASSWORD       — VeSync account password
+VESYNC_DEVICE_CID     — CID of the Levoit humidifier device
+```
+
+TLS: the controller verifies the server cert using `certs/cert.pem`. The cert must be valid
+for the hostname in `SERVER_BASE_URL`.
+
+### Running
+
+One-shot (useful for testing):
+
+```
+./tools/run_levoit_ah_controller.sh --once [--dry-run]
+```
+
+Loop (default):
+
+```
+./tools/run_levoit_ah_controller.sh [--dry-run] [--interval N]
+```
+
+### Compose service
+
+The `levoit-controller` service in `compose.yml` runs the controller in loop mode (live).
+To use dry-run, add `--dry-run` to the command.
+
+The `app` service is given the `laptop.local` network alias so that
+`SERVER_BASE_URL=https://laptop.local:8000/` resolves correctly within the compose network and
+the self-signed cert (issued for `laptop.local`) validates without disabling TLS verification.
 
 ---
 

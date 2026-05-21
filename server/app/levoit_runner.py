@@ -38,33 +38,19 @@ def format_decision(
     else:
         command_line = "no command sent"
 
-    lines = []
-
-    if show_device and device_state is not None:
-        lines += [
-            "Device",
-            f"  Name:  {device_state.name}",
-            f"  Type:  {device_state.device_type}",
-            f"  CID:   {_mask_cid(device_state.cid)}",
-            "",
-        ]
-
-    lines += [
-        "Input",
-        f"  Sensor:   {reading.mac}",
-        f"  Reading:  {temp}°C, {rh} RH",
-        f"  Current:  {cur_ah} g/m³ absolute humidity",
-        f"  Target:   {cfg.target_absolute_humidity:.1f} g/m³ absolute humidity",
-        "",
-        "Decision",
-        f"  Ideal RH:  {ideal}",
-        f"  Command:   {command_line}",
-    ]
-
+    prev = ""
     if device_state is not None and device_state.current_target_humidity is not None:
-        lines.append(f"  Previous:  Levoit target was {device_state.current_target_humidity}%")
+        prev = f", was {device_state.current_target_humidity}%"
 
-    lines.append(f"  Reason:    {_reason_sentence(decision)}")
+    status = (
+        f"{reading.mac}  {temp}°C {rh} RH  AH {cur_ah}/{cfg.target_absolute_humidity:.1f} g/m³"
+        f"  ideal {ideal}  Command: {command_line}  {_reason_sentence(decision)}{prev}"
+    )
+
+    lines = []
+    if show_device and device_state is not None:
+        lines.append(f"Device: {device_state.name} ({device_state.device_type}) {_mask_cid(device_state.cid)}")
+    lines.append(status)
 
     return "\n".join(lines)
 
