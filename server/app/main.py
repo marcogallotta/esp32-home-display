@@ -87,6 +87,18 @@ def require_session(request: Request):
         raise UnauthorizedError("unauthorized")
 
 
+def require_session_or_api_key(request: Request) -> str:
+    supplied_api_key = request.headers.get("x-api-key")
+    if supplied_api_key is not None:
+        verify_api_key(
+            expected_api_key=request.app.state.config.api_key,
+            provided_api_key=supplied_api_key,
+        )
+        return "api_key"
+    require_session(request)
+    return "session"
+
+
 def get_db(request: Request):
     session_factory = request.app.state.session_factory
     db = session_factory()
@@ -138,6 +150,15 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         per_ip=True,
         limiter=limiter,
     )
+
+    async def sensor_read_limit(
+        request: Request,
+        auth_mode: str = Depends(require_session_or_api_key),
+    ) -> None:
+        if auth_mode == "api_key":
+            await esp32_read_limit(request)
+        else:
+            await frontend_limit(request)
 
     app.state.config = config
     app.state.engine = engine
@@ -211,8 +232,9 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
 
     device = APIRouter(dependencies=[Depends(require_api_key)])
     dashboard = APIRouter(dependencies=[Depends(require_session), Depends(frontend_limit)])
+    sensor_router = APIRouter(dependencies=[Depends(sensor_read_limit)])
 
-    @dashboard.get("/sensors", response_model=list[SensorOut])
+    @sensor_router.get("/sensors", response_model=list[SensorOut])
     def get_sensors(db: Session = Depends(get_db)):
         return [
             SensorOut(
@@ -223,7 +245,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             for sensor in list_sensors(db)
         ]
 
-    @dashboard.get("/sensors/latest", response_model=LatestSensorsOut)
+    @sensor_router.get("/sensors/latest", response_model=LatestSensorsOut)
     def get_sensors_latest(
         mac: Annotated[list[str] | None, Query()] = None,
         db: Session = Depends(get_db),
@@ -232,7 +254,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         readings = fetch_latest_readings(db, SENSOR_SPECS, macs=macs)
         return LatestSensorsOut(sensors=readings)
 
-    @dashboard.get("/sensors/{sensor_id}/readings")
+    @sensor_router.get("/sensors/{sensor_id}/readings")
     def get_sensor_readings(
         sensor_id: UUID,
         limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
@@ -337,6 +359,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
 
     app.include_router(device)
     app.include_router(dashboard)
+    app.include_router(sensor_router)
     app.include_router(openmeteo.router, dependencies=[Depends(require_session), Depends(frontend_limit)])
     app.include_router(predict.router, dependencies=[Depends(require_session), Depends(frontend_limit)])
     return app

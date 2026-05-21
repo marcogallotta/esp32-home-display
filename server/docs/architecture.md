@@ -72,7 +72,7 @@ The loaded `Config` is attached to `app.state.config` at startup and accessed vi
 - Registers `SessionMiddleware` (session secret, HTTPS-only flag from config).
 - Mounts `/static`.
 - Registers exception handlers for `BadRequestError` (400), `UnauthorizedError` (401), `ServerMisconfiguredError` (500).
-- Builds two sub-routers: `device` (requires `x-api-key`) and `dashboard` (requires session + frontend rate limit).
+- Builds three sub-routers: `device` (requires `x-api-key`), `dashboard` (requires session + frontend rate limit), and `sensor_router` (requires session OR API key via `sensor_read_limit`, which dispatches to the appropriate rate-limit bucket).
 
 DB sessions are request-scoped: `get_db()` is a FastAPI dependency that creates and closes a session per request.
 
@@ -197,12 +197,12 @@ Sensors carry both `mac` (PK, human-readable) and `id` (UUID, stable identifier)
 ## Rate limiting
 
 `TokenBucketLimiter` backed by an in-memory `MemoryMapStore`. Three buckets for the device (ESP32) client, keyed globally (not per-IP):
-- `esp32_app:read` -- SwitchBot sensors + readings fetch.
+- `esp32_app:read` -- `POST /switchbot/sensors` and API-key-authenticated sensor GET reads (`GET /sensors`, `/sensors/latest`, `/sensors/{id}/readings`).
 - `esp32_app:live_write` -- SwitchBot/Xiaomi live readings.
 - `esp32_app:bulk_write` -- SwitchBot bulk.
 
 Two buckets for the browser frontend, keyed per-IP:
-- `frontend` -- dashboard reads.
+- `frontend` -- session-authenticated requests: sensor GET reads, openmeteo, predict.
 - `login` -- POST /login.
 
 All limits and periods are config-tunable via `app.json`. `burst=true` allows an initial burst up to the full limit. The store is in-process; limits reset on restart and are not shared across replicas.
@@ -214,9 +214,16 @@ All limits and periods are config-tunable via `app.json`. `burst=true` allows an
 Two independent auth systems:
 
 - **Device (ESP32):** `x-api-key` header, validated in `require_api_key()`. Constant-time string compare via `verify_api_key()`. Applied to the `device` router.
-- **Dashboard (browser):** Cookie session via `SessionMiddleware`. `POST /login` validates `dashboard_password` and sets `session["authenticated"] = True`. `require_session()` checks this flag. Applied to the `dashboard` router.
+- **Dashboard (browser):** Cookie session via `SessionMiddleware`. `POST /login` validates `dashboard_password` and sets `session["authenticated"] = True`. `require_session()` checks this flag. Applied to openmeteo and predict routers, and to generic sensor GET endpoints when no API key is supplied.
 
 `session_secure=true` in prod enforces HTTPS-only cookies.
+
+**Generic sensor GET endpoints** (`GET /sensors`, `/sensors/latest`, `/sensors/{id}/readings`) accept either mechanism via `require_session_or_api_key()`:
+
+1. If `x-api-key` is present, validate it. An invalid key raises 401 immediately -- it does NOT fall back to the session cookie. A request with an invalid key plus a valid session is still rejected.
+2. If `x-api-key` is absent, require a valid dashboard session.
+
+Returns `"api_key"` or `"session"` so `sensor_read_limit` can select the correct rate-limit bucket. The API key therefore grants read access to sensor data in addition to device write access.
 
 ---
 
