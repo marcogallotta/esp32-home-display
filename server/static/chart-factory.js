@@ -8,7 +8,7 @@ window.chartFactory = {
     return {
       type: "time",
       min: rangeWindow.startMs,
-      max: rangeWindow.endMs,
+      max: rangeWindow.forecastEndMs ?? rangeWindow.endMs,
       time: { tooltipFormat: "yyyy-MM-dd HH:mm" },
     };
   },
@@ -22,7 +22,7 @@ window.chartFactory = {
     }
     if (this._onZoomChange) {
       clearTimeout(this._zoomDebounceTimer);
-      this._zoomDebounceTimer = setTimeout(() => this._onZoomChange({ min, max }), 400);
+      this._zoomDebounceTimer = setTimeout(() => this._onZoomChange({ min, max }), 800);
     }
   },
 
@@ -83,7 +83,7 @@ window.chartFactory = {
     chartRef.current.data.datasets = datasets;
     if (!this._zoomedRange) {
       chartRef.current.options.scales.x.min = rangeWindow.startMs;
-      chartRef.current.options.scales.x.max = rangeWindow.endMs;
+      chartRef.current.options.scales.x.max = rangeWindow.forecastEndMs ?? rangeWindow.endMs;
     }
     chartRef.current.update();
   },

@@ -33,6 +33,24 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - laptop.local
+
+  levoit-controller:
+    build: .
+    env_file: config/env
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./app:/app/app:ro
+      - ./config:/app/config:ro
+      - ./tools:/app/tools:ro
+    command: ["python", "tools/run_levoit_ah_controller.py"]
+    depends_on:
+      app:
+        condition: service_started
+    restart: unless-stopped
 
 volumes:
   pgdata-dev:

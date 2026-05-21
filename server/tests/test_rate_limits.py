@@ -147,3 +147,32 @@ def test_retry_after_header_present():
         assert r.status_code == 429
         assert "retry-after" in r.headers
         assert int(r.headers["retry-after"]) > 0
+
+
+def test_sensor_get_with_api_key_uses_esp32_read_bucket():
+    with _client(esp32_read=2, frontend=99) as (client, api_key):
+        headers = auth_headers(api_key)
+        for _ in range(2):
+            r = client.get("/sensors", headers=headers)
+            assert r.status_code != 429
+        r = client.get("/sensors", headers=headers)
+        assert r.status_code == 429
+
+
+def test_sensor_get_with_session_uses_frontend_bucket():
+    with _client(esp32_read=99, frontend=2) as (client, _):
+        config = load_config()
+        client.post("/login", data={"password": config.dashboard_password}, follow_redirects=False)
+        for _ in range(2):
+            r = client.get("/sensors")
+            assert r.status_code != 429
+        r = client.get("/sensors")
+        assert r.status_code == 429
+
+
+def test_sensor_get_api_key_does_not_consume_frontend_bucket():
+    with _client(esp32_read=99, frontend=1) as (client, api_key):
+        headers = auth_headers(api_key)
+        for _ in range(5):
+            r = client.get("/sensors", headers=headers)
+            assert r.status_code != 429

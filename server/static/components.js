@@ -57,6 +57,7 @@ function SensorCard({ sensor, kind, selected, onClick, clickable = true }) {
   );
 }
 
+
 function ChartCard({ title, right, canvasRef }) {
   return (
     <Card className="chart-card">

@@ -556,7 +556,7 @@ def rows_to_models(rows, reading_out: Any, selected_fields: list[str]):
 def fetch_latest_readings(
     db: Session,
     sensor_specs: dict[int, "SensorSpec"],
-    macs: list[str] | None = None,
+    sensor_ids: list[UUID] | None = None,
 ) -> list[dict[str, Any]]:
     results = []
     for spec in sensor_specs.values():
@@ -574,8 +574,8 @@ def fetch_latest_readings(
             *data_field_cols,
             row_num,
         )
-        if macs:
-            inner = inner.where(model.mac.in_(macs))
+        if sensor_ids:
+            inner = inner.where(model.sensor_id.in_(sensor_ids))
         subq = inner.subquery()
 
         stmt = select(subq).where(subq.c.rn == 1)

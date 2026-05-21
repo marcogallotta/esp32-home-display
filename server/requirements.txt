@@ -1,4 +1,5 @@
 alembic
+numpy
 fastapi
 httpx
 itsdangerous
@@ -6,6 +7,7 @@ psycopg[binary]
 pydantic
 pytest
 pytest-cov
+pyvesync
 python-multipart
 SQLAlchemy
 uvicorn[standard]

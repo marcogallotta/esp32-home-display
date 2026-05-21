@@ -72,7 +72,7 @@ The loaded `Config` is attached to `app.state.config` at startup and accessed vi
 - Registers `SessionMiddleware` (session secret, HTTPS-only flag from config).
 - Mounts `/static`.
 - Registers exception handlers for `BadRequestError` (400), `UnauthorizedError` (401), `ServerMisconfiguredError` (500).
-- Builds two sub-routers: `device` (requires `x-api-key`) and `dashboard` (requires session + frontend rate limit).
+- Builds three sub-routers: `device` (requires `x-api-key`), `dashboard` (requires session + frontend rate limit), and `sensor_router` (requires session OR API key via `sensor_read_limit`, which dispatches to the appropriate rate-limit bucket).
 
 DB sessions are request-scoped: `get_db()` is a FastAPI dependency that creates and closes a session per request.
 
@@ -151,6 +151,11 @@ Bulk result counter semantics (non-obvious):
 
 ## Fetch / query path
 
+`GET /sensors/latest` accepts one optional filter:
+- `sensor_id=<uuid>` -- return only the sensor with that UUID. Unknown UUID returns 200 with `{"sensors": []}`.
+
+Filtering is applied inside `fetch_latest_readings` at the DB layer.
+
 `GET /sensors/{sensor_id}/readings` dispatches to one of two modes:
 
 - **Raw mode** (`before`/`after` params): `fetch_raw_readings` -- simple range query, `DESC`, limited.
@@ -197,12 +202,12 @@ Sensors carry both `mac` (PK, human-readable) and `id` (UUID, stable identifier)
 ## Rate limiting
 
 `TokenBucketLimiter` backed by an in-memory `MemoryMapStore`. Three buckets for the device (ESP32) client, keyed globally (not per-IP):
-- `esp32_app:read` -- SwitchBot sensors + readings fetch.
+- `esp32_app:read` -- `POST /switchbot/sensors` and API-key-authenticated sensor GET reads (`GET /sensors`, `/sensors/latest`, `/sensors/{id}/readings`).
 - `esp32_app:live_write` -- SwitchBot/Xiaomi live readings.
 - `esp32_app:bulk_write` -- SwitchBot bulk.
 
 Two buckets for the browser frontend, keyed per-IP:
-- `frontend` -- dashboard reads.
+- `frontend` -- session-authenticated requests: sensor GET reads, openmeteo, predict.
 - `login` -- POST /login.
 
 All limits and periods are config-tunable via `app.json`. `burst=true` allows an initial burst up to the full limit. The store is in-process; limits reset on restart and are not shared across replicas.
@@ -214,9 +219,16 @@ All limits and periods are config-tunable via `app.json`. `burst=true` allows an
 Two independent auth systems:
 
 - **Device (ESP32):** `x-api-key` header, validated in `require_api_key()`. Constant-time string compare via `verify_api_key()`. Applied to the `device` router.
-- **Dashboard (browser):** Cookie session via `SessionMiddleware`. `POST /login` validates `dashboard_password` and sets `session["authenticated"] = True`. `require_session()` checks this flag. Applied to the `dashboard` router.
+- **Dashboard (browser):** Cookie session via `SessionMiddleware`. `POST /login` validates `dashboard_password` and sets `session["authenticated"] = True`. `require_session()` checks this flag. Applied to openmeteo and predict routers, and to generic sensor GET endpoints when no API key is supplied.
 
 `session_secure=true` in prod enforces HTTPS-only cookies.
+
+**Generic sensor GET endpoints** (`GET /sensors`, `/sensors/latest`, `/sensors/{id}/readings`) accept either mechanism via `require_session_or_api_key()`:
+
+1. If `x-api-key` is present, validate it. An invalid key raises 401 immediately -- it does NOT fall back to the session cookie. A request with an invalid key plus a valid session is still rejected.
+2. If `x-api-key` is absent, require a valid dashboard session.
+
+Returns `"api_key"` or `"session"` so `sensor_read_limit` can select the correct rate-limit bucket. The API key therefore grants read access to sensor data in addition to device write access.
 
 ---
 
@@ -359,6 +371,80 @@ Derived charts (abs humidity, VPD) are hidden by default and computed client-sid
 - `tests/test_config_validation.py` -- if the device adds config knobs.
 
 If the new type should appear in the dashboard, update the frontend static files as described in the "Adding a new device to the dashboard" section above. API-only devices require no frontend changes.
+
+---
+
+## Levoit AH controller
+
+An external process (`tools/run_levoit_ah_controller.py`) runs a control loop that:
+
+1. Fetches the latest SwitchBot sensor reading from `GET /sensors/latest`.
+2. Computes the target relative humidity needed to hit a configured absolute humidity setpoint
+   (Magnus formula).
+3. Compares against the current device target (fetched via pyvesync) and sends a new target only
+   if the difference exceeds `humidity_change_threshold`.
+
+The controller is **not** a FastAPI background task — it runs as a separate process or compose
+service. No database access; all state is live-fetched each iteration.
+
+### Config
+
+`levoit_ah_controller` section in `app.json`:
+
+```json
+"levoit_ah_controller": {
+  "switchbot_mac": "AA:BB:CC:DD:EE:FF",
+  "target_absolute_humidity": 8.0
+}
+```
+
+- `switchbot_mac`: MAC of the SwitchBot sensor. Matched against response body of
+  `GET /sensors/latest`; never used as a query parameter.
+- `target_absolute_humidity`: target in g/m³.
+
+App-level defaults (overrideable in `app.json`):
+
+```
+minimum_humidity           = 40     # % — lower clamp on commanded RH
+maximum_humidity           = 60     # % — upper clamp on commanded RH
+poll_interval_seconds      = 300
+humidity_change_threshold  = 1.0    # % — minimum change to trigger a command
+```
+
+Env vars (in `config/env`):
+
+```
+SERVER_BASE_URL       — base URL of the server API, e.g. https://laptop.local:8000/
+VESYNC_USERNAME       — VeSync account email
+VESYNC_PASSWORD       — VeSync account password
+VESYNC_DEVICE_CID     — CID of the Levoit humidifier device
+```
+
+TLS: the controller verifies the server cert using `certs/cert.pem`. The cert must be valid
+for the hostname in `SERVER_BASE_URL`.
+
+### Running
+
+One-shot (useful for testing):
+
+```
+./tools/run_levoit_ah_controller.sh --once [--dry-run]
+```
+
+Loop (default):
+
+```
+./tools/run_levoit_ah_controller.sh [--dry-run] [--interval N]
+```
+
+### Compose service
+
+The `levoit-controller` service in `compose.yml` runs the controller in loop mode (live).
+To use dry-run, add `--dry-run` to the command.
+
+The `app` service is given the `laptop.local` network alias so that
+`SERVER_BASE_URL=https://laptop.local:8000/` resolves correctly within the compose network and
+the self-signed cert (issued for `laptop.local`) validates without disabling TLS verification.
 
 ---
 

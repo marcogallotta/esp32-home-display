@@ -101,59 +101,6 @@ def test_latest_one_entry_per_sensor(authed_client, api_key):
         assert s["reading"]["temperature_c"] == 22.0
 
 
-def test_latest_mac_filter(authed_client, api_key):
-    post_switchbot(authed_client, api_key, make_switchbot_payload(
-        mac="AA:BB:CC:DD:EE:FF", name="Sensor A", timestamp="2026-04-21T10:00:00Z",
-    ))
-    post_switchbot(authed_client, api_key, make_switchbot_payload(
-        mac="11:22:33:44:55:66", name="Sensor B", timestamp="2026-04-21T10:00:00Z",
-    ))
-
-    response = authed_client.get("/sensors/latest", params={"mac": "AA:BB:CC:DD:EE:FF"})
-
-    assert response.status_code == 200
-    sensors = response.json()["sensors"]
-    assert len(sensors) == 1
-    assert sensors[0]["mac"] == "AA:BB:CC:DD:EE:FF"
-
-
-def test_latest_mac_filter_multiple(authed_client, api_key):
-    for mac, name in [
-        ("AA:BB:CC:DD:EE:FF", "A"),
-        ("11:22:33:44:55:66", "B"),
-        ("AA:BB:CC:DD:EE:00", "C"),
-    ]:
-        post_switchbot(authed_client, api_key, make_switchbot_payload(
-            mac=mac, name=name, timestamp="2026-04-21T10:00:00Z",
-        ))
-
-    response = authed_client.get(
-        "/sensors/latest",
-        params=[("mac", "AA:BB:CC:DD:EE:FF"), ("mac", "11:22:33:44:55:66")],
-    )
-
-    assert response.status_code == 200
-    macs = {s["mac"] for s in response.json()["sensors"]}
-    assert macs == {"AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66"}
-
-
-def test_latest_mac_filter_invalid_format(authed_client):
-    response = authed_client.get("/sensors/latest", params={"mac": "not-a-mac"})
-
-    assert response.status_code == 400
-
-
-def test_latest_mac_filter_normalizes_case(authed_client, api_key):
-    post_switchbot(authed_client, api_key, make_switchbot_payload(
-        mac="AA:BB:CC:DD:EE:FF", name="Sensor A", timestamp="2026-04-21T10:00:00Z",
-    ))
-
-    response = authed_client.get("/sensors/latest", params={"mac": "aa:bb:cc:dd:ee:ff"})
-
-    assert response.status_code == 200
-    assert len(response.json()["sensors"]) == 1
-
-
 def test_latest_response_shape(authed_client, api_key):
     post_switchbot(authed_client, api_key, make_switchbot_payload(
         timestamp="2026-04-21T10:00:00Z", temperature_c=21.0,
@@ -184,3 +131,62 @@ def test_latest_xiaomi_nullable_fields(authed_client, api_key):
     assert reading["temperature_c"] is None
     assert reading["light_lux"] is None
     assert reading["conductivity_us_cm"] is None
+
+
+# --- sensor_id filter ---
+
+def _post_and_get_sensor_id(client, api_key, mac, name):
+    post_switchbot(client, api_key, make_switchbot_payload(mac=mac, name=name, timestamp="2026-04-21T10:00:00Z"))
+    latest = client.get("/sensors/latest", headers={"x-api-key": api_key}).json()
+    return next(s["sensor_id"] for s in latest["sensors"] if s["mac"] == mac.upper())
+
+
+def test_latest_sensor_id_filter_returns_only_that_sensor(authed_client, api_key):
+    id_a = _post_and_get_sensor_id(authed_client, api_key, "AA:BB:CC:DD:EE:FF", "Sensor A")
+    post_switchbot(authed_client, api_key, make_switchbot_payload(
+        mac="11:22:33:44:55:66", name="Sensor B", timestamp="2026-04-21T10:00:00Z",
+    ))
+
+    response = authed_client.get("/sensors/latest", params={"sensor_id": id_a})
+
+    assert response.status_code == 200
+    sensors = response.json()["sensors"]
+    assert len(sensors) == 1
+    assert sensors[0]["sensor_id"] == id_a
+    assert sensors[0]["mac"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_latest_sensor_id_filter_unknown_uuid_returns_empty(authed_client):
+    response = authed_client.get(
+        "/sensors/latest",
+        params={"sensor_id": "00000000-0000-0000-0000-000000000000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"sensors": []}
+
+
+def test_latest_sensor_id_filter_works_with_api_key_auth(client, api_key):
+    sensor_id = _post_and_get_sensor_id(client, api_key, "AA:BB:CC:DD:EE:FF", "Sensor A")
+
+    response = client.get(
+        "/sensors/latest",
+        headers={"x-api-key": api_key},
+        params={"sensor_id": sensor_id},
+    )
+
+    assert response.status_code == 200
+    sensors = response.json()["sensors"]
+    assert len(sensors) == 1
+    assert sensors[0]["sensor_id"] == sensor_id
+
+
+def test_latest_sensor_id_filter_works_with_session_auth(authed_client, api_key):
+    sensor_id = _post_and_get_sensor_id(authed_client, api_key, "AA:BB:CC:DD:EE:FF", "Sensor A")
+
+    response = authed_client.get("/sensors/latest", params={"sensor_id": sensor_id})
+
+    assert response.status_code == 200
+    sensors = response.json()["sensors"]
+    assert len(sensors) == 1
+    assert sensors[0]["sensor_id"] == sensor_id

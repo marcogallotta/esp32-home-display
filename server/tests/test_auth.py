@@ -1,5 +1,7 @@
 import pytest
 
+from tests.helpers import make_switchbot_payload, post_switchbot
+
 
 # --- Dashboard login ---
 
@@ -38,8 +40,52 @@ def test_session_auth_rejects_unauthenticated_request(client):
     assert response.json() == {"detail": "unauthorized"}
 
 
-def test_session_auth_rejects_api_key_on_read_endpoint(client, api_key):
+def test_api_key_accepted_on_get_sensors(client, api_key):
     response = client.get("/sensors", headers={"x-api-key": api_key})
+
+    assert response.status_code == 200
+
+
+def test_api_key_accepted_on_get_sensors_latest(client, api_key):
+    response = client.get("/sensors/latest", headers={"x-api-key": api_key})
+
+    assert response.status_code == 200
+
+
+def test_api_key_accepted_on_get_sensor_readings(client, api_key):
+    post_switchbot(client, api_key, make_switchbot_payload())
+    sensor_id = client.get("/sensors", headers={"x-api-key": api_key}).json()[0]["id"]
+
+    response = client.get(f"/sensors/{sensor_id}/readings", headers={"x-api-key": api_key})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/sensors", "/sensors/latest", "/sensors/00000000-0000-0000-0000-000000000000/readings"],
+    ids=["sensors", "latest", "readings"],
+)
+def test_invalid_api_key_rejected_on_sensor_read_endpoints(client, path):
+    response = client.get(path, headers={"x-api-key": "wrong-key"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "unauthorized"}
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/sensors", "/sensors/latest", "/sensors/00000000-0000-0000-0000-000000000000/readings"],
+    ids=["sensors", "latest", "readings"],
+)
+def test_invalid_api_key_does_not_fall_back_to_session(authed_client, path):
+    response = authed_client.get(path, headers={"x-api-key": "wrong-key"})
+
+    assert response.status_code == 401
+
+
+def test_session_alone_rejected_on_write_endpoint(authed_client):
+    response = authed_client.post("/switchbot/reading", json=make_switchbot_payload())
 
     assert response.status_code == 401
 
