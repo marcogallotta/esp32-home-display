@@ -151,6 +151,11 @@ Bulk result counter semantics (non-obvious):
 
 ## Fetch / query path
 
+`GET /sensors/latest` accepts one optional filter:
+- `sensor_id=<uuid>` -- return only the sensor with that UUID. Unknown UUID returns 200 with `{"sensors": []}`.
+
+Filtering is applied inside `fetch_latest_readings` at the DB layer.
+
 `GET /sensors/{sensor_id}/readings` dispatches to one of two modes:
 
 - **Raw mode** (`before`/`after` params): `fetch_raw_readings` -- simple range query, `DESC`, limited.

@@ -20,7 +20,6 @@ from .common import (
     BULK_ERROR_DETAIL_LIMIT,
     READINGS_DEFAULT_LIMIT,
     READINGS_MAX_LIMIT,
-    validate_mac_address,
 )
 from .api_limits import MemoryMapStore, TokenBucketLimiter, make_rate_limiter
 from .config import Config
@@ -247,11 +246,11 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
 
     @sensor_router.get("/sensors/latest", response_model=LatestSensorsOut)
     def get_sensors_latest(
-        mac: Annotated[list[str] | None, Query()] = None,
+        sensor_id: Annotated[UUID | None, Query()] = None,
         db: Session = Depends(get_db),
     ):
-        macs = [validate_mac_address(m) for m in mac] if mac else None
-        readings = fetch_latest_readings(db, SENSOR_SPECS, macs=macs)
+        sensor_ids = [sensor_id] if sensor_id is not None else None
+        readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         return LatestSensorsOut(sensors=readings)
 
     @sensor_router.get("/sensors/{sensor_id}/readings")
