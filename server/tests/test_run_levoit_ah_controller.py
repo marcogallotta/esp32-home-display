@@ -4,6 +4,7 @@ from app.config import Config, DatabaseConfig, LevoitAhControllerConfig
 from app.levoit_api_client import LevoitApiError, SwitchbotLatestReading, SwitchbotSensorNotFound
 from app.levoit_controller import LevoitControlDecision
 from app.levoit_runner import format_decision, run_once
+from app.levoit_vesync import HumidifierState, VeSyncError
 
 
 def _db():
@@ -56,8 +57,25 @@ def _mock_client(reading=None, error=None):
     return client
 
 
+def _mock_vesync(target_humidity=45, error=None):
+    client = MagicMock()
+    if error:
+        client.fetch_state.side_effect = error
+        client.set_humidity.side_effect = error
+    else:
+        client.fetch_state.return_value = HumidifierState(
+            cid="test-cid",
+            name="Bedroom Humidifier",
+            device_type="LUH-A602S",
+            current_target_humidity=target_humidity,
+        )
+        client.set_humidity.return_value = None
+    return client
+
+
 def _run(**kwargs):
     kwargs.setdefault("api_client", _mock_client())
+    kwargs.setdefault("vesync_client", _mock_vesync(target_humidity=99))
     return run_once(_config(), **kwargs)
 
 
@@ -157,11 +175,58 @@ def test_url_is_read_from_config_not_hardcoded():
     assert "base_url" not in sig.parameters
 
 
-# --- no pyvesync ---
+# --- VeSync command wiring ---
 
-def test_no_pyvesync_import():
-    import sys
-    import app.levoit_runner
-    import app.levoit_controller
-    import app.levoit_api_client
-    assert "pyvesync" not in sys.modules
+def test_set_decision_calls_set_humidity():
+    vesync = _mock_vesync(target_humidity=99)  # far from commanded, will set
+    code, _ = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
+    assert code == 0
+    vesync.set_humidity.assert_called_once()
+
+
+def test_skip_decision_does_not_call_set_humidity():
+    # device already at same target → skip (commanded is ~46 at 20°C/50%/8g/m³)
+    vesync = _mock_vesync(target_humidity=46)
+    code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
+    assert code == 0
+    assert "skip" in msg
+    vesync.set_humidity.assert_not_called()
+
+
+def test_dry_run_does_not_call_set_humidity():
+    vesync = _mock_vesync(target_humidity=99)
+    code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync, dry_run=True)
+    assert code == 0
+    assert "[DRY RUN]" in msg
+    vesync.set_humidity.assert_not_called()
+
+
+def test_no_vesync_client_and_set_decision_exits_nonzero():
+    code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=None)
+    assert code == 1
+    assert "VeSync" in msg
+
+
+def test_vesync_fetch_state_error_exits_nonzero():
+    vesync = _mock_vesync(error=VeSyncError("login failed"))
+    code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
+    assert code == 1
+    assert "VeSync" in msg
+
+
+def test_vesync_set_humidity_error_exits_nonzero():
+    vesync = _mock_vesync(target_humidity=99)
+    vesync.set_humidity.side_effect = VeSyncError("set_humidity returned false")
+    code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
+    assert code == 1
+    assert "VeSync" in msg
+
+
+def test_device_state_shown_in_output():
+    vesync = _mock_vesync(target_humidity=99)
+    _, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
+    assert "Bedroom Humidifier" in msg
+    assert "LUH-A602S" in msg
+    assert "test-cid" in msg
+
+

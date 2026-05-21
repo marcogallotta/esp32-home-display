@@ -40,6 +40,7 @@ def compute_decision(
     maximum_humidity: int,
     humidity_change_threshold: float,
     last_commanded_humidity: int | None = None,
+    current_device_target_humidity: int | None = None,
 ) -> LevoitControlDecision:
     def _skip(
         reason: str,
@@ -69,10 +70,13 @@ def compute_decision(
     clamped = max(float(minimum_humidity), min(float(maximum_humidity), ideal))
     commanded = round(clamped)
 
-    if last_commanded_humidity is not None:
-        if abs(commanded - last_commanded_humidity) < humidity_change_threshold:
+    for ref, label in (
+        (last_commanded_humidity, "last command"),
+        (current_device_target_humidity, "device target"),
+    ):
+        if ref is not None and abs(commanded - ref) < humidity_change_threshold:
             return _skip(
-                f"change within threshold ({commanded} vs {last_commanded_humidity})",
+                f"change within threshold ({commanded} vs {ref}, {label})",
                 current_ah=current_ah,
                 ideal=ideal,
                 commanded=commanded,

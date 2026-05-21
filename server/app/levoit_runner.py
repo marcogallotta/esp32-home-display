@@ -3,6 +3,8 @@ from __future__ import annotations
 from .config import Config, LevoitAhControllerConfig
 from .levoit_api_client import LevoitApiClient, LevoitApiError, SwitchbotLatestReading, SwitchbotSensorNotFound
 from .levoit_controller import LevoitControlDecision, compute_decision
+from .levoit_vesync import HumidifierState, LevoitVeSyncClient, VeSyncError
+
 
 def _fmt(v: float | None) -> str:
     return f"{v:.2f}" if v is not None else "None"
@@ -12,8 +14,9 @@ def format_decision(
     reading: SwitchbotLatestReading,
     decision: LevoitControlDecision,
     cfg: LevoitAhControllerConfig,
+    device_state: HumidifierState | None = None,
 ) -> str:
-    return "\n".join([
+    lines = [
         f"sensor MAC:                {reading.mac}",
         f"temperature_c:             {reading.temperature_c}",
         f"humidity_pct:              {reading.humidity_pct}",
@@ -23,7 +26,40 @@ def format_decision(
         f"commanded_humidity:        {decision.commanded_humidity} %",
         f"action:                    {decision.action}",
         f"reason:                    {decision.reason}",
-    ])
+    ]
+    if device_state is not None:
+        lines += [
+            f"device name:               {device_state.name}",
+            f"device type:               {device_state.device_type}",
+            f"device CID:                {device_state.cid}",
+            f"device target humidity:    {device_state.current_target_humidity} %",
+        ]
+    return "\n".join(lines)
+
+
+def _build_api_client(config: Config) -> LevoitApiClient:
+    import httpx
+    from pathlib import Path
+    ca_cert = str(Path(__file__).parent.parent / "certs" / "cert.pem")
+    cfg = config.levoit_ah_controller
+    return LevoitApiClient(
+        base_url=cfg.server_base_url,
+        api_key=config.api_key,
+        switchbot_mac=cfg.switchbot_mac,
+        http_client=httpx.Client(verify=ca_cert),
+    )
+
+
+def _build_vesync_client(config: Config) -> LevoitVeSyncClient | None:
+    username = config.vesync_username
+    password = config.vesync_password
+    cid = config.vesync_device_cid
+    if username is None or password is None or cid is None:
+        return None
+    return LevoitVeSyncClient(username=username, password=password, cid=cid)
+
+
+_sentinel = object()
 
 
 def run_once(
@@ -31,6 +67,7 @@ def run_once(
     *,
     dry_run: bool = False,
     api_client: LevoitApiClient | None = None,
+    vesync_client: LevoitVeSyncClient | None = _sentinel,
 ) -> tuple[int, str]:
     cfg = config.levoit_ah_controller
 
@@ -44,15 +81,10 @@ def run_once(
         return 1, "levoit_ah_controller.server_base_url is not configured"
 
     if api_client is None:
-        import httpx
-        from pathlib import Path
-        ca_cert = str(Path(__file__).parent.parent / "certs" / "cert.pem")
-        api_client = LevoitApiClient(
-            base_url=cfg.server_base_url,
-            api_key=config.api_key,
-            switchbot_mac=cfg.switchbot_mac,
-            http_client=httpx.Client(verify=ca_cert),
-        )
+        api_client = _build_api_client(config)
+
+    if vesync_client is _sentinel:
+        vesync_client = _build_vesync_client(config)
 
     try:
         reading = api_client.fetch_switchbot_latest()
@@ -61,6 +93,13 @@ def run_once(
     except LevoitApiError as exc:
         return 1, f"API error: {exc}"
 
+    device_state: HumidifierState | None = None
+    if vesync_client is not None:
+        try:
+            device_state = vesync_client.fetch_state()
+        except VeSyncError as exc:
+            return 1, f"VeSync error: {exc}"
+
     decision = compute_decision(
         temperature_c=reading.temperature_c,
         humidity_pct=reading.humidity_pct,
@@ -68,9 +107,24 @@ def run_once(
         minimum_humidity=cfg.minimum_humidity,
         maximum_humidity=cfg.maximum_humidity,
         humidity_change_threshold=cfg.humidity_change_threshold,
+        current_device_target_humidity=(
+            device_state.current_target_humidity if device_state is not None else None
+        ),
     )
 
-    output = format_decision(reading, decision, cfg)
-    if dry_run:
+    output = format_decision(reading, decision, cfg, device_state)
+
+    if decision.action == "set":
+        if dry_run:
+            output = f"[DRY RUN] would set humidity to {decision.commanded_humidity}%\n" + output
+        else:
+            if vesync_client is None:
+                return 1, "VeSync credentials not configured; cannot send command"
+            try:
+                vesync_client.set_humidity(decision.commanded_humidity)
+            except VeSyncError as exc:
+                return 1, f"VeSync error: {exc}"
+    elif dry_run:
         output = "[DRY RUN] no command will be sent\n" + output
+
     return 0, output

@@ -101,6 +101,9 @@ class Config:
     rate_limits: RateLimitsConfig = field(default_factory=_default_rate_limits)
     openmeteo: dict = field(default_factory=dict)
     levoit_ah_controller: LevoitAhControllerConfig = field(default_factory=LevoitAhControllerConfig)
+    vesync_username: str | None = None
+    vesync_password: str | None = None
+    vesync_device_cid: str | None = None
 
 
 def _check_str(errors: list[str], name: str, value: object) -> bool:
@@ -321,7 +324,15 @@ def load_config(config_dir: Path | None = None) -> Config:
         password=_require_env("DATABASE_PASSWORD"),
     )
 
-    config = Config(database=db, rate_limits=rate_limits, levoit_ah_controller=levoit_ah_controller, **data)
+    config = Config(
+        database=db,
+        rate_limits=rate_limits,
+        levoit_ah_controller=levoit_ah_controller,
+        vesync_username=os.environ.get("VESYNC_USERNAME"),
+        vesync_password=os.environ.get("VESYNC_PASSWORD"),
+        vesync_device_cid=os.environ.get("VESYNC_DEVICE_CID"),
+        **data,
+    )
     validate_config(config, env)
     return config
 
