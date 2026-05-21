@@ -6,8 +6,19 @@ from .levoit_controller import LevoitControlDecision, compute_decision
 from .levoit_vesync import HumidifierState, LevoitVeSyncClient, VeSyncError
 
 
-def _fmt(v: float | None) -> str:
-    return f"{v:.2f}" if v is not None else "None"
+def _mask_cid(cid: str) -> str:
+    return f"{cid[:4]}...{cid[-4:]}" if len(cid) > 8 else cid
+
+
+def _reason_sentence(decision: LevoitControlDecision) -> str:
+    if decision.action == "set":
+        return "target changed enough to update"
+    r = decision.reason
+    if "threshold" in r:
+        return "device already at target"
+    if "temperature" in r:
+        return "temperature reading missing"
+    return r
 
 
 def format_decision(
@@ -15,25 +26,46 @@ def format_decision(
     decision: LevoitControlDecision,
     cfg: LevoitAhControllerConfig,
     device_state: HumidifierState | None = None,
+    show_device: bool = True,
 ) -> str:
-    lines = [
-        f"sensor MAC:                {reading.mac}",
-        f"temperature_c:             {reading.temperature_c}",
-        f"humidity_pct:              {reading.humidity_pct}",
-        f"current_absolute_humidity: {_fmt(decision.current_absolute_humidity)} g/m3",
-        f"target_absolute_humidity:  {cfg.target_absolute_humidity} g/m3",
-        f"ideal_humidity:            {_fmt(decision.ideal_humidity)} %",
-        f"commanded_humidity:        {decision.commanded_humidity} %",
-        f"action:                    {decision.action}",
-        f"reason:                    {decision.reason}",
-    ]
-    if device_state is not None:
+    temp = f"{reading.temperature_c:.1f}" if reading.temperature_c is not None else "?"
+    rh = f"{round(reading.humidity_pct)}%" if reading.humidity_pct is not None else "?"
+    cur_ah = f"{decision.current_absolute_humidity:.1f}" if decision.current_absolute_humidity is not None else "?"
+    ideal = f"{decision.ideal_humidity:.1f}%" if decision.ideal_humidity is not None else "?"
+
+    if decision.action == "set":
+        command_line = f"set Levoit target to {decision.commanded_humidity}%"
+    else:
+        command_line = "no command sent"
+
+    lines = []
+
+    if show_device and device_state is not None:
         lines += [
-            f"device name:               {device_state.name}",
-            f"device type:               {device_state.device_type}",
-            f"device CID:                {device_state.cid}",
-            f"device target humidity:    {device_state.current_target_humidity} %",
+            "Device",
+            f"  Name:  {device_state.name}",
+            f"  Type:  {device_state.device_type}",
+            f"  CID:   {_mask_cid(device_state.cid)}",
+            "",
         ]
+
+    lines += [
+        "Input",
+        f"  Sensor:   {reading.mac}",
+        f"  Reading:  {temp}°C, {rh} RH",
+        f"  Current:  {cur_ah} g/m³ absolute humidity",
+        f"  Target:   {cfg.target_absolute_humidity:.1f} g/m³ absolute humidity",
+        "",
+        "Decision",
+        f"  Ideal RH:  {ideal}",
+        f"  Command:   {command_line}",
+    ]
+
+    if device_state is not None and device_state.current_target_humidity is not None:
+        lines.append(f"  Previous:  Levoit target was {device_state.current_target_humidity}%")
+
+    lines.append(f"  Reason:    {_reason_sentence(decision)}")
+
     return "\n".join(lines)
 
 
@@ -66,6 +98,7 @@ def run_once(
     config: Config,
     *,
     dry_run: bool = False,
+    show_device: bool = False,
     api_client: LevoitApiClient | None = None,
     vesync_client: LevoitVeSyncClient | None = _sentinel,
 ) -> tuple[int, str]:
@@ -112,7 +145,7 @@ def run_once(
         ),
     )
 
-    output = format_decision(reading, decision, cfg, device_state)
+    output = format_decision(reading, decision, cfg, device_state, show_device=show_device)
 
     if decision.action == "set":
         if dry_run:

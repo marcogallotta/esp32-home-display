@@ -24,15 +24,17 @@ def main():
     config = load_config()
 
     if args.once:
-        code, message = run_once(config, dry_run=args.dry_run)
+        code, message = run_once(config, dry_run=args.dry_run, show_device=True)
         print(message)
         sys.exit(code)
 
     interval = args.interval if args.interval is not None else config.levoit_ah_controller.poll_interval_seconds
+    first = True
     while True:
         print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-        _, message = run_once(config, dry_run=args.dry_run)
+        _, message = run_once(config, dry_run=args.dry_run, show_device=first)
         print(message)
+        first = False
         time.sleep(interval)
 
 

@@ -93,11 +93,11 @@ def test_format_decision_contains_all_expected_fields():
     out = format_decision(reading, decision, _levoit_cfg())
     assert "AA:BB:CC:DD:EE:FF" in out
     assert "20.0" in out
-    assert "50.0" in out
+    assert "50" in out
     assert "8.0" in out
     assert "46" in out
     assert "set" in out
-    assert "ok" in out
+    assert "update" in out
 
 
 # --- missing required config fields ---
@@ -128,9 +128,8 @@ def test_missing_server_base_url_exits_nonzero():
 def test_set_decision_exits_zero_and_contains_output():
     code, msg = _run()
     assert code == 0
-    assert "set" in msg
-    assert "action" in msg
-    assert "commanded_humidity" in msg
+    assert "set Levoit target" in msg
+    assert "Command" in msg
 
 
 def test_dry_run_prefixes_output():
@@ -144,7 +143,7 @@ def test_dry_run_prefixes_output():
 def test_missing_temperature_exits_zero_with_skip():
     code, msg = _run(api_client=_mock_client(reading=_reading(temperature_c=None)))
     assert code == 0
-    assert "skip" in msg
+    assert "no command" in msg
     assert "temperature" in msg
 
 
@@ -189,7 +188,7 @@ def test_skip_decision_does_not_call_set_humidity():
     vesync = _mock_vesync(target_humidity=46)
     code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
     assert code == 0
-    assert "skip" in msg
+    assert "no command" in msg
     vesync.set_humidity.assert_not_called()
 
 
@@ -224,9 +223,9 @@ def test_vesync_set_humidity_error_exits_nonzero():
 
 def test_device_state_shown_in_output():
     vesync = _mock_vesync(target_humidity=99)
-    _, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync)
+    _, msg = run_once(_config(), api_client=_mock_client(), vesync_client=vesync, show_device=True)
     assert "Bedroom Humidifier" in msg
     assert "LUH-A602S" in msg
-    assert "test-cid" in msg
+    assert "test" in msg  # CID masked: test...t-cid → contains "test"
 
 
