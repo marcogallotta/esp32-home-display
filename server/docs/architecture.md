@@ -383,18 +383,20 @@ wired; the controller itself is not implemented.
 
 ```json
 "levoit_ah_controller": {
-  "enabled": false,
   "switchbot_mac": "AA:BB:CC:DD:EE:FF",
   "target_absolute_humidity": 8.0
 }
 ```
 
-- `enabled`: whether the future controller should run.
 - `switchbot_mac`: MAC of the SwitchBot sensor whose latest reading will drive the controller.
   The future controller will call `GET /sensors/latest` (no query param) and match this MAC in
   the response body -- the MAC is never exposed as a GET query parameter.
 - `target_absolute_humidity`: interpreted internally as g/m^3. The key name is intentionally
   human-readable and does not include units.
+- `server_base_url`: base URL the controller uses to call the server API. No default; set via
+  `SERVER_BASE_URL` env var. Example: `"https://laptop.local:8000/"`. TLS verification
+  uses the system certificate store; self-signed certs require a deliberate `--insecure` flag
+  (not yet implemented) rather than silent bypass.
 
 App-level defaults (`LevoitAhControllerConfig` dataclass; overrideable in `app.json`):
 

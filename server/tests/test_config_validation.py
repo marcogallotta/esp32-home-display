@@ -277,7 +277,6 @@ def test_load_config_fails_on_missing_field(tmp_path, monkeypatch):
 
 def _levoit(**overrides) -> LevoitAhControllerConfig:
     defaults = dict(
-        enabled=False,
         switchbot_mac=None,
         target_absolute_humidity=None,
     )
@@ -288,60 +287,41 @@ def _levoit(**overrides) -> LevoitAhControllerConfig:
 def test_levoit_absent_uses_defaults():
     cfg = _config()
     validate_config(cfg, env="dev")
-    assert cfg.levoit_ah_controller.enabled is False
+    assert cfg.levoit_ah_controller.switchbot_mac is None
 
 
-def test_levoit_disabled_no_mac_passes():
-    cfg = _config(levoit_ah_controller=_levoit(enabled=False))
-    validate_config(cfg, env="dev")
+def test_levoit_no_mac_passes():
+    validate_config(_config(levoit_ah_controller=_levoit()), env="dev")
 
 
-def test_levoit_enabled_with_valid_mac_passes():
-    lev = _levoit(enabled=True, switchbot_mac="aa:bb:cc:dd:ee:ff", target_absolute_humidity=8.0)
-    cfg = _config(levoit_ah_controller=lev)
-    validate_config(cfg, env="dev")
-
-
-def test_levoit_enabled_missing_mac_fails():
-    lev = _levoit(enabled=True, switchbot_mac=None, target_absolute_humidity=8.0)
-    with pytest.raises(ValueError, match="switchbot_mac: required when enabled is true"):
-        validate_config(_config(levoit_ah_controller=lev), env="dev")
+def test_levoit_valid_mac_passes():
+    lev = _levoit(switchbot_mac="aa:bb:cc:dd:ee:ff", target_absolute_humidity=8.0,
+                  server_base_url="https://laptop.local:8000/")
+    validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
 def test_levoit_invalid_mac_fails():
-    lev = _levoit(enabled=True, switchbot_mac="not-a-mac", target_absolute_humidity=8.0)
-    with pytest.raises(ValueError, match="switchbot_mac: invalid MAC address format"):
-        validate_config(_config(levoit_ah_controller=lev), env="dev")
-
-
-def test_levoit_invalid_mac_when_disabled_still_fails():
-    lev = _levoit(enabled=False, switchbot_mac="bad")
+    lev = _levoit(switchbot_mac="not-a-mac")
     with pytest.raises(ValueError, match="switchbot_mac: invalid MAC address format"):
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
 def test_levoit_zero_target_ah_fails():
-    lev = _levoit(enabled=True, switchbot_mac="AA:BB:CC:DD:EE:FF", target_absolute_humidity=0.0)
+    lev = _levoit(target_absolute_humidity=0.0)
     with pytest.raises(ValueError, match="target_absolute_humidity: must be a positive number"):
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
 def test_levoit_negative_target_ah_fails():
-    lev = _levoit(enabled=True, switchbot_mac="AA:BB:CC:DD:EE:FF", target_absolute_humidity=-1.0)
+    lev = _levoit(target_absolute_humidity=-1.0)
     with pytest.raises(ValueError, match="target_absolute_humidity: must be a positive number"):
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
 def test_levoit_non_number_target_ah_fails():
-    lev = _levoit(enabled=False)
+    lev = _levoit()
     lev.target_absolute_humidity = "eight"  # type: ignore[assignment]
     with pytest.raises(ValueError, match="target_absolute_humidity: must be a number"):
-        validate_config(_config(levoit_ah_controller=lev), env="dev")
-
-
-def test_levoit_enabled_missing_target_ah_fails():
-    lev = _levoit(enabled=True, switchbot_mac="AA:BB:CC:DD:EE:FF", target_absolute_humidity=None)
-    with pytest.raises(ValueError, match="target_absolute_humidity: required when enabled is true"):
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
@@ -367,24 +347,10 @@ def test_levoit_min_humidity_exceeds_max_fails():
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
-def test_levoit_zero_reading_max_age_fails():
-    lev = _levoit()
-    lev.reading_max_age_seconds = 0
-    with pytest.raises(ValueError, match="reading_max_age_seconds: must be a positive integer"):
-        validate_config(_config(levoit_ah_controller=lev), env="dev")
-
-
 def test_levoit_zero_poll_interval_fails():
     lev = _levoit()
     lev.poll_interval_seconds = 0
     with pytest.raises(ValueError, match="poll_interval_seconds: must be a positive integer"):
-        validate_config(_config(levoit_ah_controller=lev), env="dev")
-
-
-def test_levoit_zero_minimum_command_interval_fails():
-    lev = _levoit()
-    lev.minimum_command_interval_seconds = 0
-    with pytest.raises(ValueError, match="minimum_command_interval_seconds: must be a positive integer"):
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
@@ -401,10 +367,17 @@ def test_levoit_zero_humidity_change_threshold_passes():
     validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
-def test_levoit_non_bool_enabled_fails():
+def test_levoit_empty_server_base_url_fails():
     lev = _levoit()
-    lev.enabled = "true"  # type: ignore[assignment]
-    with pytest.raises(ValueError, match="levoit_ah_controller.enabled: must be a boolean"):
+    lev.server_base_url = ""
+    with pytest.raises(ValueError, match="server_base_url: must be a non-empty string"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_invalid_scheme_server_base_url_fails():
+    lev = _levoit()
+    lev.server_base_url = "laptop.local:8000"
+    with pytest.raises(ValueError, match="server_base_url: must start with http"):
         validate_config(_config(levoit_ah_controller=lev), env="dev")
 
 
@@ -428,7 +401,6 @@ def test_levoit_load_config_invalid_mac_in_json_fails(tmp_path, monkeypatch):
         "session_secure": False,
         "database": {"driver": "postgresql+psycopg"},
         "levoit_ah_controller": {
-            "enabled": False,
             "switchbot_mac": "not-a-mac",
         },
     }))
@@ -444,14 +416,12 @@ def test_levoit_load_config_parses_and_normalizes_mac(tmp_path, monkeypatch):
         "session_secure": False,
         "database": {"driver": "postgresql+psycopg"},
         "levoit_ah_controller": {
-            "enabled": True,
             "switchbot_mac": "aa:bb:cc:dd:ee:ff",
             "target_absolute_humidity": 8.0,
         },
     }))
-    _set_base_env(monkeypatch)
+    _set_base_env(monkeypatch, SERVER_BASE_URL="https://laptop.local:8000/")
     cfg = load_config(config_dir=config_dir)
-    assert cfg.levoit_ah_controller.enabled is True
     assert cfg.levoit_ah_controller.switchbot_mac == "AA:BB:CC:DD:EE:FF"
     assert cfg.levoit_ah_controller.target_absolute_humidity == 8.0
 
@@ -461,14 +431,11 @@ def test_levoit_load_config_absent_uses_defaults(tmp_path, monkeypatch):
     _set_base_env(monkeypatch)
     cfg = load_config(config_dir=config_dir)
     lev = cfg.levoit_ah_controller
-    assert lev.enabled is False
     assert lev.switchbot_mac is None
     assert lev.minimum_humidity == 40
     assert lev.maximum_humidity == 60
-    assert lev.reading_max_age_seconds == 900
     assert lev.poll_interval_seconds == 300
-    assert lev.minimum_command_interval_seconds == 300
-    assert lev.humidity_change_threshold == 2.0
+    assert lev.humidity_change_threshold == 1.0
 
 
 def test_levoit_default_overrides_from_app_json(tmp_path, monkeypatch):
@@ -478,7 +445,6 @@ def test_levoit_default_overrides_from_app_json(tmp_path, monkeypatch):
         "session_secure": False,
         "database": {"driver": "postgresql+psycopg"},
         "levoit_ah_controller": {
-            "enabled": False,
             "poll_interval_seconds": 120,
             "humidity_change_threshold": 0.5,
         },

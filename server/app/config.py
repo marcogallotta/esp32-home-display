@@ -68,15 +68,13 @@ def _default_rate_limits() -> RateLimitsConfig:
 
 @dataclass
 class LevoitAhControllerConfig:
-    enabled: bool = False
     switchbot_mac: str | None = None
     target_absolute_humidity: float | None = None
+    server_base_url: str | None = None
     minimum_humidity: int = 40
     maximum_humidity: int = 60
-    reading_max_age_seconds: int = 900
     poll_interval_seconds: int = 300
-    minimum_command_interval_seconds: int = 300
-    humidity_change_threshold: float = 2.0
+    humidity_change_threshold: float = 1.0
 
 
 @dataclass
@@ -206,16 +204,9 @@ def validate_config(config: Config, env: str) -> None:
 def _validate_levoit_ah_controller(errors: list[str], cfg: LevoitAhControllerConfig) -> None:
     p = "levoit_ah_controller"
 
-    if not isinstance(cfg.enabled, bool):
-        errors.append(f"{p}.enabled: must be a boolean")
-        return
-
     if cfg.switchbot_mac is not None:
         if not isinstance(cfg.switchbot_mac, str) or not MAC_ADDRESS_RE.fullmatch(cfg.switchbot_mac):
             errors.append(f"{p}.switchbot_mac: invalid MAC address format")
-
-    if cfg.enabled and cfg.switchbot_mac is None:
-        errors.append(f"{p}.switchbot_mac: required when enabled is true")
 
     if cfg.target_absolute_humidity is not None:
         if (
@@ -226,8 +217,11 @@ def _validate_levoit_ah_controller(errors: list[str], cfg: LevoitAhControllerCon
         elif cfg.target_absolute_humidity <= 0:
             errors.append(f"{p}.target_absolute_humidity: must be a positive number")
 
-    if cfg.enabled and cfg.target_absolute_humidity is None:
-        errors.append(f"{p}.target_absolute_humidity: required when enabled is true")
+    if cfg.server_base_url is not None:
+        if not isinstance(cfg.server_base_url, str) or not cfg.server_base_url:
+            errors.append(f"{p}.server_base_url: must be a non-empty string")
+        elif not cfg.server_base_url.startswith(("http://", "https://")):
+            errors.append(f"{p}.server_base_url: must start with http:// or https://")
 
     min_ok = _check_int(errors, f"{p}.minimum_humidity", cfg.minimum_humidity)
     max_ok = _check_int(errors, f"{p}.maximum_humidity", cfg.maximum_humidity)
@@ -240,9 +234,7 @@ def _validate_levoit_ah_controller(errors: list[str], cfg: LevoitAhControllerCon
     if min_ok and max_ok and cfg.minimum_humidity > cfg.maximum_humidity:
         errors.append(f"{p}.minimum_humidity: must be <= maximum_humidity")
 
-    _check_positive_int(errors, f"{p}.reading_max_age_seconds", cfg.reading_max_age_seconds)
     _check_positive_int(errors, f"{p}.poll_interval_seconds", cfg.poll_interval_seconds)
-    _check_positive_int(errors, f"{p}.minimum_command_interval_seconds", cfg.minimum_command_interval_seconds)
 
     if (
         isinstance(cfg.humidity_change_threshold, bool)
@@ -261,14 +253,12 @@ def _parse_levoit_ah_controller(raw: object) -> LevoitAhControllerConfig:
     kwargs = {
         k: raw[k]
         for k in (
-            "enabled",
             "switchbot_mac",
             "target_absolute_humidity",
+            "server_base_url",
             "minimum_humidity",
             "maximum_humidity",
-            "reading_max_age_seconds",
             "poll_interval_seconds",
-            "minimum_command_interval_seconds",
             "humidity_change_threshold",
         )
         if k in raw
@@ -308,6 +298,9 @@ def load_config(config_dir: Path | None = None) -> Config:
     raw_levoit = data.pop("levoit_ah_controller", None)
     rate_limits = _parse_rate_limits(raw_rl) if raw_rl is not None else _default_rate_limits()
     levoit_ah_controller = _parse_levoit_ah_controller(raw_levoit)
+    levoit_server_base_url = os.environ.get("SERVER_BASE_URL")
+    if levoit_server_base_url is not None:
+        levoit_ah_controller.server_base_url = levoit_server_base_url
 
     data["api_key"] = _require_env("API_KEY")
     data["session_secret"] = _require_env("SESSION_SECRET")

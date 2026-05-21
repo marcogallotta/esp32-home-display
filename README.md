@@ -127,7 +127,6 @@ In `server/config/app.json`:
 
 ```json
 "levoit_ah_controller": {
-  "enabled": true,
   "switchbot_mac": "AA:BB:CC:DD:EE:FF",
   "target_absolute_humidity": 8.0
 }

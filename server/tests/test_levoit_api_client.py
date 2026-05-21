@@ -19,7 +19,6 @@ _SAMPLE_RESPONSE = {
         {
             "mac": "AA:BB:CC:DD:EE:FF",
             "sensor_id": "11111111-1111-1111-1111-111111111111",
-            "name": "Bedroom",
             "latest_timestamp": "2026-04-21T10:00:00Z",
             "reading": {
                 "temperature_c": 22.5,
@@ -61,7 +60,6 @@ def test_successful_match_returns_reading():
     assert isinstance(result, SwitchbotLatestReading)
     assert result.mac == "AA:BB:CC:DD:EE:FF"
     assert result.sensor_id == "11111111-1111-1111-1111-111111111111"
-    assert result.name == "Bedroom"
     assert result.timestamp == "2026-04-21T10:00:00Z"
     assert result.temperature_c == 22.5
     assert result.humidity_pct == 55.0
@@ -121,7 +119,6 @@ def test_missing_temperature_preserved_as_none():
         "sensors": [{
             "mac": _MAC,
             "sensor_id": "11111111-1111-1111-1111-111111111111",
-            "name": "Bedroom",
             "latest_timestamp": "2026-04-21T10:00:00Z",
             "reading": {"temperature_c": None, "humidity_pct": 55.0},
         }]
@@ -136,7 +133,6 @@ def test_missing_humidity_preserved_as_none():
         "sensors": [{
             "mac": _MAC,
             "sensor_id": "11111111-1111-1111-1111-111111111111",
-            "name": "Bedroom",
             "latest_timestamp": "2026-04-21T10:00:00Z",
             "reading": {"temperature_c": 22.5, "humidity_pct": None},
         }]
@@ -150,7 +146,7 @@ def test_malformed_matching_entry_raises_levoit_api_error():
     body = {
         "sensors": [{
             "mac": _MAC,
-            # sensor_id, name, latest_timestamp missing
+            # sensor_id, latest_timestamp missing
         }]
     }
     with pytest.raises(LevoitApiError, match="malformed matching sensor"):

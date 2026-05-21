@@ -17,7 +17,6 @@ class SwitchbotSensorNotFound(Exception):
 class SwitchbotLatestReading:
     sensor_id: str
     mac: str
-    name: str
     timestamp: str
     temperature_c: float | None
     humidity_pct: float | None
@@ -66,7 +65,6 @@ class LevoitApiClient:
                     return SwitchbotLatestReading(
                         sensor_id=str(entry["sensor_id"]),
                         mac=mac,
-                        name=entry["name"],
                         timestamp=entry["latest_timestamp"],
                         temperature_c=reading.get("temperature_c"),
                         humidity_pct=reading.get("humidity_pct"),

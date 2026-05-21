@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 
 
@@ -13,7 +12,6 @@ class LevoitControlDecision:
     current_absolute_humidity: float | None
     ideal_humidity: float | None
     commanded_humidity: int | None
-    age_seconds: float | None
 
 
 def _saturation_vapour_pressure(temperature_c: float) -> float:
@@ -33,35 +31,19 @@ def target_relative_humidity(temperature_c: float, target_ah: float) -> float:
     return target_ah * (temperature_c + 273.15) * 100.0 / (216.7 * es)
 
 
-def _parse_timestamp(timestamp: str | None) -> tuple[datetime | None, str | None]:
-    if not timestamp:
-        return None, "reading timestamp missing"
-    try:
-        return datetime.fromisoformat(timestamp.replace("Z", "+00:00")), None
-    except (ValueError, AttributeError):
-        return None, f"reading timestamp invalid: {timestamp!r}"
-
-
 def compute_decision(
     *,
-    timestamp: str | None,
     temperature_c: float | None,
     humidity_pct: float | None,
-    now: datetime,
     target_absolute_humidity: float,
     minimum_humidity: int,
     maximum_humidity: int,
-    reading_max_age_seconds: int,
-    minimum_command_interval_seconds: int,
     humidity_change_threshold: float,
-    last_command_time: datetime | None = None,
     last_commanded_humidity: int | None = None,
-    current_device_target_humidity: int | None = None,
 ) -> LevoitControlDecision:
     def _skip(
         reason: str,
         *,
-        age: float | None = None,
         current_ah: float | None = None,
         ideal: float | None = None,
         commanded: int | None = None,
@@ -72,19 +54,10 @@ def compute_decision(
             current_absolute_humidity=current_ah,
             ideal_humidity=ideal,
             commanded_humidity=commanded,
-            age_seconds=age,
         )
 
-    ts, err = _parse_timestamp(timestamp)
-    if ts is None:
-        return _skip(err)  # type: ignore[arg-type]
-
-    age_seconds = (now - ts).total_seconds()
-    if age_seconds > reading_max_age_seconds:
-        return _skip(f"reading too old ({age_seconds:.0f}s)", age=age_seconds)
-
     if temperature_c is None:
-        return _skip("temperature missing", age=age_seconds)
+        return _skip("temperature missing")
 
     current_ah = (
         absolute_humidity(temperature_c, humidity_pct)
@@ -96,32 +69,10 @@ def compute_decision(
     clamped = max(float(minimum_humidity), min(float(maximum_humidity), ideal))
     commanded = round(clamped)
 
-    if last_command_time is not None:
-        seconds_since = (now - last_command_time).total_seconds()
-        if seconds_since < minimum_command_interval_seconds:
-            return _skip(
-                f"command interval too recent ({seconds_since:.0f}s < {minimum_command_interval_seconds}s)",
-                age=age_seconds,
-                current_ah=current_ah,
-                ideal=ideal,
-                commanded=commanded,
-            )
-
     if last_commanded_humidity is not None:
         if abs(commanded - last_commanded_humidity) < humidity_change_threshold:
             return _skip(
-                f"change within threshold vs last command ({commanded} vs {last_commanded_humidity})",
-                age=age_seconds,
-                current_ah=current_ah,
-                ideal=ideal,
-                commanded=commanded,
-            )
-
-    if current_device_target_humidity is not None:
-        if abs(commanded - current_device_target_humidity) < humidity_change_threshold:
-            return _skip(
-                f"change within threshold vs device target ({commanded} vs {current_device_target_humidity})",
-                age=age_seconds,
+                f"change within threshold ({commanded} vs {last_commanded_humidity})",
                 current_ah=current_ah,
                 ideal=ideal,
                 commanded=commanded,
@@ -133,5 +84,4 @@ def compute_decision(
         current_absolute_humidity=current_ah,
         ideal_humidity=ideal,
         commanded_humidity=commanded,
-        age_seconds=age_seconds,
     )
