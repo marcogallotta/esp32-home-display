@@ -7,16 +7,15 @@ pqueue fixed-slot backend to the append-log backend. The pqueue-side
 prerequisites and the final fixed-slot elimination are in
 `pqueue/docs/pqueue-fixed-slot-removal.md`.
 
-**Prerequisite:** `docs/compactidle-integration.md` must be complete before
-starting this migration. Steps here assume `api::OutboxClient::compactIdle`
-already exists and the main-loop call is already wired.
+**Prerequisite:** `pqueue/docs/compactidle-integration.md` must be complete before
+starting this migration (`pqueue::Outbox` and `pqueue::http::Outbox` wrappers exist).
 
 ---
 
 ## Overview
 
 The outbox currently uses `pqueue::StoreLayout::FixedSlot` (the default) and
-writes to `/pqueue_api_spool`. The migration switches it to `StoreLayout::AppendLog`
+writes to `/pqueue_api_spool`. The migration switches it to `StoreLayout::AppendLog`,
 adds idle compaction to the main loop, and adds one new config field. No on-disk format conversion is attempted; deployed devices should drain or
 explicitly abandon the old fixed-slot backlog before switching. The two backends
 write separate filenames and never conflict.
@@ -25,7 +24,38 @@ write separate filenames and never conflict.
 
 ## Steps
 
-### 1. Add idleCompactSteps to OutboxConfig
+### 1. Expose compactIdle in api::OutboxClient
+
+Add to `api::OutboxClient` in `src/api/outbox_client.h`:
+
+```cpp
+pqueue::CompactIdleResult compactIdle(size_t maxSteps);
+```
+
+Implement in `outbox_client.cpp` as a passthrough to `pqueue_->outbox.compactIdle(maxSteps)`.
+
+### 2. Wire compactIdle into syncOutputs
+
+In `src/main.cpp` `syncOutputs()`, after `drainPending` and before `syncApiState`:
+
+```cpp
+if (config.api.outbox.idleCompactSteps > 0) {
+    const auto cr = app.apiOutboxClient.compactIdle(
+        static_cast<size_t>(config.api.outbox.idleCompactSteps));
+    if (cr.compactions > 0 || !cr.status.ok()) {
+        logLine(LogLevel::Info,
+            "pqueue idle compaction: steps=" + std::to_string(cr.stepsRun) +
+            " compactions=" + std::to_string(cr.compactions) +
+            (cr.status.ok() ? "" : " error=1"));
+    }
+}
+```
+
+One bounded call per tick, after drain and before new writes. Drain creates dead
+bytes; compactIdle reclaims them before the next enqueue burst. Do not run an
+unbounded loop here; heavy compaction steps can be multi-second on device.
+
+### 3. Add idleCompactSteps to OutboxConfig
 
 Add one field to `api::OutboxConfig` in `src/api/types.h`:
 
@@ -42,7 +72,7 @@ use the pqueue library defaults (4096 / 16 / 32768) and are hardcoded in
 `outbox_client.cpp` if they ever need to differ from those defaults.
 `diskReserveBytes` already maps to `maxTotalBytes`.
 
-### 2. Switch the queue config in outbox_client.cpp
+### 4. Switch the queue config in outbox_client.cpp
 
 In `makeHttpConfig`, add:
 
@@ -53,7 +83,7 @@ httpConfig.queue.storeLayout = pqueue::StoreLayout::AppendLog;
 AppendLog-specific tuning fields (`maxSegmentBytes`, `maxSegments`, `minFreeBytes`)
 are left at their library defaults unless profiling shows a reason to change them.
 
-### 3. Tests
+### 5. Tests
 
 Extend `tests/config.cpp`:
 
@@ -67,7 +97,7 @@ Extend `tests/api_outbox_client.cpp`:
 - `compactIdle` on an empty store returns ok and zero compactions.
 - Existing drain-rate tests pass unchanged.
 
-### 4. One-time cutover
+### 6. One-time cutover
 
 Run `uploadfs` to reformat LittleFS on the device, then delete any local posix
 spools:
