@@ -33,7 +33,9 @@ PQUEUE_SRC := \
 	pqueue/src/pqueue/http/posix_curl_transport.cpp \
 	pqueue/src/pqueue/http/request_envelope.cpp \
 	pqueue/src/pqueue/append_log_common.cpp \
-	pqueue/src/pqueue/append_log_store.cpp \
+	pqueue/src/pqueue/append_log_store/store.cpp \
+	pqueue/src/pqueue/append_log_store/manifest.cpp \
+	pqueue/src/pqueue/append_log_store/compaction.cpp \
 	pqueue/src/pqueue/file_store.cpp \
 	pqueue/src/pqueue/internal/lock_owner.cpp \
 	pqueue/src/pqueue/diagnostics.cpp \
@@ -116,7 +118,7 @@ TEST_SRC := \
 	$(COMMON_SRC)
 
 PQUEUE_PROFILING_SRC := \
-	pqueue/tools/pqueue_profiling.cpp \
+	pqueue/tools/pqueue_profiling_main.cpp \
 	$(PQUEUE_SRC)
 
 # --- OBJECT CONVERSION ---
@@ -167,7 +169,7 @@ run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
 pqueue-profiling:
-	@test -f pqueue/tools/pqueue_profiling.cpp || { echo "missing pqueue/tools/pqueue_profiling.cpp"; exit 1; }
+	@test -f pqueue/tools/pqueue_profiling_main.cpp || { echo "missing pqueue/tools/pqueue_profiling_main.cpp"; exit 1; }
 	$(MAKE) $(PQUEUE_PROFILING_TARGET)
 	./$(PQUEUE_PROFILING_TARGET) all
 

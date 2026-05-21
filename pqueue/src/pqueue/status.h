@@ -29,6 +29,10 @@ enum class StatusCode {
     Dropped,
 
     DataCorrupt,
+    RangeLimitExceeded,
+    SequenceExhausted,
+
+    NoOp, // operation succeeded but had nothing to do
 };
 
 inline const char* statusCodeName(StatusCode code) {
@@ -54,6 +58,9 @@ inline const char* statusCodeName(StatusCode code) {
         case StatusCode::SendFailed: return "send_failed";
         case StatusCode::Dropped: return "dropped";
         case StatusCode::DataCorrupt: return "data_corrupt";
+        case StatusCode::RangeLimitExceeded: return "range_limit_exceeded";
+        case StatusCode::SequenceExhausted: return "sequence_exhausted";
+        case StatusCode::NoOp: return "no_op";
     }
     return "unknown";
 }
@@ -63,9 +70,11 @@ struct Status {
     int backendCode = 0;
     const char* message = "";
 
-    bool ok() const { return code == StatusCode::Ok; }
+    bool ok() const { return code == StatusCode::Ok || code == StatusCode::NoOp; }
+    bool isNoOp() const { return code == StatusCode::NoOp; }
 
     static Status success() { return {}; }
+    static Status noOp() { return {StatusCode::NoOp, 0, ""}; }
     static Status failure(StatusCode code, const char* message, int backendCode = 0) {
         return {code, backendCode, message};
     }

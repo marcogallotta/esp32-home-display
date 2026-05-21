@@ -1,68 +1,14 @@
-#include "pqueue/queue.h"
-#include "pqueue/append_log_store.h"
-#include "pqueue/append_log_common.h"
-#include "pqueue/status.h"
-
-#include "doctest/doctest.h"
-
-#ifndef ARDUINO
-#include <filesystem>
-#include <fstream>
-#include <string>
-#include <vector>
-#endif
-
-namespace {
-
-#ifndef ARDUINO
-const std::filesystem::path kSpoolDir = "build/pqueue-spools/pqueue_append_log_spool";
-
-std::filesystem::path segmentPath(std::uint32_t gen) {
-    char buf[9];
-    std::snprintf(buf, sizeof(buf), "%08x", gen);
-    return kSpoolDir / ("pqueue-seg-" + std::string(buf, 8) + ".bin");
-}
-
-void patchFile(const std::filesystem::path& path, std::uintmax_t offset,
-               std::initializer_list<std::uint8_t> bytes) {
-    std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
-    f.seekp(static_cast<std::streamoff>(offset));
-    for (std::uint8_t b : bytes) {
-        const char c = static_cast<char>(b);
-        f.write(&c, 1);
-    }
-}
-
-void cleanSpool() {
-    std::error_code ec;
-    std::filesystem::remove_all(kSpoolDir, ec);
-}
-
-pqueue::Config makeConfig() {
-    pqueue::Config cfg;
-    cfg.basePath = kSpoolDir.string();
-    cfg.storeLayout = pqueue::StoreLayout::AppendLog;
-    cfg.recordSizeBytes = 256;
-    cfg.reservedBytes = 64 * 1024;
-    cfg.maxSegmentBytes = 1024; // small to force rotation in tests
-    return cfg;
-}
-#endif
-
-} // namespace
+#include "pqueue_append_log_support.h"
 
 TEST_CASE("append-log: starts empty") {
-#ifndef ARDUINO
     cleanSpool();
     pqueue::Queue q(makeConfig());
     std::string out;
     CHECK_FALSE(q.peek(out).ok());
     CHECK_EQ(q.stats().count, 0U);
-#endif
 }
 
 TEST_CASE("append-log: basic enqueue and peek") {
-#ifndef ARDUINO
     cleanSpool();
     pqueue::Queue q(makeConfig());
     CHECK(q.enqueue("hello").ok());
@@ -70,11 +16,9 @@ TEST_CASE("append-log: basic enqueue and peek") {
     CHECK(q.peek(out).ok());
     CHECK_EQ(out, "hello");
     CHECK_EQ(q.stats().count, 1U);
-#endif
 }
 
 TEST_CASE("append-log: FIFO order preserved") {
-#ifndef ARDUINO
     cleanSpool();
     pqueue::Queue q(makeConfig());
     CHECK(q.enqueue("one").ok());
@@ -90,11 +34,9 @@ TEST_CASE("append-log: FIFO order preserved") {
     CHECK(q.peek(out).ok()); CHECK_EQ(out, "three");
     CHECK(q.pop().ok());
     CHECK_EQ(q.stats().count, 0U);
-#endif
 }
 
 TEST_CASE("append-log: persistence across remount") {
-#ifndef ARDUINO
     cleanSpool();
     auto cfg = makeConfig();
     {
@@ -105,19 +47,15 @@ TEST_CASE("append-log: persistence across remount") {
     {
         pqueue::Queue q(cfg);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "alpha");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "alpha");
         CHECK(q.pop().ok());
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "beta");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "beta");
         CHECK(q.pop().ok());
         CHECK_EQ(q.stats().count, 0U);
     }
-#endif
 }
 
 TEST_CASE("append-log: pop persists across remount") {
-#ifndef ARDUINO
     cleanSpool();
     auto cfg = makeConfig();
     {
@@ -129,63 +67,31 @@ TEST_CASE("append-log: pop persists across remount") {
     {
         pqueue::Queue q(cfg);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "discard");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "discard");
         CHECK_EQ(q.stats().count, 1U);
     }
-#endif
 }
 
 TEST_CASE("append-log: segment rotation") {
-#ifndef ARDUINO
-    cleanSpool();
-    auto cfg = makeConfig();
-    cfg.maxSegmentBytes = 256; // very small to force rotation
-    pqueue::Queue q(cfg);
-
-    // Enqueue enough records to force multiple segment rotations
-    for (int i = 0; i < 20; ++i) {
-        CHECK(q.enqueue("record-" + std::to_string(i)).ok());
-    }
-    CHECK_EQ(q.stats().count, 20U);
-
-    // Verify all records are readable
-    for (int i = 0; i < 20; ++i) {
-        std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "record-" + std::to_string(i));
-        CHECK(q.pop().ok());
-    }
-    CHECK_EQ(q.stats().count, 0U);
-#endif
-}
-
-TEST_CASE("append-log: segment rotation persists") {
-#ifndef ARDUINO
     cleanSpool();
     auto cfg = makeConfig();
     cfg.maxSegmentBytes = 256;
-    {
-        pqueue::Queue q(cfg);
-        for (int i = 0; i < 10; ++i) {
-            CHECK(q.enqueue("msg-" + std::to_string(i)).ok());
-        }
+    pqueue::Queue q(cfg);
+
+    for (int i = 0; i < 20; ++i)
+        CHECK(q.enqueue("record-" + std::to_string(i)).ok());
+    CHECK_EQ(q.stats().count, 20U);
+
+    for (int i = 0; i < 20; ++i) {
+        std::string out;
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "record-" + std::to_string(i));
+        CHECK(q.pop().ok());
     }
-    {
-        pqueue::Queue q(cfg);
-        CHECK_EQ(q.stats().count, 10U);
-        for (int i = 0; i < 10; ++i) {
-            std::string out;
-            CHECK(q.peek(out).ok());
-            CHECK_EQ(out, "msg-" + std::to_string(i));
-            CHECK(q.pop().ok());
-        }
-    }
-#endif
+    CHECK_EQ(q.stats().count, 0U);
 }
 
+
 TEST_CASE("append-log: rewriteFront persists") {
-#ifndef ARDUINO
     cleanSpool();
     auto cfg = makeConfig();
     {
@@ -196,14 +102,11 @@ TEST_CASE("append-log: rewriteFront persists") {
     {
         pqueue::Queue q(cfg);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "updated");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "updated");
     }
-#endif
 }
 
 TEST_CASE("append-log: format clears all records") {
-#ifndef ARDUINO
     cleanSpool();
     pqueue::Queue q(makeConfig());
     CHECK(q.enqueue("a").ok());
@@ -212,50 +115,34 @@ TEST_CASE("append-log: format clears all records") {
     CHECK_EQ(q.stats().count, 0U);
     std::string out;
     CHECK_FALSE(q.peek(out).ok());
-#endif
 }
 
-TEST_CASE("append-log: format then enqueue works") {
-#ifndef ARDUINO
+TEST_CASE("append-log: validate detects corrupt CRC in non-last segment") {
+    using namespace pqueue::append_log_detail;
     cleanSpool();
-    pqueue::Queue q(makeConfig());
-    CHECK(q.enqueue("before").ok());
-    CHECK(q.format().ok());
-    CHECK(q.enqueue("after").ok());
-    std::string out;
-    CHECK(q.peek(out).ok());
-    CHECK_EQ(out, "after");
-#endif
-}
-
-TEST_CASE("append-log: validate returns ok for clean store") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Queue q(makeConfig());
-    CHECK(q.enqueue("x").ok());
+    auto cfg = makeConfig();
+    cfg.maxSegmentBytes = 128;
+    {
+        pqueue::Queue q(cfg);
+        for (int i = 0; i < 6; ++i)
+            CHECK(q.enqueue("X").ok());
+    }
+    REQUIRE(std::filesystem::exists(segmentPath(2)));
+    constexpr std::uintmax_t kCrcOffset = kSegmentHeaderBytes + kEnqueueHeaderBytes + 1;
+    patchFile(segmentPath(1), kCrcOffset, {0xDE, 0xAD, 0xBE, 0xEF});
+    pqueue::Queue q(cfg);
     const auto result = q.validate();
-    CHECK(result.ok);
-#endif
-}
-
-TEST_CASE("append-log: validate on empty store") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Queue q(makeConfig());
-    const auto result = q.validate();
-    CHECK(result.ok);
-#endif
+    CHECK_FALSE(result.ok);
+    CHECK_FALSE(result.errors.empty());
 }
 
 TEST_CASE("append-log: compaction triggered by segment count") {
-#ifndef ARDUINO
     cleanSpool();
     auto cfg = makeConfig();
     cfg.maxSegmentBytes = 128;
     cfg.maxSegments = 3;
     pqueue::Queue q(cfg);
 
-    // Enqueue enough to trigger many rotations and compaction
     std::vector<std::string> expected;
     for (int i = 0; i < 30; ++i) {
         const std::string rec = "record-" + std::to_string(i);
@@ -264,44 +151,73 @@ TEST_CASE("append-log: compaction triggered by segment count") {
     }
     CHECK_EQ(q.stats().count, 30U);
 
-    // All records should still be readable
     for (int i = 0; i < 30; ++i) {
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, expected[i]);
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, expected[i]);
         CHECK(q.pop().ok());
     }
-#endif
 }
 
-TEST_CASE("append-log: mixed enqueue and pop with persistence") {
-#ifndef ARDUINO
+TEST_CASE("compaction trigger: remount after auto-compaction preserves FIFO order (critical)") {
     cleanSpool();
     auto cfg = makeConfig();
+    cfg.maxSegmentBytes = 128;
+    cfg.maxSegments = 3;
+
+    std::vector<std::string> expected;
     {
         pqueue::Queue q(cfg);
-        CHECK(q.enqueue("a").ok());
-        CHECK(q.enqueue("b").ok());
-        CHECK(q.enqueue("c").ok());
-        CHECK(q.pop().ok()); // remove "a"
+        for (int i = 0; i < 30; ++i) {
+            const std::string rec = "record-" + std::to_string(i);
+            REQUIRE(q.enqueue(rec).ok());
+            expected.push_back(rec);
+        }
+        REQUIRE_EQ(q.stats().count, 30u);
     }
     {
         pqueue::Queue q(cfg);
-        CHECK_EQ(q.stats().count, 2U);
+        CHECK_EQ(q.stats().count, 30u);
+        for (int i = 0; i < 30; ++i) {
+            std::string out;
+            CHECK(q.peek(out).ok()); CHECK_EQ(out, expected[i]);
+            CHECK(q.pop().ok());
+        }
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "b");
-        CHECK(q.pop().ok());
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "c");
+        CHECK_FALSE(q.peek(out).ok());
     }
-#endif
 }
+
+TEST_CASE("compaction trigger: auto-triggers on size-based count after non-monotonic compaction") {
+    cleanSpool();
+    auto cfg = makeConfig();
+    cfg.maxSegmentBytes = 128;
+    cfg.maxSegments = 2;
+
+    std::vector<std::string> expected;
+    {
+        pqueue::Queue q(cfg);
+        for (int i = 0; i < 30; ++i) {
+            const std::string rec = "msg-" + std::to_string(i);
+            REQUIRE(q.enqueue(rec).ok());
+            expected.push_back(rec);
+        }
+        CHECK_EQ(q.stats().count, 30u);
+    }
+    {
+        pqueue::Queue q(cfg);
+        CHECK_EQ(q.stats().count, 30u);
+        for (int i = 0; i < 30; ++i) {
+            std::string out;
+            CHECK(q.peek(out).ok()); CHECK_EQ(out, expected[i]);
+            CHECK(q.pop().ok());
+        }
+    }
+}
+
 
 // --- Recovery policy tests ---
 
 TEST_CASE("append-log: corrupt payloadBytes at tail of last segment is recoverable") {
-#ifndef ARDUINO
     using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
@@ -310,36 +226,28 @@ TEST_CASE("append-log: corrupt payloadBytes at tail of last segment is recoverab
         CHECK(q.enqueue("keep").ok());
         CHECK(q.enqueue("torn").ok());
     }
-    // Corrupt payloadBytes of the second (last) event to 0xFFFFFFFF.
-    // The guard fires before any allocation; the event is discarded as a torn tail.
-    // payloadBytes field offset within an event: magic(4)+version(2)+headerBytes(2)+sequence(4) = 12
-    constexpr std::uintmax_t kEventSize = kEnqueueHeaderBytes + 4 + kEventTrailerBytes; // "keep" = 4 bytes
+    constexpr std::uintmax_t kEventSize = kEnqueueHeaderBytes + 4 + kEventTrailerBytes;
     constexpr std::uintmax_t kPayloadBytesOffset = kSegmentHeaderBytes + kEventSize + kEnqueueHeaderBytes - 4;
     patchFile(segmentPath(1), kPayloadBytesOffset, {0xFF, 0xFF, 0xFF, 0xFF});
     {
         pqueue::Queue q(cfg);
         CHECK_EQ(q.stats().count, 1U);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "keep");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "keep");
     }
-#endif
 }
 
 TEST_CASE("append-log: corrupt payloadBytes in non-last segment causes mount failure") {
-#ifndef ARDUINO
     using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
     cfg.maxSegmentBytes = 128;
     {
         pqueue::Queue q(cfg);
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 6; ++i)
             CHECK(q.enqueue("X").ok());
-        }
     }
     REQUIRE(std::filesystem::exists(segmentPath(2)));
-    // Corrupt payloadBytes of first event in segment 1 (non-last segment)
     constexpr std::uintmax_t kPayloadBytesOffset = kSegmentHeaderBytes + kEnqueueHeaderBytes - 4;
     patchFile(segmentPath(1), kPayloadBytesOffset, {0xFF, 0xFF, 0xFF, 0xFF});
     {
@@ -349,11 +257,9 @@ TEST_CASE("append-log: corrupt payloadBytes in non-last segment causes mount fai
         CHECK_FALSE(st.ok());
         CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
     }
-#endif
 }
 
 TEST_CASE("append-log: torn tail on active segment is recoverable") {
-#ifndef ARDUINO
     using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
@@ -363,9 +269,6 @@ TEST_CASE("append-log: torn tail on active segment is recoverable") {
         CHECK(q.enqueue("B").ok());
         CHECK(q.enqueue("C").ok());
     }
-    // Each 1-byte event: kEnqueueHeaderBytes(16) + 1 + kEventTrailerBytes(8) = 25 bytes
-    // Event A: offsets 20-44, B: 45-69, C: 70-94
-    // Truncate 5 bytes into event C's header → torn tail
     constexpr std::uintmax_t kEventSize = kEnqueueHeaderBytes + 1 + kEventTrailerBytes;
     const std::uintmax_t tornOffset = kSegmentHeaderBytes + 2 * kEventSize + 5;
     std::filesystem::resize_file(segmentPath(1), tornOffset);
@@ -373,17 +276,13 @@ TEST_CASE("append-log: torn tail on active segment is recoverable") {
         pqueue::Queue q(cfg);
         CHECK_EQ(q.stats().count, 2U);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "A");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "A");
         CHECK(q.pop().ok());
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "B");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "B");
     }
-#endif
 }
 
 TEST_CASE("append-log: corrupt CRC at tail of last segment is recoverable") {
-#ifndef ARDUINO
     using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
@@ -392,35 +291,28 @@ TEST_CASE("append-log: corrupt CRC at tail of last segment is recoverable") {
         CHECK(q.enqueue("keep").ok());
         CHECK(q.enqueue("torn").ok());
     }
-    // Corrupt CRC of the second (last) event: seg_header + event_"keep"(25) + header(16) + payload(4) = 65
-    constexpr std::uintmax_t kEventSize = kEnqueueHeaderBytes + 4 + kEventTrailerBytes; // "keep" = 4 bytes
+    constexpr std::uintmax_t kEventSize = kEnqueueHeaderBytes + 4 + kEventTrailerBytes;
     constexpr std::uintmax_t kCrcOffset = kSegmentHeaderBytes + kEventSize + kEnqueueHeaderBytes + 4;
     patchFile(segmentPath(1), kCrcOffset, {0xDE, 0xAD, 0xBE, 0xEF});
     {
         pqueue::Queue q(cfg);
-        // Mount succeeds; the corrupt final event is discarded as a torn tail
         CHECK_EQ(q.stats().count, 1U);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "keep");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "keep");
     }
-#endif
 }
 
 TEST_CASE("append-log: corrupt CRC in non-last segment causes mount failure") {
-#ifndef ARDUINO
     using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
     cfg.maxSegmentBytes = 128;
     {
         pqueue::Queue q(cfg);
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 6; ++i)
             CHECK(q.enqueue("X").ok());
-        }
     }
     REQUIRE(std::filesystem::exists(segmentPath(2)));
-    // Corrupt CRC of the first event in segment 1 (non-last segment)
     constexpr std::uintmax_t kCrcOffset = kSegmentHeaderBytes + kEnqueueHeaderBytes + 1;
     patchFile(segmentPath(1), kCrcOffset, {0xDE, 0xAD, 0xBE, 0xEF});
     {
@@ -430,22 +322,18 @@ TEST_CASE("append-log: corrupt CRC in non-last segment causes mount failure") {
         CHECK_FALSE(st.ok());
         CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
     }
-#endif
 }
 
 TEST_CASE("append-log: corrupt magic in non-last segment causes mount failure") {
-#ifndef ARDUINO
     cleanSpool();
     auto cfg = makeConfig();
-    cfg.maxSegmentBytes = 128; // fits ~4 one-byte events; 5th triggers rotation
+    cfg.maxSegmentBytes = 128;
     {
         pqueue::Queue q(cfg);
-        for (int i = 0; i < 6; ++i) {
-            CHECK(q.enqueue("X").ok()); // forces segment 1 full, segment 2 created
-        }
+        for (int i = 0; i < 6; ++i)
+            CHECK(q.enqueue("X").ok());
     }
-    REQUIRE(std::filesystem::exists(segmentPath(2))); // confirm rotation happened
-    // Corrupt the magic of the first event in segment 1
+    REQUIRE(std::filesystem::exists(segmentPath(2)));
     patchFile(segmentPath(1), pqueue::append_log_detail::kSegmentHeaderBytes,
               {0xDE, 0xAD, 0xBE, 0xEF});
     {
@@ -455,50 +343,59 @@ TEST_CASE("append-log: corrupt magic in non-last segment causes mount failure") 
         CHECK_FALSE(st.ok());
         CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
     }
-#endif
 }
 
 TEST_CASE("append-log: corrupt mid-last-segment discards tail from lastGoodOffset") {
-#ifndef ARDUINO
     using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
     {
         pqueue::Queue q(cfg);
         CHECK(q.enqueue("A").ok());
-        CHECK(q.enqueue("B").ok()); // will be corrupted
-        CHECK(q.enqueue("C").ok()); // valid but follows the bad event
+        CHECK(q.enqueue("B").ok());
+        CHECK(q.enqueue("C").ok());
     }
-    // Corrupt CRC of event B (middle event). All three fit in segment 1.
-    // Event A: offsets 20-44 (1-byte payload, 25 bytes total).
-    // Event B starts at 45; CRC is at 45 + kEnqueueHeaderBytes(16) + 1 = 62.
     constexpr std::uintmax_t kEventSize = kEnqueueHeaderBytes + 1 + kEventTrailerBytes;
     constexpr std::uintmax_t kBCrcOffset = kSegmentHeaderBytes + kEventSize + kEnqueueHeaderBytes + 1;
     patchFile(segmentPath(1), kBCrcOffset, {0xDE, 0xAD, 0xBE, 0xEF});
     {
         pqueue::Queue q(cfg);
-        // B and C are both discarded; only A (before lastGoodOffset) survives.
         CHECK_EQ(q.stats().count, 1U);
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "A");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "A");
     }
-#endif
 }
 
-TEST_CASE("append-log: missing segment causes mount failure") {
-#ifndef ARDUINO
+// --- Segment naming and generation tests ---
+
+TEST_CASE("append-log: segment files use seg- prefix") {
+    using namespace pqueue::append_log_detail;
+    cleanSpool();
+    auto cfg = makeConfig();
+    cfg.maxSegmentBytes = kSegmentHeaderBytes + kEnqueueHeaderBytes + 1 + kEventTrailerBytes;
+    {
+        pqueue::Queue q(cfg);
+        CHECK(q.enqueue("A").ok());
+        CHECK(q.enqueue("B").ok());
+    }
+    CHECK(std::filesystem::exists(kSpoolDir / "seg-00000001.bin"));
+    CHECK(std::filesystem::exists(kSpoolDir / "seg-00000002.bin"));
+    CHECK_FALSE(std::filesystem::exists(kSpoolDir / "pqueue-seg-00000001.bin"));
+}
+
+TEST_CASE("append-log: torn tail in non-last segment causes DataCorrupt") {
+    using namespace pqueue::append_log_detail;
     cleanSpool();
     auto cfg = makeConfig();
     cfg.maxSegmentBytes = 128;
     {
         pqueue::Queue q(cfg);
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 6; ++i)
             CHECK(q.enqueue("X").ok());
-        }
     }
+    REQUIRE(std::filesystem::exists(segmentPath(1)));
     REQUIRE(std::filesystem::exists(segmentPath(2)));
-    std::filesystem::remove(segmentPath(1)); // delete first segment, leaving a gap
+    std::filesystem::resize_file(segmentPath(1), kSegmentHeaderBytes + 5);
     {
         pqueue::Queue q(cfg);
         std::string out;
@@ -506,593 +403,289 @@ TEST_CASE("append-log: missing segment causes mount failure") {
         CHECK_FALSE(st.ok());
         CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
     }
-#endif
 }
 
-// --- buildActiveSegmentOrder unit tests ---
-
-using pqueue::AppendLogStore;
-using pqueue::append_log_detail::CompactionJournalRecord;
-
-namespace {
-
-CompactionJournalRecord makeReplacement(std::uint32_t oldStart, std::uint32_t oldEnd,
-                                        std::uint32_t newStart, std::uint32_t newEnd) {
-    CompactionJournalRecord r;
-    r.oldStart = oldStart;
-    r.oldEnd   = oldEnd;
-    r.newStart = newStart;
-    r.newEnd   = newEnd;
-    return r;
-}
-
-} // namespace
-
-TEST_CASE("buildActiveSegmentOrder: no journal, consecutive -> returns as-is") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder({1, 2, 3}, {}, out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({1, 2, 3}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: no journal, gap -> DataCorrupt") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder({1, 3}, {}, out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("buildActiveSegmentOrder: journal 1..2->10..11, old segs still present") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {1, 2, 3, 10, 11}, {makeReplacement(1, 2, 10, 11)}, out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({10, 11, 3}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: journal 1..2->10..11, old segs cleaned up") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {3, 10, 11}, {makeReplacement(1, 2, 10, 11)}, out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({10, 11, 3}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: 4 old segs compacted into 2") {
-    // Real compaction shape: many old segments -> fewer new segments
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {5, 10, 11}, {makeReplacement(1, 4, 10, 11)}, out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({10, 11, 5}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: 2 old segs compacted into 1") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {3, 10}, {makeReplacement(1, 2, 10, 10)}, out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({10, 3}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: chained compaction, each step reduces segment count") {
-    // R1: 3 segs -> 2 segs, R2: those 2 -> 2 new segs; seg 4 untouched
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {4, 20, 21},
-        {makeReplacement(1, 3, 10, 11), makeReplacement(10, 11, 20, 21)},
-        out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({20, 21, 4}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: chained replacements") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {3, 20, 21},
-        {makeReplacement(1, 2, 10, 11), makeReplacement(10, 11, 20, 21)},
-        out);
-    CHECK(st.ok());
-    CHECK_EQ(out, std::vector<std::uint32_t>({20, 21, 3}));
-}
-
-TEST_CASE("buildActiveSegmentOrder: new range segment missing -> DataCorrupt") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {3, 10}, {makeReplacement(1, 2, 10, 11)}, out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("buildActiveSegmentOrder: old range not in logical chain -> DataCorrupt") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {1, 2, 3}, {makeReplacement(5, 6, 10, 11)}, out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("buildActiveSegmentOrder: oversized new range -> DataCorrupt") {
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {}, {makeReplacement(1, 5000, 6000, 11000)}, out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("buildActiveSegmentOrder: overlapping new ranges produce duplicates -> DataCorrupt") {
-    // R1: 1->10, R2: 2->10 — both map different originals to generation 10,
-    // producing a duplicate in the final chain
-    std::vector<std::uint32_t> out;
-    const auto st = AppendLogStore::buildActiveSegmentOrder(
-        {1, 2, 3, 10},
-        {makeReplacement(1, 1, 10, 10), makeReplacement(2, 2, 10, 10)},
-        out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-// --- Journal-aware mount/replay integration tests ---
-
-#ifndef ARDUINO
-
-namespace {
-
-const std::filesystem::path kJSpoolDir =
-    "build/pqueue-spools/pqueue_append_log_journal_spool";
-
-std::filesystem::path jSegPath(std::uint32_t gen) {
-    char buf[9];
-    std::snprintf(buf, sizeof(buf), "%08x", gen);
-    return kJSpoolDir / ("pqueue-seg-" + std::string(buf, 8) + ".bin");
-}
-
-std::filesystem::path jJournalPath() {
-    return kJSpoolDir / "pqueue-compact.bin";
-}
-
-void jClean() {
-    std::error_code ec;
-    std::filesystem::remove_all(kJSpoolDir, ec);
-}
-
-pqueue::Config makeJConfig() {
-    pqueue::Config cfg;
-    cfg.basePath        = kJSpoolDir.string();
-    cfg.storeLayout     = pqueue::StoreLayout::AppendLog;
-    cfg.recordSizeBytes = 256;
-    cfg.reservedBytes   = 64 * 1024;
-    cfg.maxSegmentBytes = 4096;
-    return cfg;
-}
-
-void jWriteJournal(
-    const std::vector<pqueue::append_log_detail::CompactionJournalRecord>& records)
-{
+TEST_CASE("append-log: nextGeneration advances past all disk generations on remount") {
     using namespace pqueue::append_log_detail;
-    std::filesystem::create_directories(kJSpoolDir);
-    std::ofstream f(jJournalPath(), std::ios::binary | std::ios::trunc);
-    for (const auto& r : records) {
-        const auto bytes = serializeCompactionJournalRecord(r);
-        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    cleanSpool();
+    auto cfg = makeConfig();
+    cfg.maxSegmentBytes = kSegmentHeaderBytes + kEnqueueHeaderBytes + 1 + kEventTrailerBytes;
+    {
+        pqueue::Queue q(cfg);
+        CHECK(q.enqueue("A").ok());
+        CHECK(q.enqueue("B").ok());
+        CHECK(q.enqueue("C").ok());
+    }
+    REQUIRE(std::filesystem::exists(segmentPath(3)));
+    {
+        pqueue::Queue q(cfg);
+        CHECK(q.enqueue("D").ok());
+        CHECK(std::filesystem::exists(segmentPath(4)));
+        CHECK_FALSE(std::filesystem::exists(segmentPath(0)));
     }
 }
 
-// Write a segment file with fixed-size (1-byte) payloads starting at baseSeq.
-void jWriteSegment(std::uint32_t gen, std::uint32_t baseSeq,
-                   const std::vector<std::string>& payloads)
-{
+TEST_CASE("append-log: nextGeneration skips stray high disk generation") {
     using namespace pqueue::append_log_detail;
-    std::filesystem::create_directories(kJSpoolDir);
-    std::string data = serializeSegmentHeader(gen, baseSeq);
-    std::uint32_t seq = baseSeq;
-    for (const auto& p : payloads)
-        data += serializeEnqueueEvent(seq++, p);
-    std::ofstream f(jSegPath(gen), std::ios::binary | std::ios::trunc);
-    f.write(data.data(), static_cast<std::streamsize>(data.size()));
-}
-
-pqueue::append_log_detail::CompactionJournalRecord jReplacement(
-    std::uint32_t oldStart, std::uint32_t oldEnd,
-    std::uint32_t newStart, std::uint32_t newEnd)
-{
-    pqueue::append_log_detail::CompactionJournalRecord r;
-    r.oldStart = oldStart; r.oldEnd = oldEnd;
-    r.newStart = newStart; r.newEnd = newEnd;
-    return r;
-}
-
-} // namespace
-
-TEST_CASE("append-log mount: journal-backed layout replays in logical order") {
-    // Disk: {3,10,11}; journal replaces [1..2] with [10..11]; logical order: [10,11,3]
-    jClean();
-    jWriteSegment(10, 0, {"A", "B"});  // seqs 0,1
-    jWriteSegment(11, 2, {"C"});       // seq  2
-    jWriteSegment(3,  3, {"D"});       // seq  3
-    jWriteJournal({jReplacement(1, 2, 10, 11)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 4U);
-    std::string out;
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "A"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "B"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "C"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "D");
-}
-
-TEST_CASE("append-log mount: old compacted segments on disk are not replayed") {
-    // Old gens 1 and 2 still present (pre-cleanup); must not appear in the queue.
-    jClean();
-    jWriteSegment(1,  0, {"old1"});
-    jWriteSegment(2,  1, {"old2"});
-    jWriteSegment(10, 0, {"A", "B"});
-    jWriteSegment(11, 2, {"C"});
-    jWriteSegment(3,  3, {"D"});
-    jWriteJournal({jReplacement(1, 2, 10, 11)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 4U);
-    std::string out;
-    CHECK(q.peek(out).ok());
-    CHECK_EQ(out, "A");
-}
-
-TEST_CASE("append-log mount: corrupt journal record causes mount failure") {
-    // Both segments present so the only reason mount can fail is the bad CRC.
-    jClean();
-    jWriteSegment(1, 0, {"A"});
-    jWriteSegment(2, 1, {"B"});
+    cleanSpool();
+    auto cfg = makeConfig();
+    cfg.maxSegmentBytes = kSegmentHeaderBytes + kEnqueueHeaderBytes + 1 + kEventTrailerBytes;
     {
-        auto bytes = pqueue::append_log_detail::serializeCompactionJournalRecord(
-            jReplacement(1, 1, 2, 2));
-        bytes[28] ^= 0xFF; // corrupt CRC field at offset 28
-        std::filesystem::create_directories(kJSpoolDir);
-        std::ofstream f(jJournalPath(), std::ios::binary | std::ios::trunc);
-        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        pqueue::Queue q(cfg);
+        CHECK(q.enqueue("A").ok());
+        CHECK(q.enqueue("B").ok());
+        CHECK(q.enqueue("C").ok());
     }
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: truncated journal final record is ignored as torn tail") {
-    // One complete valid record followed by 4 partial bytes (torn tail).
-    // Policy: partial trailing bytes are silently ignored; the valid prefix is used.
-    // The complete record replaces [1..1] with [2..2]; logical order is [2] so only
-    // gen 2 is replayed and the queue holds one item ("B").
-    jClean();
-    jWriteSegment(1, 0, {"A"});
-    jWriteSegment(2, 1, {"B"});
+    plantSegment(10); // stray high-gen file
     {
-        using namespace pqueue::append_log_detail;
-        auto bytes = serializeCompactionJournalRecord(jReplacement(1, 1, 2, 2));
-        bytes += "\xDE\xAD\xBE\xEF"; // partial second record (4 bytes, not 36)
-        std::filesystem::create_directories(kJSpoolDir);
-        std::ofstream f(jJournalPath(), std::ios::binary | std::ios::trunc);
-        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        pqueue::Queue q(cfg);
+        CHECK(q.enqueue("D").ok()); // fills stray seg 10
+        CHECK(q.enqueue("E").ok()); // overflows → rotation to gen 11
+        CHECK(std::filesystem::exists(kSpoolDir / "seg-0000000b.bin"));
+        CHECK_FALSE(std::filesystem::exists(kSpoolDir / "seg-00000004.bin"));
     }
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 1U);
-    std::string out;
-    CHECK(q.peek(out).ok());
-    CHECK_EQ(out, "B");
 }
 
-TEST_CASE("append-log mount: journal with missing active generation fails") {
-    // Journal says gens 1..2 were replaced by gen 10, but gen 10 is absent from disk.
-    jClean();
-    jWriteSegment(3, 0, {"X"});
-    jWriteJournal({jReplacement(1, 2, 10, 10)});
-
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: torn tail on logically-last segment is recoverable") {
-    // Logical order: [10, 3]; seg 3 is the active (last) segment.
-    jClean();
-    jWriteSegment(10, 0, {"A"});
-    jWriteSegment(3,  1, {"B", "C"}); // C will be torn
-    // Truncate seg 3 midway through event C (each 1-byte event is 25 bytes total)
-    const std::uintmax_t oneEventBytes =
-        pqueue::append_log_detail::kEnqueueHeaderBytes + 1 +
-        pqueue::append_log_detail::kEventTrailerBytes;
-    std::filesystem::resize_file(jSegPath(3),
-        pqueue::append_log_detail::kSegmentHeaderBytes + oneEventBytes + 5);
-    jWriteJournal({jReplacement(1, 2, 10, 10)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 2U);
-    std::string out;
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "A"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "B");
-}
-
-TEST_CASE("append-log mount: torn tail on logically-non-last segment causes failure") {
-    // Logical order: [10, 3]; seg 10 is logically first (isLastSegment = false).
-    // A torn tail in seg 10 must be DataCorrupt, not silently recovered.
-    // Regression guard: without logical isLastSegment, numeric order would place
-    // gen 10 last (10 > 3), silently recovering the torn tail instead of failing.
-    jClean();
-    jWriteSegment(10, 0, {"A", "B"}); // B will be torn
-    const std::uintmax_t oneEventBytes =
-        pqueue::append_log_detail::kEnqueueHeaderBytes + 1 +
-        pqueue::append_log_detail::kEventTrailerBytes;
-    std::filesystem::resize_file(jSegPath(10),
-        pqueue::append_log_detail::kSegmentHeaderBytes + oneEventBytes + 5);
-    jWriteSegment(3, 2, {"C"});
-    jWriteJournal({jReplacement(1, 2, 10, 10)});
-
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: no journal, first segment generation != 1 causes failure") {
-    // Without a journal the layout must be consecutive from 1.
-    // A store that starts at gen 5 with no journal is corrupt.
-    jClean();
-    jWriteSegment(5, 0, {"A"});
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: single-record journal, non-monotonic order [5,6,3,4]") {
-    // One journal record replaces [1..2] with [5..6].  Segs 3 and 4 written after.
-    // Disk: {3,4,5,6}; logical order: [5,6,3,4].
-    jClean();
-    jWriteSegment(5, 0, {"A"});  // seq 0
-    jWriteSegment(6, 1, {"B"});  // seq 1
-    jWriteSegment(3, 2, {"C"});  // seq 2
-    jWriteSegment(4, 3, {"D"});  // seq 3
-    jWriteJournal({jReplacement(1, 2, 5, 6)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 4U);
-    std::string out;
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "A"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "B"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "C"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "D");
-}
-
-TEST_CASE("append-log mount: non-monotonic layout, torn tail on logically-non-last (gen 6) fails") {
-    // Logical order [5,6,3,4]: gen 6 is at index 1 (not last), but numerically largest.
-    // Regression guard: without logical isLastSegment the numeric-last gen 6 would be
-    // silently recovered instead of failing.
-    jClean();
-    jWriteSegment(5, 0, {"A"});
-    jWriteSegment(6, 1, {"B", "C"}); // C will be torn
-    const std::uintmax_t oneEventBytes =
-        pqueue::append_log_detail::kEnqueueHeaderBytes + 1 +
-        pqueue::append_log_detail::kEventTrailerBytes;
-    std::filesystem::resize_file(jSegPath(6),
-        pqueue::append_log_detail::kSegmentHeaderBytes + oneEventBytes + 5);
-    jWriteSegment(3, 3, {"D"});
-    jWriteSegment(4, 4, {"E"});
-    jWriteJournal({jReplacement(1, 2, 5, 6)});
-
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: non-monotonic layout, torn tail on logically-last (gen 4) is recoverable") {
-    // Logical order [5,6,3,4]: gen 4 is the active (last) segment, but numerically not last.
-    // Without logical isLastSegment gen 4 would be treated as non-last and fail; with it,
-    // the torn tail is recovered correctly.
-    jClean();
-    jWriteSegment(5, 0, {"A"});
-    jWriteSegment(6, 1, {"B"});
-    jWriteSegment(3, 2, {"C"});
-    jWriteSegment(4, 3, {"D", "E"}); // E will be torn
-    const std::uintmax_t oneEventBytes =
-        pqueue::append_log_detail::kEnqueueHeaderBytes + 1 +
-        pqueue::append_log_detail::kEventTrailerBytes;
-    std::filesystem::resize_file(jSegPath(4),
-        pqueue::append_log_detail::kSegmentHeaderBytes + oneEventBytes + 5);
-    jWriteJournal({jReplacement(1, 2, 5, 6)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 4U);
-    std::string out;
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "A"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "B"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "C"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "D");
-}
-
-TEST_CASE("append-log mount: multi-record journal applies all records in order") {
-    // Two journal records: R1 compacts [1..3] into [10..11], then R2 compacts
-    // [10..11] into [20..21].  Seg 4 was written after all compactions.
-    // Disk: {4,20,21}; logical order: [20,21,4].
-    jClean();
-    jWriteSegment(20, 0, {"A", "B", "C"}); // seqs 0,1,2 (compacted content of 1..3)
-    jWriteSegment(21, 3, {"D"});            // seq 3
-    jWriteSegment(4,  4, {"E"});            // seq 4  (written after compactions)
-    jWriteJournal({jReplacement(1, 3, 10, 11), jReplacement(10, 11, 20, 21)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 5U);
-    std::string out;
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "A"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "B"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "C"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "D"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "E");
-}
-
-TEST_CASE("append-log mount: no journal, physical gap [1,3] causes DataCorrupt") {
-    // Without a journal, segments must be consecutive from gen 1.
-    // {1, 3} with gen 2 absent is a gap — DataCorrupt.
-    jClean();
-    jWriteSegment(1, 0, {"A"});
-    jWriteSegment(3, 1, {"B"});
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: empty store no journal mounts successfully") {
-    jClean();
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 0U);
-    std::string out;
-    CHECK_FALSE(q.peek(out).ok());
-}
-
-TEST_CASE("append-log mount: journal present but no segments on disk causes DataCorrupt") {
-    // Journal refers to active gens 10..11 that are absent from disk.
-    jClean();
-    jWriteJournal({jReplacement(1, 2, 10, 11)});
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log mount: non-consecutive base chain causes DataCorrupt") {
-    // Journal replaces [1..2] with gen 10; disk has {4,10}.
-    // Base chain reconstructs as [1,2,4] — gen 3 is missing — DataCorrupt.
-    jClean();
-    jWriteSegment(4,  0, {"X"});
-    jWriteSegment(10, 0, {"Y"});
-    jWriteJournal({jReplacement(1, 2, 10, 10)});
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
-
-TEST_CASE("append-log: format() removes compaction journal") {
-    // A valid journal-backed layout is mounted, then format() is called.
-    // format() must delete the journal so a subsequent remount sees a clean store.
-    jClean();
-    jWriteSegment(10, 0, {"A"});
-    jWriteSegment(11, 1, {"B"});
-    jWriteSegment(3,  2, {"C"});
-    jWriteJournal({jReplacement(1, 2, 10, 11)});
-
-    pqueue::Queue q(makeJConfig());
-    CHECK_EQ(q.stats().count, 3U);
-    CHECK(q.format().ok());
-    CHECK_FALSE(std::filesystem::exists(jJournalPath()));
-    CHECK_FALSE(std::filesystem::exists(jSegPath(3)));
-    CHECK_FALSE(std::filesystem::exists(jSegPath(10)));
-    CHECK_FALSE(std::filesystem::exists(jSegPath(11)));
-}
-
-TEST_CASE("append-log: format() followed by remount ignores stale journal") {
-    // After format(), a fresh remount must not see any leftover journal artifacts.
-    // Regression guard: if format() left the journal, the remount would read stale
-    // replacement records referencing non-existent generations and fail with DataCorrupt.
-    jClean();
-    jWriteSegment(10, 0, {"A"});
-    jWriteSegment(3,  1, {"B"});
-    jWriteJournal({jReplacement(1, 2, 10, 10)});
-
+TEST_CASE("append-log: stale pqueue-compact.bin is ignored") {
+    cleanSpool();
+    auto cfg = makeConfig();
     {
-        pqueue::Queue q(makeJConfig());
+        pqueue::Queue q(cfg);
+        CHECK(q.enqueue("A").ok());
+        CHECK(q.enqueue("B").ok());
+    }
+    {
+        std::ofstream f(kSpoolDir / "pqueue-compact.bin", std::ios::binary | std::ios::trunc);
+        f.write("\xDE\xAD\xBE\xEF", 4);
+    }
+    {
+        pqueue::Queue q(cfg);
         CHECK_EQ(q.stats().count, 2U);
-        CHECK(q.format().ok());
-    }
-    {
-        pqueue::Queue q(makeJConfig());
-        CHECK_EQ(q.stats().count, 0U);
-        CHECK(q.enqueue("fresh").ok());
         std::string out;
-        CHECK(q.peek(out).ok());
-        CHECK_EQ(out, "fresh");
+        CHECK(q.peek(out).ok()); CHECK_EQ(out, "A");
     }
 }
 
-TEST_CASE("append-log mount: bad middle complete journal record causes DataCorrupt") {
-    // Three complete journal records; index 1 (middle) has a corrupted CRC.
-    // Disk has exactly the active gens needed by r1 + r3: if the parser wrongly skipped
-    // r2, r1+r3 would yield logical order [10,11] and mount would succeed.  Correct
-    // fail-closed code must reject r2 and return DataCorrupt before reaching that point.
+// ---------------------------------------------------------------------------
+// rotate-before-compact dependency guard tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("compaction: rotate-before-compact is skipped after remount when tail dependencies are unknown") {
+    // After remount activeTailDependenciesTracked_ is false. Even if the tail is
+    // contiguous with the last range and the range has dead bytes, rotate must not fire.
+    // The compaction should still make progress (compact the range without rotating).
+    using namespace pqueue::append_log_detail;
+    resetSpool();
+
+    // Two 1-byte records fill one segment at maxSegmentBytes=70.
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 70;
+
+    {
+        pqueue::AppendLogStore store(cfg);
+        REQUIRE(store.mount().ok());
+        storeEnqueue(store, 1, "a"); // gen=1
+        storeEnqueue(store, 2, "b"); // gen=1 full → rotate; gen=2 tail
+        storePop(store);             // pop seq=1: dead bytes in gen=1, seq=2 still live
+        storeEnqueue(store, 3, "c"); // goes to gen=2
+    }
+    // Remount: tracking becomes false.
+    pqueue::AppendLogStore store(cfg);
+    REQUIRE(store.mount().ok());
+
+    // State: ranges=[{1,1}], tail=2 (contiguous: 1+1=2). Dead bytes in gen=1.
+    REQUIRE_EQ(store.manifestRanges().size(), 1U);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1U);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   1U);
+    CHECK_EQ(store.tailGeneration(), 2U);
+
+    // Without rotate: compact only {1,1} → output at gen=3, tail stays gen=2.
+    // With rotate (if it had fired): rotate gen=2 → new tail=gen=3, compact {1,2} → output gen=4.
+    auto st = store.compactOneSegment();
+    CHECK(st.ok());
+
+    // Tail must NOT have been rotated: still gen=2.
+    CHECK_EQ(store.tailGeneration(), 2U);
+    // Output range must be gen=3 (not gen=4, which would only appear after a rotate).
+    REQUIRE_EQ(store.manifestRanges().size(), 1U);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 3U);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   3U);
+    CHECK(std::filesystem::exists(segmentPath(2))); // old tail still present, not rotated
+
+    // Live records remain readable.
+    std::string out;
+    CHECK(store.readRecord(2, out).ok()); CHECK_EQ(out, "b");
+    CHECK(store.readRecord(3, out).ok()); CHECK_EQ(out, "c");
+
+    // Verify durability after another remount.
+    pqueue::AppendLogStore store2(cfg);
+    REQUIRE(store2.mount().ok());
+    CHECK(store2.readRecord(2, out).ok()); CHECK_EQ(out, "b");
+    CHECK(store2.readRecord(3, out).ok()); CHECK_EQ(out, "c");
+}
+
+TEST_CASE("compaction: rotate-before-compact allows same-range tail dependencies") {
+    // Tail has a POP for a generation inside the selected compaction range.
+    // tailDepsContained must be true → rotate-before-compact is permitted.
+    using namespace pqueue::append_log_detail;
+    resetSpool();
+
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 70; // two 1-byte records per segment
+
+    pqueue::AppendLogStore store(cfg);
+    REQUIRE(store.mount().ok());
+
+    storeEnqueue(store, 1, "a"); // gen=1
+    storeEnqueue(store, 2, "b"); // gen=1 full → rotate; gen=2 tail
+    storePop(store);             // pop seq=1 (gen=1): POP event in tail gen=2; affected={1}
+    storeEnqueue(store, 3, "c"); // goes to gen=2
+
+    // State: ranges=[{1,1}], tail=2, tracking=true, affected={1}.
+    // gen=1 is in [range.startGen=1, activeGen=2] → tailDepsContained=true → wouldRotate=true.
+    REQUIRE_EQ(store.manifestRanges().size(), 1U);
+    CHECK_EQ(store.tailGeneration(), 2U);
+
+    auto st = store.compactOneSegment();
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+
+    // rotate fired: seals gen=2 → new tail=gen=3, compact {1,2} → output gen=4.
+    REQUIRE_EQ(store.manifestRanges().size(), 1U);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 4U);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   4U);
+    CHECK_EQ(store.tailGeneration(), 3U);
+    CHECK(std::filesystem::exists(segmentPath(3))); // new tail
+    CHECK(std::filesystem::exists(segmentPath(4))); // compacted output
+
+    // seq=1 was popped and must remain absent.
+    std::string out;
+    CHECK_FALSE(store.readRecord(1, out).ok());
+    CHECK(store.readRecord(2, out).ok()); CHECK_EQ(out, "b");
+    CHECK(store.readRecord(3, out).ok()); CHECK_EQ(out, "c");
+
+    // Verify FIFO order survives remount.
+    pqueue::AppendLogStore store2(cfg);
+    REQUIRE(store2.mount().ok());
+    CHECK_FALSE(store2.readRecord(1, out).ok());
+    CHECK(store2.readRecord(2, out).ok()); CHECK_EQ(out, "b");
+    CHECK(store2.readRecord(3, out).ok()); CHECK_EQ(out, "c");
+}
+
+TEST_CASE("compaction: rotate-before-compact is blocked by cross-range tail pop dependency") {
+    // Two manifest ranges. Tail is contiguous with the LAST range. The tail contains
+    // POP events for records whose source segments are in the EARLIER range (gen=1,
+    // outside the last range {3,4}). tailDepsContained must be false → rotate must
+    // NOT fire; otherwise the POP tombstones could be lost and popped records could
+    // resurrect after remount.
     //
-    //   r1 valid  : [1..2] -> [10]   (new seg 10 present on disk)
-    //   r2 corrupt: complete-sized, bad CRC
-    //   r3 valid  : [3..4] -> [11]   (new seg 11 present on disk)
-    jClean();
-    jWriteSegment(10, 0, {"A", "B"});
-    jWriteSegment(11, 2, {"C", "D"});
+    // maxSegmentBytes=150, 25-byte payloads (49-byte events): 2 records per segment.
+    // New tail after rotation starts with 1 enqueue (69 bytes); 4 pop events add
+    // 80 bytes (total 149 ≤ 150) — all fit without triggering a second rotation that
+    // would clear activeTailAffectedGenerations_.
+    using namespace pqueue::append_log_detail;
+
+    // Plant: ranges=[{1,1},{3,3}], tail=4.
+    // gen=1: seq=1,2 (25-byte payloads, fills 118-byte segment, well under 150).
+    // gen=3: seq=3,4.  gen=4: empty tail.
+    const std::string p1(25, 'a'), p2(25, 'b'), p3(25, 'c'), p4(25, 'd');
+    const std::string p5(25, 'e'), p6(25, 'f'), p7(25, 'g');
+    plantLayout({
+        .ranges   = {{1u, 1u}, {3u, 3u}},
+        .tail     = 4u,
+        .next     = 5u,
+        .segments = {
+            {1u, 1u, serializeEnqueueEvent(1, p1) + serializeEnqueueEvent(2, p2)},
+            {3u, 3u, serializeEnqueueEvent(3, p3) + serializeEnqueueEvent(4, p4)},
+            {4u, 5u, ""},
+        },
+    });
+
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 150; // two 25-byte-payload records per segment
+
     {
-        using namespace pqueue::append_log_detail;
-        std::filesystem::create_directories(kJSpoolDir);
-        auto r1 = serializeCompactionJournalRecord(jReplacement(1, 2, 10, 10));
-        auto r2 = serializeCompactionJournalRecord(jReplacement(3, 4, 11, 11));
-        r2[28] ^= 0xFF; // corrupt CRC field at offset 28
-        auto r3 = serializeCompactionJournalRecord(jReplacement(3, 4, 11, 11));
-        const std::string bytes = r1 + r2 + r3;
-        std::ofstream f(jJournalPath(), std::ios::binary | std::ios::trunc);
-        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        pqueue::AppendLogStore store(cfg);
+        REQUIRE(store.mount().ok());
+
+        // Verify planted state.
+        REQUIRE_EQ(store.manifestRanges().size(), 2U);
+        CHECK_EQ(store.manifestRanges()[0].startGen, 1U);
+        CHECK_EQ(store.manifestRanges()[0].endGen,   1U);
+        CHECK_EQ(store.manifestRanges()[1].startGen, 3U);
+        CHECK_EQ(store.manifestRanges()[1].endGen,   3U);
+        CHECK_EQ(store.tailGeneration(), 4U);
+
+        // Fill gen=4 to force rotation → new tail=gen=5, tracking=true, affected={}.
+        // Two enqueues fill gen=4 (20+49+49=118 ≤ 150), third overflows.
+        storeEnqueue(store, 5, p5); // gen=4: 118 bytes after this
+        storeEnqueue(store, 6, p6); // gen=4: still fits (118 bytes)
+        storeEnqueue(store, 7, p7); // overflow: gen=4 seals → merges with {3,3} → {3,4}; new tail=gen=5
+
+        REQUIRE_EQ(store.manifestRanges().size(), 2U);
+        CHECK_EQ(store.manifestRanges()[1].startGen, 3U);
+        CHECK_EQ(store.manifestRanges()[1].endGen,   4U);
+        CHECK_EQ(store.tailGeneration(), 5U);
+
+        // Pop seq=1,2 (gen=1, EARLIER range): cross-range deps → affected gains gen=1.
+        // Gen=1 becomes fully dead (dead-range removal candidate).
+        // Pop seq=3,4 (gen=3, last range): same-range deps; create dead bytes in {3,4}.
+        // Gen=5 after pops: 20(hdr)+49(seq7)+4×20(pops)=149 ≤ 150 — no rotation.
+        storePop(store); // seq=1 → gen=1
+        storePop(store); // seq=2 → gen=1
+        storePop(store); // seq=3 → gen=3
+        storePop(store); // seq=4 → gen=3
+        // affected={1,3}; gen=1 is NOT in [3, activeGen=5] → tailDepsContained=false.
+
+        // First compactOneSegment: {1,1} fully dead → dead-range removal (not last range,
+        // no rotate). After cleanup, gen=1 is pruned from activeTailAffectedGenerations_;
+        // affected becomes {3}.
+        auto st1 = store.compactOneSegment();
+        CHECK(st1.ok());
+        CHECK_FALSE(st1.isNoOp());
+        REQUIRE_EQ(store.manifestRanges().size(), 1U);
+        CHECK_EQ(store.manifestRanges()[0].startGen, 3U);
+        CHECK_EQ(store.manifestRanges()[0].endGen,   4U);
+        CHECK_EQ(store.tailGeneration(), 5U);
+
+        // Second compactOneSegment: {3,4} is now the last range; tail=5 is contiguous
+        // (4+1=5). affected={3}; gen=3 is in [3,5] → tailDepsContained=true → rotate fires.
+        // Gen=1's tombstones no longer risk resurrection: gen=1 is gone from the manifest.
+        // Rotate seals gen=5 into {3,5}; new tail=gen=6. Live records seq=5,6,7 → 2 output
+        // segs (3×49-byte events span 118B and 167B; 167>150 → split): gen=7 (seq=5,6),
+        // gen=8 (seq=7).
+        auto st2 = store.compactOneSegment();
+        CHECK(st2.ok());
+        CHECK_FALSE(st2.isNoOp());
+
+        CHECK_EQ(store.tailGeneration(), 6U);
+        REQUIRE_EQ(store.manifestRanges().size(), 1U);
+        CHECK_EQ(store.manifestRanges()[0].startGen, 7U);
+        CHECK_EQ(store.manifestRanges()[0].endGen,   8U);
+
+        // Popped records absent; live records readable.
+        std::string out;
+        CHECK_FALSE(store.readRecord(1, out).ok());
+        CHECK_FALSE(store.readRecord(2, out).ok());
+        CHECK_FALSE(store.readRecord(3, out).ok());
+        CHECK_FALSE(store.readRecord(4, out).ok());
+        CHECK(store.readRecord(5, out).ok()); CHECK_EQ(out, p5);
+        CHECK(store.readRecord(6, out).ok()); CHECK_EQ(out, p6);
+        CHECK(store.readRecord(7, out).ok()); CHECK_EQ(out, p7);
     }
-    pqueue::Queue q(makeJConfig());
-    std::string out;
-    const auto st = q.peek(out);
-    CHECK_FALSE(st.ok());
-    CHECK_EQ(st.code, pqueue::StatusCode::DataCorrupt);
-}
 
-TEST_CASE("append-log mount: new generation skips all disk gens including old compacted-away") {
-    // Disk: {1,2,3,10,11}; journal replaces [1..2] with [10..11]; logical order [10,11,3].
-    // Max disk gen = 11 even though logical-last gen = 3;
-    // nextGeneration_ must be 12, not 4.
-    // maxSegmentBytes is set to seg 3's exact on-disk size so that the next enqueue
-    // overflows it and forces rotation to a new generation.
-    jClean();
-    jWriteSegment(1,  0, {"old-A"});
-    jWriteSegment(2,  1, {"old-B"});
-    jWriteSegment(10, 0, {"A", "B"});
-    jWriteSegment(11, 2, {"C"});
-    jWriteSegment(3,  3, {"D"});
-    jWriteJournal({jReplacement(1, 2, 10, 11)});
-
-    auto cfg = makeJConfig();
+    // After remount: popped records remain absent (no resurrection).
     {
-        using namespace pqueue::append_log_detail;
-        // Seg 3 holds exactly one 1-byte event; set limit to that size so the next
-        // enqueue triggers rotation rather than appending in-place.
-        cfg.maxSegmentBytes = kSegmentHeaderBytes + kEnqueueHeaderBytes + 1 + kEventTrailerBytes;
+        pqueue::AppendLogStore store(cfg);
+        REQUIRE(store.mount().ok());
+
+        std::string out;
+        CHECK_FALSE(store.readRecord(1, out).ok());
+        CHECK_FALSE(store.readRecord(2, out).ok());
+        CHECK_FALSE(store.readRecord(3, out).ok());
+        CHECK_FALSE(store.readRecord(4, out).ok());
+        CHECK(store.readRecord(5, out).ok()); CHECK_EQ(out, p5);
+        CHECK(store.readRecord(6, out).ok()); CHECK_EQ(out, p6);
+        CHECK(store.readRecord(7, out).ok()); CHECK_EQ(out, p7);
     }
-
-    pqueue::Queue q(cfg);
-    CHECK_EQ(q.stats().count, 4U);
-
-    CHECK(q.enqueue("E").ok());
-    CHECK_EQ(q.stats().count, 5U);
-
-    // FIFO order must be A,B,C,D,E
-    std::string out;
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "A"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "B"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "C"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "D"); CHECK(q.pop().ok());
-    CHECK(q.peek(out).ok()); CHECK_EQ(out, "E"); CHECK(q.pop().ok());
-    CHECK_EQ(q.stats().count, 0U);
-
-    // Rotation must have created gen 12 (max disk gen 11 + 1), not gen 4.
-    CHECK(std::filesystem::exists(jSegPath(12)));
-    CHECK_FALSE(std::filesystem::exists(jSegPath(4)));
 }
-
-#endif // !ARDUINO

@@ -9,6 +9,7 @@ enum class BackendWriteResult {
     Created,
     Duplicate,
     Merged,
+    MergedWithConflict,
     Conflict,
 };
 

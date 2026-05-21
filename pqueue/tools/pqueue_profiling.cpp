@@ -1,4 +1,7 @@
 #include "counting_file_system.h"
+#include "memory_file_system.h"
+#include "pqueue/append_log_store.h"
+#include "pqueue/append_log_common.h"
 #include "pqueue/queue.h"
 #include "pqueue/outbox.h"
 #include "pqueue/http/outbox.h"
@@ -22,6 +25,23 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+// ---------------------------------------------------------------------------
+// Profiling configuration -- mirrors AppendLogConfig fields the user controls
+// ---------------------------------------------------------------------------
+
+struct ProfilingConfig {
+    float    popRatio          = 0.90f;   // fraction of queue drained each cycle
+    double   multiplier        = 1.0;     // scales sim latency constants (1.0 = calibrated 100x factor)
+    std::uint32_t maxSegmentBytes   = 4096;
+    std::uint32_t maxTotalBytes     = 1024 * 1024;
+    std::uint32_t maxSegments       = 200;
+    std::uint32_t maxOutputSegments = 8;
+};
+
+// ---------------------------------------------------------------------------
+// Timing helpers
+// ---------------------------------------------------------------------------
 
 struct Timings {
     std::vector<double> us;
@@ -89,6 +109,10 @@ void recordTiming(Timings& timings, const std::function<pqueue::Status()>& fn, p
     const auto end = Clock::now();
     timings.add(start, end);
 }
+
+// ---------------------------------------------------------------------------
+// Queue / outbox scenarios (unchanged)
+// ---------------------------------------------------------------------------
 
 ScenarioResult scenarioQueueEnqueue(std::uint32_t records, std::uint32_t payloadBytes) {
     auto fs = std::make_shared<CountingFileSystem>(pqueue::makePosixFileSystem());
@@ -285,6 +309,408 @@ ScenarioResult scenarioHttpOutboxDrainBacklog(std::uint32_t records, std::uint32
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// Compaction burst scenario
+// ---------------------------------------------------------------------------
+
+struct CompactionBurstResult {
+    std::uint32_t burstSize       = 0;
+    std::uint32_t payloadBytes    = 0;
+    std::uint32_t cycles          = 0;
+    std::uint32_t maxOutSegsLimit = 0;
+    std::uint32_t maxInSegsLimit  = 0;
+    std::uint32_t compactions     = 0;
+    std::uint32_t noOps           = 0;
+    std::uint32_t maxOutSegs      = 0;
+    std::uint64_t maxLatencyUs    = 0;
+    std::uint32_t deadlocks       = 0;
+    std::uint32_t capExhausted    = 0;
+    std::uint32_t finalQSize      = 0;
+    FsCounters    fs;
+    bool          ok              = true;
+};
+
+namespace {
+
+struct CompactRangeStat {
+    pqueue::AppendLogStore::CompactionRange range;
+    std::uint32_t totalBytes    = 0;
+    std::uint32_t liveBytes     = 0;
+    std::uint32_t inputSegCount = 0;
+    std::uint32_t deadBytes() const { return totalBytes > liveBytes ? totalBytes - liveBytes : 0; }
+    float deadRatio() const {
+        return totalBytes > 0 ? static_cast<float>(deadBytes()) / static_cast<float>(totalBytes) : 0.0f;
+    }
+    std::uint32_t predictedOutputSegs(std::uint32_t maxSegBytes) const {
+        if (liveBytes == 0) return 0;
+        return (liveBytes + maxSegBytes - 1) / maxSegBytes;
+    }
+};
+
+std::vector<CompactRangeStat> buildCompactRangeStats(const pqueue::AppendLogStore& store) {
+    const auto& ranges   = store.manifestRanges();
+    const auto  segStats = store.segmentStats();
+    std::vector<CompactRangeStat> result;
+    for (const auto& r : ranges) {
+        CompactRangeStat rs;
+        rs.range = {r.startGen, r.endGen};
+        for (const auto& ss : segStats) {
+            if (ss.generation >= r.startGen && ss.generation <= r.endGen) {
+                rs.totalBytes    += ss.totalBytes;
+                rs.liveBytes     += ss.liveBytes;
+                rs.inputSegCount += 1;
+            }
+        }
+        result.push_back(rs);
+    }
+    return result;
+}
+
+std::optional<pqueue::AppendLogStore::CompactionRange> chooseHighestDeadRatioCompact(
+    const std::vector<CompactRangeStat>& stats)
+{
+    if (stats.empty()) return std::nullopt;
+    auto best = std::max_element(stats.begin(), stats.end(),
+        [](const CompactRangeStat& a, const CompactRangeStat& b) {
+            return a.deadRatio() < b.deadRatio();
+        });
+    if (best->deadBytes() == 0) return std::nullopt;
+    return best->range;
+}
+
+pqueue::AppendLogStore::CompactionRange narrowCompactRange(
+    const pqueue::AppendLogStore::CompactionRange& range,
+    const CompactRangeStat& rs,
+    const pqueue::AppendLogStore& store,
+    std::uint32_t maxSegBytes,
+    std::uint32_t maxOutputSegs)
+{
+    if (rs.predictedOutputSegs(maxSegBytes) <= maxOutputSegs) return range;
+
+    const auto allSegs = store.segmentStats();
+    std::vector<pqueue::AppendLogStore::SegmentStat> segs;
+    for (const auto& ss : allSegs) {
+        if (ss.generation >= range.startGen && ss.generation <= range.endGen)
+            segs.push_back(ss);
+    }
+    std::sort(segs.begin(), segs.end(),
+        [](const auto& a, const auto& b) { return a.generation < b.generation; });
+
+    pqueue::AppendLogStore::CompactionRange best = {segs.front().generation, segs.front().generation};
+    float bestDead = -1.0f;
+    for (std::size_t i = 0; i < segs.size(); ++i) {
+        std::uint32_t live = 0, total = 0;
+        for (std::size_t j = i; j < segs.size(); ++j) {
+            live  += segs[j].liveBytes;
+            total += segs[j].totalBytes;
+            const std::uint32_t out = live == 0 ? 0u : (live + maxSegBytes - 1) / maxSegBytes;
+            if (out > maxOutputSegs) break;
+            const float dr = total > 0 ? static_cast<float>(total - live) / static_cast<float>(total) : 0.0f;
+            if (dr > bestDead) { bestDead = dr; best = {segs[i].generation, segs[j].generation}; }
+        }
+    }
+    return best;
+}
+
+} // namespace
+
+// LittleFS observed timings scaled down 100x for fast simulation.
+// Calibrated from Run 4 (burst=500/pop=90%/rec=492B/cycles=3):
+//   simMaxLatency=48.6ms x 100 = 4860ms, actual MaxLatency=4861ms.
+// Previous constants (pre-Run4) used a uniform ~50ms/op estimate and
+// overestimated by ~45% for write-heavy workloads. Rescaled by 0.69.
+// readFile and readAt model open+read+close on LittleFS (~35ms each).
+// writeFile: ~140ms fixed metadata/GC cost + ~52ms per KB of data written.
+// listFiles: ~70ms base + ~9ms per file in the directory.
+inline FsLatency littleFsSimLatency() {
+    FsLatency lat;
+    lat.readFileUs         = 345;   // ~35ms on device
+    lat.readAtUs           = 345;   // ~35ms on device
+    lat.writeFileFixedUs   = 1380;  // ~138ms fixed create/metadata cost
+    lat.writeFilePerKbUs   = 518;   // ~52ms per KB written
+    lat.writeAtUs          = 138;   // ~14ms on device
+    lat.removeFileUs       = 166;   // ~17ms on device
+    lat.listFilesBaseUs    = 690;   // ~69ms base cost
+    lat.listFilesPerFileUs = 86;    // ~8.6ms per file
+    return lat;
+}
+
+// Scale the calibrated latency constants by multiplier.
+// Default multiplier=1.0 preserves the 1/100 calibration (output x100 = device ms).
+// Use multiplier<1.0 for faster flash, >1.0 for slower flash.
+FsLatency scaledLatency(double multiplier) {
+    auto lat = littleFsSimLatency();
+    auto scale = [&](std::uint64_t v) {
+        return static_cast<std::uint64_t>(static_cast<double>(v) * multiplier);
+    };
+    lat.readFileUs         = scale(lat.readFileUs);
+    lat.readAtUs           = scale(lat.readAtUs);
+    lat.writeFileFixedUs   = scale(lat.writeFileFixedUs);
+    lat.writeFilePerKbUs   = scale(lat.writeFilePerKbUs);
+    lat.writeAtUs          = scale(lat.writeAtUs);
+    lat.removeFileUs       = scale(lat.removeFileUs);
+    lat.listFilesBaseUs    = scale(lat.listFilesBaseUs);
+    lat.listFilesPerFileUs = scale(lat.listFilesPerFileUs);
+    return lat;
+}
+
+pqueue::AppendLogConfig makeStoreCfg(const char* basePath, std::shared_ptr<CountingFileSystem> counting, const ProfilingConfig& pcfg) {
+    pqueue::AppendLogConfig cfg;
+    cfg.basePath           = basePath;
+    cfg.backend            = pqueue::StorageBackend::Posix;
+    cfg.maxSegmentBytes    = pcfg.maxSegmentBytes;
+    cfg.maxSegments        = pcfg.maxSegments;
+    cfg.maxTotalBytes      = pcfg.maxTotalBytes;
+    cfg.maxOutputSegments  = pcfg.maxOutputSegments;
+    cfg.minFreeBytes       = 0;
+    cfg.fileSystem         = counting;
+    return cfg;
+}
+
+CompactionBurstResult scenarioCompactionBurst(
+    std::uint32_t burstSize,
+    std::uint32_t payloadBytes,
+    std::uint32_t cycles,
+    const ProfilingConfig& pcfg,
+    float deadRatioTrigger = 0.10f,
+    std::uint32_t rangePressureTrigger = 3,
+    FsLatency latency = {})
+{
+    auto memFs    = std::make_shared<MemoryFileSystem>();
+    auto counting = std::make_shared<CountingFileSystem>(memFs);
+    counting->setLatency(latency);
+
+    const auto cfg = makeStoreCfg("/compact_prof", counting, pcfg);
+    pqueue::AppendLogStore store(cfg);
+    CompactionBurstResult result;
+    result.burstSize       = burstSize;
+    result.payloadBytes    = payloadBytes;
+    result.cycles          = cycles;
+    result.maxOutSegsLimit = pcfg.maxOutputSegments;
+    result.maxInSegsLimit  = 0;
+
+    if (!store.mount().ok()) { result.ok = false; return result; }
+
+    const std::string payload(payloadBytes, 'x');
+    std::uint32_t nextSeq      = 1;
+    std::uint32_t queueSize    = 0;
+    std::uint32_t prevSegCount = 0;
+    std::uint32_t prevRangeCount = 0;
+
+    auto checkAndCompact = [&]() {
+        const auto& ranges = store.manifestRanges();
+        std::uint32_t logicalSegs = 1;
+        for (const auto& r : ranges) logicalSegs += r.endGen - r.startGen + 1;
+        const std::uint32_t rangeCount = static_cast<std::uint32_t>(ranges.size());
+        const bool changed  = logicalSegs != prevSegCount || rangeCount != prevRangeCount;
+        const bool pressure = rangeCount >= rangePressureTrigger;
+        prevSegCount   = logicalSegs;
+        prevRangeCount = rangeCount;
+        if (!changed) return;
+
+        const auto rangeStats = buildCompactRangeStats(store);
+        bool useful = false;
+        for (const auto& rs : rangeStats) {
+            if (rs.deadRatio() >= deadRatioTrigger) { useful = true; break; }
+            if (pressure && rs.predictedOutputSegs(pcfg.maxSegmentBytes) < rs.inputSegCount) { useful = true; break; }
+        }
+        if (!useful) return;
+
+        const auto chosen = chooseHighestDeadRatioCompact(rangeStats);
+        if (!chosen) return;
+
+        const CompactRangeStat* cstat = nullptr;
+        for (const auto& rs : rangeStats) {
+            if (rs.range.startGen == chosen->startGen && rs.range.endGen == chosen->endGen) {
+                cstat = &rs; break;
+            }
+        }
+        const auto target = cstat
+            ? narrowCompactRange(*chosen, *cstat, store, pcfg.maxSegmentBytes, pcfg.maxOutputSegments)
+            : *chosen;
+
+        std::uint32_t outSegs = 0;
+        const std::uint64_t simBefore = counting->counters().simLatencyUs;
+        const auto st = store.compactRange(target, &outSegs);
+        const std::uint64_t simDelta = counting->counters().simLatencyUs - simBefore;
+
+        if (st.ok() && !st.isNoOp()) {
+            ++result.compactions;
+            result.maxOutSegs   = std::max(result.maxOutSegs, outSegs);
+            result.maxLatencyUs = std::max(result.maxLatencyUs, simDelta);
+        } else {
+            ++result.noOps;
+        }
+    };
+
+    for (std::uint32_t cycle = 0; cycle < cycles; ++cycle) {
+        for (std::uint32_t i = 0; i < burstSize; ++i) {
+            const auto st = store.writeRecord(nextSeq, payload);
+            if (st.ok()) {
+                pqueue::FileStoreIndex dummy;
+                store.writeIndex(dummy);
+                ++nextSeq;
+                ++queueSize;
+            } else {
+                bool reclaimable = false;
+                for (const auto& rs : buildCompactRangeStats(store))
+                    if (rs.deadRatio() >= 0.01f) { reclaimable = true; break; }
+                if (reclaimable) ++result.deadlocks;
+                else             ++result.capExhausted;
+            }
+            checkAndCompact();
+        }
+        const std::uint32_t toPop = static_cast<std::uint32_t>(static_cast<float>(queueSize) * pcfg.popRatio);
+        for (std::uint32_t i = 0; i < toPop; ++i) {
+            pqueue::FileStoreIndex idx;
+            if (store.readIndex(idx).ok() && idx.count > 0) {
+                idx.head++; idx.count--;
+                store.writeIndex(idx);
+                --queueSize;
+            }
+            checkAndCompact();
+        }
+    }
+
+    result.finalQSize = queueSize;
+    result.fs = counting->counters();
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Idle compaction scenario
+// Models the intended usage pattern:
+//   1. Enqueue a burst (no compaction during burst)
+//   2. Drain (pop popRatio fraction)
+//   3. compactIdle until clean (measure steps and per-step latency)
+//   4. Next burst -- assert zero hot-path compactions
+// ---------------------------------------------------------------------------
+
+struct IdleCompactionResult {
+    std::uint32_t burstSize        = 0;
+    std::uint32_t payloadBytes     = 0;
+    std::uint32_t cycles           = 0;
+    std::uint32_t maxOutputSegments = 0;
+    float         popRatio         = 0.0f;
+    std::uint32_t idleSteps        = 0;    // total compactIdle steps across all cycles
+    std::uint32_t idleNoOps        = 0;
+    std::uint64_t maxStepUs        = 0;    // worst single idle step
+    std::uint64_t totalIdleUs      = 0;    // sum of all idle steps
+    std::uint32_t hotCompactions   = 0;    // compactions triggered on write path (should be 0)
+    std::uint32_t deadlocks        = 0;
+    std::uint32_t capExhausted     = 0;
+    bool          ok               = true;
+};
+
+IdleCompactionResult scenarioIdleCompaction(
+    std::uint32_t burstSize,
+    std::uint32_t payloadBytes,
+    std::uint32_t cycles,
+    const ProfilingConfig& pcfg,
+    FsLatency latency = {})
+{
+    auto memFs    = std::make_shared<MemoryFileSystem>();
+    auto counting = std::make_shared<CountingFileSystem>(memFs);
+    counting->setLatency(latency);
+
+    const auto cfg = makeStoreCfg("/idle_prof", counting, pcfg);
+    pqueue::AppendLogStore store(cfg);
+    IdleCompactionResult result;
+    result.burstSize         = burstSize;
+    result.payloadBytes      = payloadBytes;
+    result.cycles            = cycles;
+    result.maxOutputSegments = pcfg.maxOutputSegments;
+    result.popRatio          = pcfg.popRatio;
+
+    if (!store.mount().ok()) { result.ok = false; return result; }
+
+    const std::string payload(payloadBytes, 'x');
+    std::uint32_t nextSeq   = 1;
+    std::uint32_t queueSize = 0;
+
+    for (std::uint32_t cycle = 0; cycle < cycles; ++cycle) {
+        // Phase 1: enqueue burst -- detect hot-path compactions via readFile delta.
+        // Rotations produce no readFile; compactions read input segments.
+        for (std::uint32_t i = 0; i < burstSize; ++i) {
+            const std::uint64_t rfBefore = counting->counters().readFile;
+            const auto st = store.writeRecord(nextSeq, payload);
+            if (counting->counters().readFile > rfBefore) ++result.hotCompactions;
+            if (st.ok()) {
+                pqueue::FileStoreIndex dummy;
+                store.writeIndex(dummy);
+                ++nextSeq;
+                ++queueSize;
+            } else {
+                bool reclaimable = false;
+                for (const auto& rs : buildCompactRangeStats(store))
+                    if (rs.deadRatio() >= 0.01f) { reclaimable = true; break; }
+                if (reclaimable) ++result.deadlocks;
+                else             ++result.capExhausted;
+            }
+        }
+
+        // Phase 2: drain
+        const std::uint32_t toPop = static_cast<std::uint32_t>(static_cast<float>(queueSize) * pcfg.popRatio);
+        for (std::uint32_t i = 0; i < toPop; ++i) {
+            pqueue::FileStoreIndex idx;
+            if (store.readIndex(idx).ok() && idx.count > 0) {
+                idx.head++; idx.count--;
+                store.writeIndex(idx);
+                --queueSize;
+            }
+        }
+
+        // Phase 3: idle compaction -- run to completion
+        for (;;) {
+            const std::uint64_t simBefore = counting->counters().simLatencyUs;
+            const auto cr = store.compactIdle(1);
+            const std::uint64_t simDelta = counting->counters().simLatencyUs - simBefore;
+            ++result.idleSteps;
+            if (cr.compactions > 0) {
+                result.maxStepUs   = std::max(result.maxStepUs, simDelta);
+                result.totalIdleUs += simDelta;
+            } else {
+                ++result.idleNoOps;
+                break;
+            }
+        }
+    }
+
+    return result;
+}
+
+void printIdleCompactionResult(const IdleCompactionResult& r, bool simMode) {
+    std::printf("idle_compaction  burst=%u payload=%uB cycles=%u pop=%.0f%% maxOutSegs=%u\n",
+        r.burstSize, r.payloadBytes, r.cycles,
+        static_cast<double>(r.popRatio) * 100.0, r.maxOutputSegments);
+    std::printf("  idleSteps=%-4u idleNoOps=%-2u hotCompactions=%u\n",
+        r.idleSteps, r.idleNoOps, r.hotCompactions);
+    if (simMode) {
+        std::printf("  maxStepLatency=%.1fms  totalIdleLatency=%.1fms\n",
+            static_cast<double>(r.maxStepUs) / 1000.0,
+            static_cast<double>(r.totalIdleUs) / 1000.0);
+        std::printf("  (multiply ms by 100 for predicted on-device ms at calibrated flash speed)\n");
+    }
+    std::printf("  deadlocks=%-4u capExhausted=%-4u\n", r.deadlocks, r.capExhausted);
+    if (!r.ok) std::printf("  FAILED: mount error\n");
+    if (r.hotCompactions > 0)
+        std::printf("  WARNING: hot-path compactions fired during burst -- clean-storage invariant violated\n");
+}
+
+void printCompactionBurstResult(const CompactionBurstResult& r) {
+    std::printf("compaction_burst  burst=%u payload=%uB cycles=%u maxOutSegs=%u maxInSegs=%u\n",
+        r.burstSize, r.payloadBytes, r.cycles, r.maxOutSegsLimit, r.maxInSegsLimit);
+    std::printf("  compactions=%-4u noOps=%-4u maxOutSegs=%-3u simMaxLatency=%.1fms\n",
+        r.compactions, r.noOps, r.maxOutSegs,
+        static_cast<double>(r.maxLatencyUs) / 1000.0);
+    std::printf("  deadlocks=%-4u capExhausted=%-4u finalQ=%-4u\n",
+        r.deadlocks, r.capExhausted, r.finalQSize);
+    std::printf("  readFile=%-6lu readAt=%-6lu writeFile=%-6lu listFiles=%-6lu removeFile=%-6lu\n",
+        (unsigned long)r.fs.readFile, (unsigned long)r.fs.readAt, (unsigned long)r.fs.writeFile,
+        (unsigned long)r.fs.listFiles, (unsigned long)r.fs.removeFile);
+    if (!r.ok) std::printf("  FAILED: mount error\n");
+}
+
 void printHeader() {
     std::cout << std::left
               << std::setw(24) << "scenario"
@@ -350,8 +776,35 @@ void printRedFlags(const std::vector<ScenarioResult>& results) {
     }
 }
 
+ProfilingConfig parseFlags(int argc, char** argv, int firstFlag) {
+    ProfilingConfig pcfg;
+    for (int i = firstFlag; i < argc - 1; ++i) {
+        const std::string flag = argv[i];
+        if      (flag == "--pop")                { pcfg.popRatio          = std::stof(argv[++i]) / 100.0f; }
+        else if (flag == "--multiplier")         { pcfg.multiplier        = std::stod(argv[++i]); }
+        else if (flag == "--max-segment-bytes")  { pcfg.maxSegmentBytes   = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
+        else if (flag == "--max-total-bytes")    { pcfg.maxTotalBytes     = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
+        else if (flag == "--max-segments")       { pcfg.maxSegments       = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
+        else if (flag == "--max-output-segments"){ pcfg.maxOutputSegments = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
+    }
+    return pcfg;
+}
+
 void usage(const char* argv0) {
-    std::cerr << "usage: " << argv0 << " [queue|validate|outbox|all] [records] [payloadBytes]\n";
+    std::fprintf(stderr,
+        "usage:\n"
+        "  %s [queue|validate|outbox|all] [records] [payloadBytes]\n"
+        "  %s [compaction|compaction-sim] <burst> <payloadBytes> <cycles> [flags]\n"
+        "  %s [idle|idle-sim]             <burst> <payloadBytes> <cycles> [flags]\n"
+        "\n"
+        "flags:\n"
+        "  --pop <pct>                drain percentage per cycle (default 90)\n"
+        "  --multiplier <f>           scale sim latency constants (default 1.0 = 100x calibration)\n"
+        "  --max-segment-bytes <n>    cfg.maxSegmentBytes (default 4096)\n"
+        "  --max-total-bytes <n>      cfg.maxTotalBytes (default 1048576)\n"
+        "  --max-segments <n>         cfg.maxSegments (default 200)\n"
+        "  --max-output-segments <n>  cfg.maxOutputSegments (default 8)\n",
+        argv0, argv0, argv0);
 }
 
 } // namespace
@@ -361,7 +814,9 @@ int main(int argc, char** argv) {
     const std::uint32_t records = argc >= 3 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 10)) : 500;
     const std::uint32_t payloadBytes = argc >= 4 ? static_cast<std::uint32_t>(std::strtoul(argv[3], nullptr, 10)) : 256;
 
-    if (mode != "queue" && mode != "validate" && mode != "outbox" && mode != "all") {
+    if (mode != "queue" && mode != "validate" && mode != "outbox" && mode != "all"
+        && mode != "compaction" && mode != "compaction-sim"
+        && mode != "idle" && mode != "idle-sim") {
         usage(argv[0]);
         return 2;
     }
@@ -377,6 +832,23 @@ int main(int argc, char** argv) {
     if (mode == "outbox" || mode == "all") {
         results.push_back(scenarioHttpOutboxOfflineSubmit(records, payloadBytes));
         results.push_back(scenarioHttpOutboxDrainBacklog(records, payloadBytes));
+    }
+
+    if (mode == "compaction" || mode == "compaction-sim") {
+        const std::uint32_t cycles = argc >= 5 ? static_cast<std::uint32_t>(std::strtoul(argv[4], nullptr, 10)) : 3;
+        const ProfilingConfig pcfg = parseFlags(argc, argv, 5);
+        const FsLatency lat = (mode == "compaction-sim") ? scaledLatency(pcfg.multiplier) : FsLatency{};
+        printCompactionBurstResult(scenarioCompactionBurst(records, payloadBytes, cycles, pcfg, 0.10f, 3, lat));
+        return 0;
+    }
+
+    if (mode == "idle" || mode == "idle-sim") {
+        const std::uint32_t cycles = argc >= 5 ? static_cast<std::uint32_t>(std::strtoul(argv[4], nullptr, 10)) : 3;
+        const ProfilingConfig pcfg = parseFlags(argc, argv, 5);
+        const FsLatency lat = (mode == "idle-sim") ? scaledLatency(pcfg.multiplier) : FsLatency{};
+        printIdleCompactionResult(scenarioIdleCompaction(records, payloadBytes, cycles, pcfg, lat),
+                                  mode == "idle-sim");
+        return 0;
     }
 
     printHeader();

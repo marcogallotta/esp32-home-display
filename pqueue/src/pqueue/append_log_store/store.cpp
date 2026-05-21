@@ -1,12 +1,19 @@
-#include "append_log_store.h"
-#include "append_log_common.h"
+#include "pqueue/append_log_store.h"
+#include "pqueue/append_log_common.h"
+
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
-#include <sstream>
-#include <unordered_set>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace pqueue {
@@ -15,9 +22,11 @@ using namespace append_log_detail;
 
 namespace {
 
-constexpr const char* kSegmentPrefix       = "pqueue-seg-";
-constexpr const char* kSegmentSuffix       = ".bin";
-constexpr const char* kCompactionJournalFile = "pqueue-compact.bin";
+constexpr const char* kSegmentPrefix  = "seg-";
+constexpr const char* kSegmentSuffix  = ".bin";
+// Duplicated from manifest.cpp for format() cleanup; do not create a shared header for these.
+constexpr const char* kManifestSlotA  = "manifest-a.bin";
+constexpr const char* kManifestSlotB  = "manifest-b.bin";
 
 inline std::uint32_t readLE32(const std::string& buf, std::size_t offset) {
     return static_cast<std::uint32_t>(static_cast<std::uint8_t>(buf[offset]))
@@ -127,144 +136,6 @@ Status AppendLogStore::mount() {
     return Status::success();
 }
 
-Status AppendLogStore::buildActiveSegmentOrder(
-    const std::vector<std::uint32_t>& sortedGenerations,
-    const std::vector<CompactionJournalRecord>& replacements,
-    std::vector<std::uint32_t>& out)
-{
-    if (replacements.empty()) {
-        // No journal: must be consecutive 1..N
-        for (std::size_t i = 0; i < sortedGenerations.size(); ++i) {
-            if (sortedGenerations[i] != static_cast<std::uint32_t>(i + 1)) {
-                return Status::failure(StatusCode::DataCorrupt,
-                    "missing segment: generation sequence is not consecutive from 1");
-            }
-        }
-        out = sortedGenerations;
-        return Status::success();
-    }
-
-    // Conservative upper bound on a single compaction range; can be tied to
-    // config.maxSegments in a future stage.
-    constexpr std::uint32_t kMaxCompactionRangeGenerations = 4096;
-
-    auto validRange = [&](std::uint32_t start, std::uint32_t end) -> bool {
-        // Re-check all invariants even though the parser enforces them —
-        // cheap, and this helper may be called directly without a parsed record.
-        return start != 0
-            && end >= start
-            && (end - start) < kMaxCompactionRangeGenerations;
-    };
-    auto expandRange = [&](std::uint32_t start, std::uint32_t end,
-                           std::vector<std::uint32_t>& vec) -> bool {
-        if (!validRange(start, end)) return false;
-        for (std::uint32_t g = start; g <= end; ++g) vec.push_back(g);
-        return true;
-    };
-    auto insertRange = [&](std::unordered_set<std::uint32_t>& set,
-                           std::uint32_t start, std::uint32_t end) -> bool {
-        if (!validRange(start, end)) return false;
-        for (std::uint32_t g = start; g <= end; ++g) set.insert(g);
-        return true;
-    };
-
-    // Collect all new-range sortedGenerations produced by any replacement
-    std::unordered_set<std::uint32_t> allNewRanges;
-    for (const auto& r : replacements) {
-        if (!insertRange(allNewRanges, r.newStart, r.newEnd)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: invalid new range");
-        }
-    }
-
-    // Build base logical chain:
-    //   - found sortedGenerations not in any new range  (original, still on disk)
-    //   - old-range sortedGenerations not produced by an earlier replacement's new range
-    //     (original sortedGenerations that may have been cleaned up after commit)
-    std::unordered_set<std::uint32_t> baseSet;
-    for (std::uint32_t g : sortedGenerations) {
-        if (!allNewRanges.count(g)) {
-            baseSet.insert(g);
-        }
-    }
-    // Track new ranges produced by records processed so far, to exclude chained old ranges
-    std::unordered_set<std::uint32_t> priorNewRanges;
-    for (const auto& r : replacements) {
-        std::vector<std::uint32_t> oldVec;
-        if (!expandRange(r.oldStart, r.oldEnd, oldVec)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: invalid old range");
-        }
-        for (std::uint32_t g : oldVec) {
-            if (!priorNewRanges.count(g)) {
-                baseSet.insert(g);
-            }
-        }
-        if (!insertRange(priorNewRanges, r.newStart, r.newEnd)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: invalid new range");
-        }
-    }
-
-    std::vector<std::uint32_t> chain(baseSet.begin(), baseSet.end());
-    std::sort(chain.begin(), chain.end());
-
-    // Verify base is consecutive from 1
-    for (std::size_t i = 0; i < chain.size(); ++i) {
-        if (chain[i] != static_cast<std::uint32_t>(i + 1)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "missing segment: base logical chain is not consecutive from 1");
-        }
-    }
-
-    // Apply each replacement in order
-    for (const auto& r : replacements) {
-        std::vector<std::uint32_t> oldRange;
-        if (!expandRange(r.oldStart, r.oldEnd, oldRange)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: invalid old range");
-        }
-
-        auto it = std::search(chain.begin(), chain.end(), oldRange.begin(), oldRange.end());
-        if (it == chain.end()) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: old range not found in logical chain");
-        }
-
-        std::vector<std::uint32_t> newRange;
-        if (!expandRange(r.newStart, r.newEnd, newRange)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: invalid new range");
-        }
-
-        it = chain.erase(it, it + static_cast<std::ptrdiff_t>(oldRange.size()));
-        chain.insert(it, newRange.begin(), newRange.end());
-    }
-
-    // Detect duplicates in final chain (e.g. overlapping journal records)
-    {
-        std::unordered_set<std::uint32_t> seen;
-        seen.reserve(chain.size());
-        for (std::uint32_t g : chain) {
-            if (!seen.insert(g).second) {
-                return Status::failure(StatusCode::DataCorrupt,
-                    "compaction journal: duplicate generation in final active chain");
-            }
-        }
-    }
-
-    // Verify every generation in final chain exists in sortedGenerations
-    for (std::uint32_t g : chain) {
-        if (!std::binary_search(sortedGenerations.begin(), sortedGenerations.end(), g)) {
-            return Status::failure(StatusCode::DataCorrupt,
-                "compaction journal: active segment generation missing from disk");
-        }
-    }
-
-    out = std::move(chain);
-    return Status::success();
-}
-
 Status AppendLogStore::scanSegments() {
     auto f = fs();
 
@@ -281,64 +152,33 @@ Status AppendLogStore::scanSegments() {
     }
     std::sort(sortedGenerations.begin(), sortedGenerations.end());
 
-    // Read compaction journal if present.
-    // Presence is determined from the listFiles() result so that a read/stat failure on
-    // an existing journal is a hard mount error, not silently treated as "no journal".
-    std::vector<CompactionJournalRecord> replacements;
-    {
-        const bool journalPresent = [&]() {
-            for (const auto& name : files)
-                if (name == kCompactionJournalFile) return true;
-            return false;
-        }();
-
-        if (journalPresent) {
-            std::string journalBytes;
-            if (!f->readFile(kCompactionJournalFile, journalBytes).ok()) {
-                return Status::failure(StatusCode::DataCorrupt,
-                    "compaction journal: read failed");
-            }
-            // Truncating division: any partial trailing bytes are a torn tail and are
-            // silently ignored.  A corrupt but complete record is DataCorrupt.
-            const std::size_t recordCount =
-                journalBytes.size() / kCompactionJournalRecordBytes;
-            for (std::size_t i = 0; i < recordCount; ++i) {
-                const std::string recBytes = journalBytes.substr(
-                    i * kCompactionJournalRecordBytes, kCompactionJournalRecordBytes);
-                CompactionJournalRecord rec;
-                if (!parseCompactionJournalRecord(recBytes, rec)) {
-                    return Status::failure(StatusCode::DataCorrupt,
-                        "compaction journal: corrupt record");
-                }
-                replacements.push_back(rec);
-            }
-        }
-    }
-
-    // Compute the logical replay order from disk state + journal.
-    // Without a journal this enforces the legacy consecutive-1..N invariant.
-    // With a journal the helper verifies the journal-backed layout is self-consistent.
-    std::vector<std::uint32_t> logicalOrder;
-    {
-        Status orderSt = buildActiveSegmentOrder(sortedGenerations, replacements, logicalOrder);
-        if (!orderSt.ok()) return orderSt;
-    }
-    activeGenerations_ = logicalOrder;
     records_.clear();
+    activeGenerations_.clear();
+    sealedSegmentBytes_.clear();
+    cachedWrittenSlot_ = nullptr;
+    cachedWrittenEpoch_ = 0;
     activeGeneration_ = 0;
-    activeSegmentBytes_ = kSegmentHeaderBytes;
+    activeSegmentBytes_ = 0;
     nextGeneration_ = 1;
     nextSequence_ = 0;
 
-    // nextGeneration_ must exceed every generation on disk — including compacted-away
-    // segments not in the logical chain — so those numbers are never reused.
+    ManifestData manifest;
+    if (readManifest(manifest)) {
+        applyManifestToRam(manifest);
+    } else if (!sortedGenerations.empty()) {
+        return Status::failure(StatusCode::DataCorrupt,
+            "segment files exist without a valid manifest");
+    }
+
+    // Advance nextGeneration_ past every segment file on disk, including dangling ones,
+    // to prevent generation reuse after partial operations.
     for (std::uint32_t g : sortedGenerations) {
         if (g + 1 > nextGeneration_) nextGeneration_ = g + 1;
     }
 
-    for (std::size_t segIdx = 0; segIdx < logicalOrder.size(); ++segIdx) {
-        const std::uint32_t gen = logicalOrder[segIdx];
-        const bool isLastSegment = (segIdx + 1 == logicalOrder.size());
+    for (std::size_t segIdx = 0; segIdx < activeGenerations_.size(); ++segIdx) {
+        const std::uint32_t gen = activeGenerations_[segIdx];
+        const bool isLastSegment = (segIdx + 1 == activeGenerations_.size());
         const std::string name = segmentName(gen);
 
         std::uint64_t fileSize = 0;
@@ -476,37 +316,99 @@ Status AppendLogStore::scanSegments() {
         }
     }
 
-    if (sortedGenerations.empty()) {
-        activeGeneration_ = 0;
-        activeSegmentBytes_ = 0;
-        nextGeneration_ = 1;
+    // Initialize RAM footprint counter from all segment files on disk (including dangling).
+    totalOnDiskBytes_ = 0;
+    for (std::uint32_t gen : sortedGenerations) {
+        std::uint64_t sz = 0;
+        Status szSt = f->fileSize(segmentName(gen), sz);
+        if (!szSt.ok()) return szSt;
+        const auto szU = static_cast<std::uint32_t>(sz);
+        totalOnDiskBytes_ += szU;
+        sealedSegmentBytes_[gen] = szU;
     }
 
+    activeTailDependenciesTracked_ = false;
+    activeTailAffectedGenerations_.clear();
+    cleanupOneDanglingSegment();
     return Status::success();
 }
 
-Status AppendLogStore::createSegment(std::uint32_t generation, std::uint32_t baseSequence) {
-    const std::string headerBytes = serializeSegmentHeader(generation, baseSequence);
-    Status st = fs()->writeFile(segmentName(generation), headerBytes);
-    if (!st.ok()) return st;
-    activeGeneration_ = generation;
-    activeSegmentBytes_ = kSegmentHeaderBytes;
-    activeGenerations_.push_back(generation);
-    if (generation >= nextGeneration_) {
-        nextGeneration_ = generation + 1;
-    }
-    return Status::success();
+Status AppendLogStore::createSegment(std::uint32_t generation, std::uint32_t startSeq) {
+    const std::string headerBytes = serializeSegmentHeader(generation, startSeq);
+    return writeSegmentFileTracked(segmentName(generation), headerBytes, SegmentWriteDisposition::MustBeNew);
 }
 
 Status AppendLogStore::rotateSegment() {
-    const std::uint32_t newGen = nextGeneration_;
+#ifdef ARDUINO
+    const std::uint32_t t_rot_start = millis();
+#endif
+    const std::uint32_t oldTailGen = activeGeneration_;
+    const std::uint32_t newGen    = nextGeneration_;
+
+    std::vector<ManifestRange> newRanges = manifestRanges_;
+    if (oldTailGen != 0) {
+        ManifestRange r{oldTailGen, oldTailGen};
+        if (!newRanges.empty() && newRanges.back().endGen + 1 == r.startGen)
+            newRanges.back().endGen = r.endGen;
+        else
+            newRanges.push_back(r);
+    }
+    if (newRanges.size() > kManifestMaxRanges) {
+        return Status::failure(StatusCode::RangeLimitExceeded,
+            "segment range limit exceeded; compaction required before rollover");
+    }
+
+    if (oldTailGen != 0) sealedSegmentBytes_[oldTailGen] = activeSegmentBytes_;
+
     const std::uint32_t baseSeq = records_.empty() ? 0 : records_.back().sequence + 1;
-    return createSegment(newGen, baseSeq);
+#ifdef ARDUINO
+    const std::uint32_t t_create = millis();
+#endif
+    Status st = createSegment(newGen, baseSeq);
+#ifdef ARDUINO
+    const std::uint32_t ms_create = millis() - t_create;
+#endif
+    if (!st.ok()) return st;
+
+    ManifestData manifest;
+    manifest.ranges         = std::move(newRanges);
+    manifest.tailGeneration = newGen;
+    manifest.nextGeneration = newGen + 1;
+    st = publishManifest(manifest);
+#ifdef ARDUINO
+    Serial.printf("[rotate] old=%u new=%u create_ms=%u probe_ms=%u write_ms=%u total_ms=%u\n",
+        oldTailGen, newGen,
+        ms_create, dbgLastProbeMs_, dbgLastWriteMs_, millis() - t_rot_start);
+    Serial.flush();
+#endif
+    if (!st.ok()) return st;
+
+    activeGeneration_    = newGen;
+    activeSegmentBytes_  = kSegmentHeaderBytes;
+    activeTailDependenciesTracked_ = true;
+    activeTailAffectedGenerations_.clear();
+    return Status::success();
 }
 
 Status AppendLogStore::ensureActiveSegment(std::uint32_t baseSeq) {
     if (activeSegmentBytes_ == 0) {
-        return createSegment(nextGeneration_, baseSeq);
+        const std::uint32_t newGen = nextGeneration_;
+        Status st = createSegment(newGen, baseSeq);
+        if (!st.ok()) return st;
+
+        ManifestData manifest;
+        manifest.ranges         = manifestRanges_;
+        manifest.tailGeneration = newGen;
+        manifest.nextGeneration = newGen + 1;
+        st = publishManifest(manifest);
+        if (!st.ok()) return st;
+
+        // RAM updated only after durable manifest publish.
+        activeGeneration_   = newGen;
+        activeSegmentBytes_ = kSegmentHeaderBytes;
+        activeTailDependenciesTracked_ = true;
+        activeTailAffectedGenerations_.clear();
+        return Status::success();
     }
     return Status::success();
 }
@@ -514,7 +416,9 @@ Status AppendLogStore::ensureActiveSegment(std::uint32_t baseSeq) {
 Status AppendLogStore::appendEnqueueEventBytes(const std::string& eventBytes) {
     Status st = fs()->writeAt(segmentName(activeGeneration_), activeSegmentBytes_, eventBytes);
     if (st.ok()) {
-        activeSegmentBytes_ += static_cast<std::uint32_t>(eventBytes.size());
+        const auto n = static_cast<std::uint32_t>(eventBytes.size());
+        activeSegmentBytes_ += n;
+        totalOnDiskBytes_   += n;
     }
     return st;
 }
@@ -531,7 +435,9 @@ Status AppendLogStore::appendPopEvent(std::uint32_t sequence) {
     const std::string eventBytes = serializePopEvent(sequence);
     st = fs()->writeAt(segmentName(activeGeneration_), activeSegmentBytes_, eventBytes);
     if (st.ok()) {
-        activeSegmentBytes_ += static_cast<std::uint32_t>(eventBytes.size());
+        const auto n = static_cast<std::uint32_t>(eventBytes.size());
+        activeSegmentBytes_ += n;
+        totalOnDiskBytes_   += n;
     }
     return st;
 }
@@ -550,11 +456,16 @@ Status AppendLogStore::appendRewriteEvent(std::uint32_t sequence, const std::str
     const std::string eventBytes = serializeRewriteEvent(sequence, record);
     Status st = fs()->writeAt(segmentName(activeGeneration_), activeSegmentBytes_, eventBytes);
     if (!st.ok()) return st;
-    activeSegmentBytes_ += static_cast<std::uint32_t>(eventBytes.size());
+    const auto n = static_cast<std::uint32_t>(eventBytes.size());
+    activeSegmentBytes_ += n;
+    totalOnDiskBytes_   += n;
 
     // Update RAM state for rewritten record
     for (auto& r : records_) {
         if (r.sequence == sequence) {
+            if (activeTailDependenciesTracked_) {
+                activeTailAffectedGenerations_.insert(r.segmentGeneration);
+            }
             r.segmentGeneration = activeGeneration_;
             r.payloadOffset = payloadOffset;
             r.payloadBytes = static_cast<std::uint32_t>(record.size());
@@ -564,47 +475,32 @@ Status AppendLogStore::appendRewriteEvent(std::uint32_t sequence, const std::str
     return Status::success();
 }
 
-bool AppendLogStore::needsCompaction() const {
-    const auto segCount = [this]() -> std::uint32_t {
-        // Count distinct segment sortedGenerations referenced by live records + active
-        if (records_.empty()) return 0;
-        std::uint32_t min = records_.front().segmentGeneration;
-        return (activeGeneration_ >= min) ? (activeGeneration_ - min + 1) : 1;
-    }();
-    if (segCount > config_.maxSegments) return true;
-
-    const std::uint64_t free = fs_ ? fs_->freeBytes() : 0;
-    if (free < config_.minFreeBytes) return true;
-
-    return false;
-}
-
-Status AppendLogStore::compact() {
-    if (!records_.empty()) {
-        // TODO: non-empty compaction is crash-unsafe until a compaction commit
-        // marker or sequence-dedup recovery is in place. New segments are written
-        // then old ones deleted; a power loss between those two steps leaves both
-        // copies visible to recovery, duplicating live records.
-        return Status::success();
+Status AppendLogStore::writeSegmentFileTracked(const std::string& name, const std::string& data,
+                                                SegmentWriteDisposition disposition) {
+    std::uint64_t oldSize = 0;
+    if (disposition == SegmentWriteDisposition::MayOverwrite) {
+        fs()->fileSize(name, oldSize);
     }
-
-    // No live records - delete all segments and reset
-    std::vector<std::string> files;
-    if (fs()->listFiles(files).ok()) {
-        for (const auto& name : files) {
-            std::uint32_t gen = 0;
-            if (isSegmentName(name, gen)) {
-                fs()->removeFile(name);
-            }
-        }
-    }
-    fs()->removeFile(kCompactionJournalFile);
-    activeGenerations_.clear();
-    activeGeneration_ = 0;
-    activeSegmentBytes_ = 0;
-    nextGeneration_ = 1;
+    Status st = fs()->writeFile(name, data);
+    if (!st.ok()) return st;
+    const auto newSz = static_cast<std::uint32_t>(data.size());
+    const auto oldSz = static_cast<std::uint32_t>(oldSize);
+    if (newSz >= oldSz) totalOnDiskBytes_ += newSz - oldSz;
+    else                totalOnDiskBytes_ -= oldSz - newSz;
+    std::uint32_t gen = 0;
+    if (isSegmentName(name, gen)) sealedSegmentBytes_[gen] = newSz;
     return Status::success();
 }
+
+std::uint32_t AppendLogStore::appendGrowthBytes(std::uint32_t recordSize) const {
+    const std::uint32_t eventBytes = kEnqueueOverheadBytes + recordSize;
+    const bool needsNewSegment =
+        activeSegmentBytes_ == 0 ||
+        (activeSegmentBytes_ > kSegmentHeaderBytes &&
+         activeSegmentBytes_ + eventBytes > config_.maxSegmentBytes);
+    return eventBytes + (needsNewSegment ? kSegmentHeaderBytes : 0);
+}
+
 
 // --- Store interface implementation ---
 
@@ -620,7 +516,19 @@ Status AppendLogStore::readIndexFromDisk(FileStoreIndex& out) {
 }
 
 Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& record) {
+#ifdef ARDUINO
+    const std::uint32_t t_wr_start = millis();
+    std::uint32_t ms_ensure = 0, ms_compact = 0, ms_rotate = 0, ms_ensure_seg = 0, ms_append = 0;
+    bool did_rotate = false, did_compact = false;
+#endif
+
+#ifdef ARDUINO
+    const std::uint32_t _t_ensure = millis();
+#endif
     Status st = ensureMounted();
+#ifdef ARDUINO
+    ms_ensure = millis() - _t_ensure;
+#endif
     if (!st.ok()) return st;
 
     if (record.size() > config_.maxRecordBytes) {
@@ -628,34 +536,106 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
             Status::failure(StatusCode::RecordTooLarge, "record exceeds append-log maximum record size"),
             "writeRecord");
     }
+    if (kSegmentHeaderBytes + kEnqueueOverheadBytes + record.size() > config_.maxSegmentBytes) {
+        return diagnostic(Severity::Warning,
+            Status::failure(StatusCode::RecordTooLarge, "record too large to fit in a segment"),
+            "writeRecord");
+    }
+
+    if (sequence == std::numeric_limits<std::uint32_t>::max()) {
+        return diagnostic(Severity::Error,
+            Status::failure(StatusCode::SequenceExhausted, "sequence space exhausted; format() required"),
+            "writeRecord");
+    }
 
     const std::uint32_t eventBytes = kEnqueueOverheadBytes + static_cast<std::uint32_t>(record.size());
 
-    // Ensure we have an active segment, rotating or compacting if needed
+    if (config_.maxTotalBytes > 0) {
+#ifdef ARDUINO
+        const std::uint32_t _tc = millis();
+#endif
+        while (totalOnDiskBytes() + appendGrowthBytes(static_cast<std::uint32_t>(record.size())) > config_.maxTotalBytes) {
+            Status compact = compactOneSegment();
+            if (!compact.ok()) return diagnostic(Severity::Error, compact, "writeRecord");
+            if (compact.isNoOp()) {
+                return diagnostic(Severity::Warning,
+                    Status::failure(StatusCode::QueueFull, "queue footprint limit reached"),
+                    "writeRecord");
+            }
+#ifdef ARDUINO
+            did_compact = true;
+#endif
+        }
+#ifdef ARDUINO
+        ms_compact = millis() - _tc;
+#endif
+    }
+
+    if (config_.minFreeBytes > 0) {
+        const std::uint64_t free = freeBytes();
+        const std::uint32_t growth = appendGrowthBytes(static_cast<std::uint32_t>(record.size()));
+        if (free < static_cast<std::uint64_t>(config_.minFreeBytes) + growth) {
+            return diagnostic(Severity::Warning,
+                Status::failure(StatusCode::QueueFull, "insufficient filesystem free space"),
+                "writeRecord");
+        }
+    }
+
     if (activeSegmentBytes_ > kSegmentHeaderBytes &&
         activeSegmentBytes_ + eventBytes > config_.maxSegmentBytes) {
         if (needsCompaction()) {
-            st = compact();
-            if (!st.ok()) return diagnostic(Severity::Error, st, "writeRecord");
+            Status cst = compactOneSegment();
+            if (!cst.ok()) return diagnostic(Severity::Error, cst, "writeRecord");
+#ifdef ARDUINO
+            did_compact = true;
+#endif
         }
         if (activeSegmentBytes_ > kSegmentHeaderBytes &&
             activeSegmentBytes_ + eventBytes > config_.maxSegmentBytes) {
-            st = rotateSegment();
-            if (!st.ok()) return diagnostic(Severity::Error, st, "writeRecord");
+#ifdef ARDUINO
+            const std::uint32_t _tr = millis();
+#endif
+            Status rst = rotateSegment();
+#ifdef ARDUINO
+            ms_rotate = millis() - _tr;
+            did_rotate = true;
+#endif
+            if (!rst.ok()) return diagnostic(Severity::Error, rst, "writeRecord");
         }
     }
-    st = ensureActiveSegment(sequence);
-    if (!st.ok()) return diagnostic(Severity::Error, st, "writeRecord");
 
-    // payloadOffset is computed after segment exists so activeSegmentBytes_ is valid
+#ifdef ARDUINO
+    const std::uint32_t _t_ensure_seg = millis();
+#endif
+    Status est = ensureActiveSegment(sequence);
+#ifdef ARDUINO
+    ms_ensure_seg = millis() - _t_ensure_seg;
+#endif
+    if (!est.ok()) return diagnostic(Severity::Error, est, "writeRecord");
+
     const std::uint32_t payloadOffset = activeSegmentBytes_ + kEnqueueHeaderBytes;
-
     const std::string eventData = serializeEnqueueEvent(sequence, record);
 
-    st = appendEnqueueEventBytes(eventData);
-    if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "writeRecord");
+#ifdef ARDUINO
+    const std::uint32_t _t_append = millis();
+#endif
+    Status ast = appendEnqueueEventBytes(eventData);
+#ifdef ARDUINO
+    ms_append = millis() - _t_append;
+#endif
+    if (!ast.ok()) return diagnostic(Severity::Error, ast, "writeRecord");
+
+#ifdef ARDUINO
+    const std::uint32_t ms_total = millis() - t_wr_start;
+    if (ms_total > 500) {
+        Serial.printf("[writeRecord] seq=%u recBytes=%u rotate=%u compact=%u "
+            "ensure_ms=%u compact_ms=%u rotate_ms=%u ensure_seg_ms=%u append_ms=%u total_ms=%u\n",
+            sequence, static_cast<unsigned>(record.size()),
+            static_cast<unsigned>(did_rotate), static_cast<unsigned>(did_compact),
+            ms_ensure, ms_compact, ms_rotate, ms_ensure_seg, ms_append, ms_total);
+        Serial.flush();
     }
+#endif
 
     pendingRecord_.sequence = sequence;
     pendingRecord_.segmentGeneration = activeGeneration_;
@@ -680,9 +660,13 @@ Status AppendLogStore::writeIndex(const FileStoreIndex& index) {
     const FileStoreIndex current = indexFromRecords();
     if (index.head > current.head && !records_.empty()) {
         const std::uint32_t poppedSeq = records_.front().sequence;
+        const std::uint32_t poppedGen = records_.front().segmentGeneration;
         st = appendPopEvent(poppedSeq);
         if (!st.ok()) {
             return diagnostic(Severity::Error, st, "writeIndex");
+        }
+        if (activeTailDependenciesTracked_) {
+            activeTailAffectedGenerations_.insert(poppedGen);
         }
         records_.pop_front();
     }
@@ -697,6 +681,11 @@ Status AppendLogStore::rewriteRecord(std::uint32_t sequence, const std::string& 
     if (record.size() > config_.maxRecordBytes) {
         return diagnostic(Severity::Warning,
             Status::failure(StatusCode::RecordTooLarge, "record exceeds append-log maximum record size"),
+            "rewriteRecord");
+    }
+    if (kSegmentHeaderBytes + kEnqueueOverheadBytes + record.size() > config_.maxSegmentBytes) {
+        return diagnostic(Severity::Warning,
+            Status::failure(StatusCode::RecordTooLarge, "record too large to fit in a segment"),
             "rewriteRecord");
     }
 
@@ -757,9 +746,11 @@ std::uint64_t AppendLogStore::freeBytes() const {
     return fs_ ? fs_->freeBytes() : 0;
 }
 
-bool AppendLogStore::canEnqueue(std::size_t recordSize, std::uint32_t /*currentCount*/) const {
-    const auto overhead = static_cast<std::uint64_t>(append_log_detail::kEnqueueOverheadBytes);
-    return freeBytes() >= config_.minFreeBytes + recordSize + overhead;
+bool AppendLogStore::canEnqueue(std::size_t /*recordSize*/, std::uint32_t /*currentCount*/) const {
+    // Only checks the hard FS floor. Finer admission (maxTotalBytes cap, required record
+    // headroom) is enforced inside writeRecord() after a compaction attempt. Checking any
+    // of that here would block the write that triggers compaction.
+    return freeBytes() >= config_.minFreeBytes;
 }
 
 Status AppendLogStore::format() {
@@ -785,14 +776,21 @@ Status AppendLogStore::format() {
             f->removeFile(name);
         }
     }
-    f->removeFile(kCompactionJournalFile);
-
+    f->removeFile(kManifestSlotA);
+    f->removeFile(kManifestSlotB);
+    manifestRanges_.clear();
     activeGenerations_.clear();
+    sealedSegmentBytes_.clear();
     records_.clear();
     hasPendingEnqueue_ = false;
+    cachedWrittenSlot_ = nullptr;
+    cachedWrittenEpoch_ = 0;
     activeGeneration_ = 0;
     activeSegmentBytes_ = 0;
+    totalOnDiskBytes_ = 0;
     nextGeneration_ = 1;
+    activeTailDependenciesTracked_ = true;
+    activeTailAffectedGenerations_.clear();
     nextSequence_ = 0;
     mounted_ = true;
     return Status::success();
