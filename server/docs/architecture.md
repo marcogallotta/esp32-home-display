@@ -374,6 +374,45 @@ If the new type should appear in the dashboard, update the frontend static files
 
 ---
 
+## Levoit AH controller config (future)
+
+Config parsing and validation for a future external Levoit absolute-humidity controller is
+wired; the controller itself is not implemented.
+
+`levoit_ah_controller` section in `app.json`:
+
+```json
+"levoit_ah_controller": {
+  "enabled": false,
+  "switchbot_mac": "AA:BB:CC:DD:EE:FF",
+  "target_absolute_humidity": 8.0
+}
+```
+
+- `enabled`: whether the future controller should run.
+- `switchbot_mac`: MAC of the SwitchBot sensor whose latest reading will drive the controller.
+  The future controller will call `GET /sensors/latest` (no query param) and match this MAC in
+  the response body -- the MAC is never exposed as a GET query parameter.
+- `target_absolute_humidity`: interpreted internally as g/m^3. The key name is intentionally
+  human-readable and does not include units.
+
+App-level defaults (`LevoitAhControllerConfig` dataclass; overrideable in `app.json`):
+
+```
+minimum_humidity = 40            # percent
+maximum_humidity = 60            # percent
+reading_max_age_seconds = 900
+poll_interval_seconds = 300
+minimum_command_interval_seconds = 300
+humidity_change_threshold = 2.0
+```
+
+VeSync credentials for the future controller live in the env file
+(`VESYNC_USERNAME`, `VESYNC_PASSWORD`, `VESYNC_DEVICE_CID`); they are not required by
+`load_config` yet.
+
+---
+
 ## Invariants
 
 - `sensors.mac` is always normalized: uppercase, colon-separated, exactly 17 chars. `validate_mac_address()` in `common.py` enforces this at every entry point.

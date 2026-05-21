@@ -110,6 +110,45 @@ pio device monitor
 
 See `server/README.md`.
 
+### Levoit AH controller
+
+The server can drive a Levoit humidifier based on SwitchBot absolute humidity readings.
+Config is in `server/config/env` and `server/config/app.json`.
+
+In `server/config/env`:
+
+```
+VESYNC_USERNAME=your-vesync-email
+VESYNC_PASSWORD=your-vesync-password
+VESYNC_DEVICE_CID=your-device-cid
+```
+
+In `server/config/app.json`:
+
+```json
+"levoit_ah_controller": {
+  "enabled": true,
+  "switchbot_mac": "AA:BB:CC:DD:EE:FF",
+  "target_absolute_humidity": 8.0
+}
+```
+
+`switchbot_mac` is the MAC of the SwitchBot sensor used to drive the controller.
+`target_absolute_humidity` is in g/m³.
+
+Optional overrides (defaults shown):
+
+```json
+"levoit_ah_controller": {
+  "minimum_humidity": 40,
+  "maximum_humidity": 60,
+  "reading_max_age_seconds": 900,
+  "poll_interval_seconds": 300,
+  "minimum_command_interval_seconds": 300,
+  "humidity_change_threshold": 2.0
+}
+```
+
 ## Configuration
 
 The app reads a `config.json` file.

@@ -7,6 +7,7 @@ psycopg[binary]
 pydantic
 pytest
 pytest-cov
+pyvesync
 python-multipart
 SQLAlchemy
 uvicorn[standard]

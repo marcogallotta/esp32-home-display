@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import (
+    MAC_ADDRESS_RE,
     SWITCHBOT_BULK_DEFAULT_MAX_READINGS,
     SWITCHBOT_SYNC_DEFAULT_GAP_THRESHOLD_MINUTES,
     SWITCHBOT_SYNC_DEFAULT_MAX_INTERVALS_PER_SENSOR,
@@ -66,6 +67,19 @@ def _default_rate_limits() -> RateLimitsConfig:
 
 
 @dataclass
+class LevoitAhControllerConfig:
+    enabled: bool = False
+    switchbot_mac: str | None = None
+    target_absolute_humidity: float | None = None
+    minimum_humidity: int = 40
+    maximum_humidity: int = 60
+    reading_max_age_seconds: int = 900
+    poll_interval_seconds: int = 300
+    minimum_command_interval_seconds: int = 300
+    humidity_change_threshold: float = 2.0
+
+
+@dataclass
 class DatabaseConfig:
     driver: str
     host: str
@@ -88,6 +102,7 @@ class Config:
     switchbot_bulk_max_readings: int = SWITCHBOT_BULK_DEFAULT_MAX_READINGS
     rate_limits: RateLimitsConfig = field(default_factory=_default_rate_limits)
     openmeteo: dict = field(default_factory=dict)
+    levoit_ah_controller: LevoitAhControllerConfig = field(default_factory=LevoitAhControllerConfig)
 
 
 def _check_str(errors: list[str], name: str, value: object) -> bool:
@@ -182,8 +197,89 @@ def validate_config(config: Config, env: str) -> None:
     _validate_rate_limit(errors, "rate_limits.frontend", rl.frontend)
     _validate_rate_limit(errors, "rate_limits.login", rl.login)
 
+    _validate_levoit_ah_controller(errors, config.levoit_ah_controller)
+
     if errors:
         raise ValueError("Invalid configuration:\n" + "\n".join(f"  {e}" for e in errors))
+
+
+def _validate_levoit_ah_controller(errors: list[str], cfg: LevoitAhControllerConfig) -> None:
+    p = "levoit_ah_controller"
+
+    if not isinstance(cfg.enabled, bool):
+        errors.append(f"{p}.enabled: must be a boolean")
+        return
+
+    if cfg.switchbot_mac is not None:
+        if not isinstance(cfg.switchbot_mac, str) or not MAC_ADDRESS_RE.fullmatch(cfg.switchbot_mac):
+            errors.append(f"{p}.switchbot_mac: invalid MAC address format")
+
+    if cfg.enabled and cfg.switchbot_mac is None:
+        errors.append(f"{p}.switchbot_mac: required when enabled is true")
+
+    if cfg.target_absolute_humidity is not None:
+        if (
+            isinstance(cfg.target_absolute_humidity, bool)
+            or not isinstance(cfg.target_absolute_humidity, (int, float))
+        ):
+            errors.append(f"{p}.target_absolute_humidity: must be a number")
+        elif cfg.target_absolute_humidity <= 0:
+            errors.append(f"{p}.target_absolute_humidity: must be a positive number")
+
+    if cfg.enabled and cfg.target_absolute_humidity is None:
+        errors.append(f"{p}.target_absolute_humidity: required when enabled is true")
+
+    min_ok = _check_int(errors, f"{p}.minimum_humidity", cfg.minimum_humidity)
+    max_ok = _check_int(errors, f"{p}.maximum_humidity", cfg.maximum_humidity)
+    if min_ok and not (0 <= cfg.minimum_humidity <= 100):
+        errors.append(f"{p}.minimum_humidity: must be between 0 and 100")
+        min_ok = False
+    if max_ok and not (0 <= cfg.maximum_humidity <= 100):
+        errors.append(f"{p}.maximum_humidity: must be between 0 and 100")
+        max_ok = False
+    if min_ok and max_ok and cfg.minimum_humidity > cfg.maximum_humidity:
+        errors.append(f"{p}.minimum_humidity: must be <= maximum_humidity")
+
+    _check_positive_int(errors, f"{p}.reading_max_age_seconds", cfg.reading_max_age_seconds)
+    _check_positive_int(errors, f"{p}.poll_interval_seconds", cfg.poll_interval_seconds)
+    _check_positive_int(errors, f"{p}.minimum_command_interval_seconds", cfg.minimum_command_interval_seconds)
+
+    if (
+        isinstance(cfg.humidity_change_threshold, bool)
+        or not isinstance(cfg.humidity_change_threshold, (int, float))
+    ):
+        errors.append(f"{p}.humidity_change_threshold: must be a number")
+    elif cfg.humidity_change_threshold < 0:
+        errors.append(f"{p}.humidity_change_threshold: must be >= 0")
+
+
+def _parse_levoit_ah_controller(raw: object) -> LevoitAhControllerConfig:
+    if raw is None:
+        return LevoitAhControllerConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("levoit_ah_controller: must be an object")
+    kwargs = {
+        k: raw[k]
+        for k in (
+            "enabled",
+            "switchbot_mac",
+            "target_absolute_humidity",
+            "minimum_humidity",
+            "maximum_humidity",
+            "reading_max_age_seconds",
+            "poll_interval_seconds",
+            "minimum_command_interval_seconds",
+            "humidity_change_threshold",
+        )
+        if k in raw
+    }
+    if "switchbot_mac" in kwargs:
+        mac = kwargs["switchbot_mac"]
+        if isinstance(mac, str):
+            if not MAC_ADDRESS_RE.fullmatch(mac):
+                raise ValueError("levoit_ah_controller.switchbot_mac: invalid MAC address format")
+            kwargs["switchbot_mac"] = mac.upper()
+    return LevoitAhControllerConfig(**kwargs)
 
 
 _KNOWN_ENVS = {"dev", "test", "prod"}
@@ -209,7 +305,9 @@ def load_config(config_dir: Path | None = None) -> Config:
 
     raw_db = data.pop("database", {})
     raw_rl = data.pop("rate_limits", None)
+    raw_levoit = data.pop("levoit_ah_controller", None)
     rate_limits = _parse_rate_limits(raw_rl) if raw_rl is not None else _default_rate_limits()
+    levoit_ah_controller = _parse_levoit_ah_controller(raw_levoit)
 
     data["api_key"] = _require_env("API_KEY")
     data["session_secret"] = _require_env("SESSION_SECRET")
@@ -230,7 +328,7 @@ def load_config(config_dir: Path | None = None) -> Config:
         password=_require_env("DATABASE_PASSWORD"),
     )
 
-    config = Config(database=db, rate_limits=rate_limits, **data)
+    config = Config(database=db, rate_limits=rate_limits, levoit_ah_controller=levoit_ah_controller, **data)
     validate_config(config, env)
     return config
 

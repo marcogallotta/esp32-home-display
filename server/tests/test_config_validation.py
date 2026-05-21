@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from app.config import Config, DatabaseConfig, load_config, validate_config
+from app.config import Config, DatabaseConfig, LevoitAhControllerConfig, load_config, validate_config
 
 
 def _db():
@@ -271,3 +271,220 @@ def test_load_config_fails_on_missing_field(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="SESSION_SECRET"):
         load_config(config_dir=config_dir)
+
+
+# --- LevoitAhControllerConfig ---
+
+def _levoit(**overrides) -> LevoitAhControllerConfig:
+    defaults = dict(
+        enabled=False,
+        switchbot_mac=None,
+        target_absolute_humidity=None,
+    )
+    defaults.update(overrides)
+    return LevoitAhControllerConfig(**defaults)
+
+
+def test_levoit_absent_uses_defaults():
+    cfg = _config()
+    validate_config(cfg, env="dev")
+    assert cfg.levoit_ah_controller.enabled is False
+
+
+def test_levoit_disabled_no_mac_passes():
+    cfg = _config(levoit_ah_controller=_levoit(enabled=False))
+    validate_config(cfg, env="dev")
+
+
+def test_levoit_enabled_with_valid_mac_passes():
+    lev = _levoit(enabled=True, switchbot_mac="aa:bb:cc:dd:ee:ff", target_absolute_humidity=8.0)
+    cfg = _config(levoit_ah_controller=lev)
+    validate_config(cfg, env="dev")
+
+
+def test_levoit_enabled_missing_mac_fails():
+    lev = _levoit(enabled=True, switchbot_mac=None, target_absolute_humidity=8.0)
+    with pytest.raises(ValueError, match="switchbot_mac: required when enabled is true"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_invalid_mac_fails():
+    lev = _levoit(enabled=True, switchbot_mac="not-a-mac", target_absolute_humidity=8.0)
+    with pytest.raises(ValueError, match="switchbot_mac: invalid MAC address format"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_invalid_mac_when_disabled_still_fails():
+    lev = _levoit(enabled=False, switchbot_mac="bad")
+    with pytest.raises(ValueError, match="switchbot_mac: invalid MAC address format"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_zero_target_ah_fails():
+    lev = _levoit(enabled=True, switchbot_mac="AA:BB:CC:DD:EE:FF", target_absolute_humidity=0.0)
+    with pytest.raises(ValueError, match="target_absolute_humidity: must be a positive number"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_negative_target_ah_fails():
+    lev = _levoit(enabled=True, switchbot_mac="AA:BB:CC:DD:EE:FF", target_absolute_humidity=-1.0)
+    with pytest.raises(ValueError, match="target_absolute_humidity: must be a positive number"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_non_number_target_ah_fails():
+    lev = _levoit(enabled=False)
+    lev.target_absolute_humidity = "eight"  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="target_absolute_humidity: must be a number"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_enabled_missing_target_ah_fails():
+    lev = _levoit(enabled=True, switchbot_mac="AA:BB:CC:DD:EE:FF", target_absolute_humidity=None)
+    with pytest.raises(ValueError, match="target_absolute_humidity: required when enabled is true"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_min_humidity_above_100_fails():
+    lev = _levoit()
+    lev.minimum_humidity = 101
+    with pytest.raises(ValueError, match="minimum_humidity: must be between 0 and 100"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_max_humidity_below_0_fails():
+    lev = _levoit()
+    lev.maximum_humidity = -1
+    with pytest.raises(ValueError, match="maximum_humidity: must be between 0 and 100"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_min_humidity_exceeds_max_fails():
+    lev = _levoit()
+    lev.minimum_humidity = 70
+    lev.maximum_humidity = 60
+    with pytest.raises(ValueError, match="minimum_humidity: must be <= maximum_humidity"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_zero_reading_max_age_fails():
+    lev = _levoit()
+    lev.reading_max_age_seconds = 0
+    with pytest.raises(ValueError, match="reading_max_age_seconds: must be a positive integer"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_zero_poll_interval_fails():
+    lev = _levoit()
+    lev.poll_interval_seconds = 0
+    with pytest.raises(ValueError, match="poll_interval_seconds: must be a positive integer"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_zero_minimum_command_interval_fails():
+    lev = _levoit()
+    lev.minimum_command_interval_seconds = 0
+    with pytest.raises(ValueError, match="minimum_command_interval_seconds: must be a positive integer"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_negative_humidity_change_threshold_fails():
+    lev = _levoit()
+    lev.humidity_change_threshold = -0.1
+    with pytest.raises(ValueError, match="humidity_change_threshold: must be >= 0"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_zero_humidity_change_threshold_passes():
+    lev = _levoit()
+    lev.humidity_change_threshold = 0
+    validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_non_bool_enabled_fails():
+    lev = _levoit()
+    lev.enabled = "true"  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="levoit_ah_controller.enabled: must be a boolean"):
+        validate_config(_config(levoit_ah_controller=lev), env="dev")
+
+
+def test_levoit_non_object_fails(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+        "levoit_ah_controller": "yes please",
+    }))
+    _set_base_env(monkeypatch)
+    with pytest.raises(ValueError, match="levoit_ah_controller: must be an object"):
+        load_config(config_dir=config_dir)
+
+
+def test_levoit_load_config_invalid_mac_in_json_fails(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+        "levoit_ah_controller": {
+            "enabled": False,
+            "switchbot_mac": "not-a-mac",
+        },
+    }))
+    _set_base_env(monkeypatch)
+    with pytest.raises(ValueError, match="switchbot_mac"):
+        load_config(config_dir=config_dir)
+
+
+def test_levoit_load_config_parses_and_normalizes_mac(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+        "levoit_ah_controller": {
+            "enabled": True,
+            "switchbot_mac": "aa:bb:cc:dd:ee:ff",
+            "target_absolute_humidity": 8.0,
+        },
+    }))
+    _set_base_env(monkeypatch)
+    cfg = load_config(config_dir=config_dir)
+    assert cfg.levoit_ah_controller.enabled is True
+    assert cfg.levoit_ah_controller.switchbot_mac == "AA:BB:CC:DD:EE:FF"
+    assert cfg.levoit_ah_controller.target_absolute_humidity == 8.0
+
+
+def test_levoit_load_config_absent_uses_defaults(tmp_path, monkeypatch):
+    config_dir = _write_app_json(tmp_path)
+    _set_base_env(monkeypatch)
+    cfg = load_config(config_dir=config_dir)
+    lev = cfg.levoit_ah_controller
+    assert lev.enabled is False
+    assert lev.switchbot_mac is None
+    assert lev.minimum_humidity == 40
+    assert lev.maximum_humidity == 60
+    assert lev.reading_max_age_seconds == 900
+    assert lev.poll_interval_seconds == 300
+    assert lev.minimum_command_interval_seconds == 300
+    assert lev.humidity_change_threshold == 2.0
+
+
+def test_levoit_default_overrides_from_app_json(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+        "levoit_ah_controller": {
+            "enabled": False,
+            "poll_interval_seconds": 120,
+            "humidity_change_threshold": 0.5,
+        },
+    }))
+    _set_base_env(monkeypatch)
+    cfg = load_config(config_dir=config_dir)
+    assert cfg.levoit_ah_controller.poll_interval_seconds == 120
+    assert cfg.levoit_ah_controller.humidity_change_threshold == 0.5
+    assert cfg.levoit_ah_controller.minimum_humidity == 40  # default unchanged
