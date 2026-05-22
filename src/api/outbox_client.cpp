@@ -446,11 +446,35 @@ struct OutboxClientImpl {
     }
 
     static void onPqueueEvent(const pqueue::Event& event, void* context) {
-        const auto* self = static_cast<const OutboxClientImpl*>(context);
-        logPqueueEvent(
-            event,
-            self == nullptr ? api::PqueueLogLevel::Info : self->config.api.outbox.logLevel
-        );
+        auto* self = static_cast<OutboxClientImpl*>(context);
+        if (self == nullptr) {
+            logPqueueEvent(event, api::PqueueLogLevel::Info);
+            return;
+        }
+
+        const bool isTransportFailure =
+            event.kind == pqueue::EventKind::Diagnostic &&
+            event.operation != nullptr &&
+            std::string_view(event.operation) == "transport_post_complete" &&
+            !event.status.ok();
+
+        if (isTransportFailure) {
+            if (self->serverReachable) {
+                self->serverReachable = false;
+                // Let first failure WARN through
+            } else {
+                return; // suppress repeat transport failure events
+            }
+        } else if (event.kind == pqueue::EventKind::RequestRetried && !self->serverReachable) {
+            return; // suppress retry noise while server is known-down
+        } else if (event.kind == pqueue::EventKind::RequestSent && !self->serverReachable) {
+            self->serverReachable = true;
+            const auto stats = self->outbox.stats();
+            logLine(LogLevel::Info,
+                "pqueue: server reachable, remaining=" + std::to_string(stats.count));
+        }
+
+        logPqueueEvent(event, self->config.api.outbox.logLevel);
     }
 
     void logDrop(
@@ -493,6 +517,7 @@ struct OutboxClientImpl {
     pqueue::http::Transport* transport = nullptr;
     pqueue::http::Outbox outbox;
     std::optional<pqueue::http::Response> lastResponse;
+    bool serverReachable = true;
 };
 
 OutboxClient::OutboxClient(const ::Config& config)
