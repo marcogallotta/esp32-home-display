@@ -330,7 +330,6 @@ pqueue::http::Config makeHttpConfig(
 ) {
     pqueue::http::Config httpConfig;
     httpConfig.queue.basePath = queueBasePath;
-    httpConfig.queue.storeLayout = pqueue::StoreLayout::AppendLog;
     httpConfig.queue.reservedBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
     httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
@@ -643,7 +642,7 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
         std::string msg = "pqueue drain:"
             " sent=" + std::to_string(drainResult.sent) +
             " dropped=" + std::to_string(totalDropped) +
-            " queued=" + std::to_string(pqueue_->outbox.stats().count);
+            " remaining=" + std::to_string(pqueue_->outbox.stats().count);
         if (drainResult.sendError || drainResult.queueError) {
             msg += " error=1";
         }
