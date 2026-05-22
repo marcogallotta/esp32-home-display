@@ -285,6 +285,30 @@ TEST_CASE("config validates API values") {
         expectInvalid(doc);
     }
 
+    SUBCASE("compact_bytes_per_step parses") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["compact_bytes_per_step"] = 8192;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.compactBytesPerStep, 8192U);
+    }
+
+    SUBCASE("compact_bytes_per_step defaults to 4096 when omitted") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"].remove("compact_bytes_per_step");
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.compactBytesPerStep, 4096U);
+    }
+
+    SUBCASE("compact_bytes_per_step zero is invalid") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["compact_bytes_per_step"] = 0;
+        expectInvalid(doc);
+    }
+
     SUBCASE("API disk outbox values use defaults when omitted") {
         auto doc = exampleConfig();
         doc["api"]["outbox"].remove("disk_reserve_bytes");

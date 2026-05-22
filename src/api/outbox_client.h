@@ -46,6 +46,7 @@ struct OutboxDrainResult {
     int attempted = 0;
     int sent = 0;
     int dropped = 0;
+    std::uint32_t removedQueuedBytes = 0;
     bool blockedByRetryableFailure = false;
     bool notDueYet = false;
 };

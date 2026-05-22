@@ -78,6 +78,7 @@ struct AppContext {
 
     api::State apiState;
     api::OutboxClient apiOutboxClient;
+    bool pqueueMoreCompactionLikely = false;
 
     UiState currentUiState;
     bool hasPreviousState = false;
@@ -350,14 +351,37 @@ void syncOutputs(AppContext& app, std::time_t now) {
         app.hasValidTime = true;
     }
 
-    app.apiOutboxClient.drainPending(nowMs);
+    const auto drain = app.apiOutboxClient.drainPending(nowMs);
 
-    if (app.config.api.outbox.idleCompactSteps > 0) {
-        const auto cr = app.apiOutboxClient.compactIdle(
-            static_cast<size_t>(app.config.api.outbox.idleCompactSteps));
+    const bool followup = app.pqueueMoreCompactionLikely;
+    const bool drained = drain.removedQueuedBytes > 0;
+
+    if (app.config.api.outbox.idleCompactSteps > 0 && (drained || followup)) {
+        const size_t maxSteps = static_cast<size_t>(app.config.api.outbox.idleCompactSteps);
+
+        size_t steps = maxSteps;
+        if (!followup) {
+            const size_t bytes = static_cast<size_t>(drain.removedQueuedBytes);
+            const size_t perStep = static_cast<size_t>(app.config.api.outbox.compactBytesPerStep);
+            steps = std::max<size_t>(1, (bytes + perStep - 1) / perStep);
+            steps = std::min(maxSteps, steps);
+        }
+
+        const auto cr = app.apiOutboxClient.compactIdle(steps);
+        app.pqueueMoreCompactionLikely = cr.status.ok() && cr.moreWorkLikely;
+
         if (cr.compactions > 0 || !cr.status.ok()) {
-            std::string msg = "pqueue idle compaction: steps=" + std::to_string(cr.stepsRun) +
-                " compactions=" + std::to_string(cr.compactions);
+            std::string msg = "pqueue idle compaction:"
+                " budgetSteps=" + std::to_string(steps) +
+                " steps=" + std::to_string(cr.stepsRun) +
+                " compactions=" + std::to_string(cr.compactions) +
+                " noOps=" + std::to_string(cr.noOps) +
+                " removedBytes=" + std::to_string(drain.removedQueuedBytes) +
+                " reclaimed=" + std::to_string(cr.bytesReclaimed) +
+                " deadBefore=" + std::to_string(cr.deadBytesBefore) +
+                " deadRemaining=" + std::to_string(cr.remainingDeadBytes) +
+                " inSegs=" + std::to_string(cr.inputSegments) +
+                " outSegs=" + std::to_string(cr.outputSegments);
             if (!cr.status.ok()) {
                 msg += " error=";
                 msg += pqueue::statusCodeName(cr.status.code);
@@ -365,6 +389,9 @@ void syncOutputs(AppContext& app, std::time_t now) {
                     msg += " backend=";
                     msg += std::to_string(cr.status.backendCode);
                 }
+            }
+            if (cr.moreWorkLikely) {
+                msg += " moreWork=1";
             }
             logLine(LogLevel::Info, msg);
         }

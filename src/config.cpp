@@ -202,7 +202,8 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
          !readOptionalInt(apiOutbox, "drain_rate_tick_s", apiOutboxConfig.drainRateTickS, "api.outbox.drain_rate_tick_s") ||
          !readOptionalUint32(apiOutbox, "retry_delay_ms", apiOutboxConfig.retryDelayMs, "api.outbox.retry_delay_ms") ||
          !readOptionalPqueueLogLevel(apiOutbox, "pqueue_log_level", apiOutboxConfig.logLevel, "api.outbox.pqueue_log_level") ||
-         !readOptionalInt(apiOutbox, "idle_compact_steps", apiOutboxConfig.idleCompactSteps, "api.outbox.idle_compact_steps"))) {
+         !readOptionalInt(apiOutbox, "idle_compact_steps", apiOutboxConfig.idleCompactSteps, "api.outbox.idle_compact_steps") ||
+         !readOptionalUint32(apiOutbox, "compact_bytes_per_step", apiOutboxConfig.compactBytesPerStep, "api.outbox.compact_bytes_per_step"))) {
         return false;
     }
 
@@ -237,6 +238,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     }
     if (apiOutboxConfig.idleCompactSteps < 0) {
         return fail("api.outbox.idle_compact_steps must be >= 0");
+    }
+    if (apiOutboxConfig.compactBytesPerStep == 0) {
+        return fail("api.outbox.compact_bytes_per_step must be > 0");
     }
     if (sensorWritePolicyConfig.heartbeatMinutes <= 0) {
         return fail("api.sensor_write_policy.heartbeat_minutes must be > 0");

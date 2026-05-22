@@ -669,6 +669,7 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     result.attempted = drainResult.attempts;
     result.sent = drainResult.sent;
     result.dropped = drainResult.dropped + drainResult.corruptDropped;
+    result.removedQueuedBytes = drainResult.removedQueuedBytes;
     result.notDueYet = drainResult.notDue || drainResult.rateLimited;
     result.blockedByRetryableFailure = drainResult.sendError || drainResult.queueError;
 
