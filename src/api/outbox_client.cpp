@@ -642,7 +642,8 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     if (drainResult.sent > 0 || totalDropped > 0 || drainResult.sendError || drainResult.queueError) {
         std::string msg = "pqueue drain:"
             " sent=" + std::to_string(drainResult.sent) +
-            " dropped=" + std::to_string(totalDropped);
+            " dropped=" + std::to_string(totalDropped) +
+            " queued=" + std::to_string(pqueue_->outbox.stats().count);
         if (drainResult.sendError || drainResult.queueError) {
             msg += " error=1";
         }
