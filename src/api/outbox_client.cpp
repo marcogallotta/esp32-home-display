@@ -462,16 +462,23 @@ struct OutboxClientImpl {
             !event.status.ok();
 
         if (isTransportFailure) {
-            if (self->serverReachable) {
-                self->serverReachable = false;
+            if (self->transportOk) {
+                self->transportOk = false;
                 // Let first failure WARN through
             } else {
                 return; // suppress repeat transport failure events
             }
-        } else if (event.kind == pqueue::EventKind::RequestRetried && !self->serverReachable) {
-            return; // suppress retry noise while server is known-down
-        } else if (event.kind == pqueue::EventKind::RequestSent && !self->serverReachable) {
-            self->serverReachable = true;
+        } else if (event.kind == pqueue::EventKind::RequestRetried && !self->transportOk) {
+            if (event.attempt % 12 == 0) {
+                std::string msg = "pqueue: still retrying attempt=" + std::to_string(event.attempt);
+                if (event.remainingMs != 0) {
+                    msg += " next_retry_ms=" + std::to_string(event.remainingMs);
+                }
+                logLine(LogLevel::Warn, msg);
+            }
+            return;
+        } else if (event.kind == pqueue::EventKind::RequestSent && !self->transportOk) {
+            self->transportOk = true;
             const auto stats = self->outbox.stats();
             logLine(LogLevel::Info,
                 "pqueue: server reachable, remaining=" + std::to_string(stats.count));
@@ -520,7 +527,7 @@ struct OutboxClientImpl {
     pqueue::http::Transport* transport = nullptr;
     pqueue::http::Outbox outbox;
     std::optional<pqueue::http::Response> lastResponse;
-    bool serverReachable = true;
+    bool transportOk = true;
 };
 
 OutboxClient::OutboxClient(const ::Config& config)
