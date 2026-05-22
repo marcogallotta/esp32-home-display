@@ -203,18 +203,21 @@ void logPqueueEvent(const pqueue::Event& event, api::PqueueLogLevel configured) 
         message += event.operation;
     }
 
-    message += ": ";
-    message += event.status.message == nullptr || event.status.message[0] == '\0'
-        ? pqueue::statusCodeName(event.status.code)
-        : event.status.message;
+    if (event.kind != pqueue::EventKind::RequestRetried) {
+        message += ": ";
+        message += event.status.message == nullptr || event.status.message[0] == '\0'
+            ? pqueue::statusCodeName(event.status.code)
+            : event.status.message;
 
-    message += " code=";
-    message += pqueue::statusCodeName(event.status.code);
+        message += " code=";
+        message += pqueue::statusCodeName(event.status.code);
 
-    if (event.status.backendCode != 0) {
-        message += " backend=";
-        message += std::to_string(event.status.backendCode);
+        if (event.status.backendCode != 0) {
+            message += " backend=";
+            message += std::to_string(event.status.backendCode);
+        }
     }
+
     if (event.queueCount != 0) {
         message += " queued=";
         message += std::to_string(event.queueCount);
@@ -224,7 +227,7 @@ void logPqueueEvent(const pqueue::Event& event, api::PqueueLogLevel configured) 
         message += std::to_string(event.attempt);
     }
     if (event.remainingMs != 0) {
-        message += " remaining_ms=";
+        message += event.kind == pqueue::EventKind::RequestRetried ? " next_retry_ms=" : " remaining_ms=";
         message += std::to_string(event.remainingMs);
     }
     if (event.method != nullptr && event.method[0] != '\0') {
