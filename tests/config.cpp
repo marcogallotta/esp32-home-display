@@ -252,6 +252,39 @@ TEST_CASE("config validates API values") {
         }
     }
 
+    SUBCASE("idle_compact_steps parses") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["idle_compact_steps"] = 3;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.idleCompactSteps, 3);
+    }
+
+    SUBCASE("idle_compact_steps defaults to 1 when omitted") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"].remove("idle_compact_steps");
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.idleCompactSteps, 1);
+    }
+
+    SUBCASE("idle_compact_steps zero is valid (disables compaction)") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["idle_compact_steps"] = 0;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.idleCompactSteps, 0);
+    }
+
+    SUBCASE("idle_compact_steps negative is invalid") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["idle_compact_steps"] = -1;
+        expectInvalid(doc);
+    }
+
     SUBCASE("API disk outbox values use defaults when omitted") {
         auto doc = exampleConfig();
         doc["api"]["outbox"].remove("disk_reserve_bytes");

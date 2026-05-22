@@ -330,6 +330,7 @@ pqueue::http::Config makeHttpConfig(
 ) {
     pqueue::http::Config httpConfig;
     httpConfig.queue.basePath = queueBasePath;
+    httpConfig.queue.storeLayout = pqueue::StoreLayout::AppendLog;
     httpConfig.queue.reservedBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
     httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
@@ -618,6 +619,10 @@ WriteResult OutboxClient::send(ApiRequest request) {
     }
 
     return makeWriteResult(WriteStatus::DroppedPermanent);
+}
+
+pqueue::CompactIdleResult OutboxClient::compactIdle(size_t maxSteps) {
+    return pqueue_->outbox.compactIdle(maxSteps);
 }
 
 OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {

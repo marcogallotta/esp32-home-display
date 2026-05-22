@@ -352,6 +352,24 @@ void syncOutputs(AppContext& app, std::time_t now) {
 
     app.apiOutboxClient.drainPending(nowMs);
 
+    if (app.config.api.outbox.idleCompactSteps > 0) {
+        const auto cr = app.apiOutboxClient.compactIdle(
+            static_cast<size_t>(app.config.api.outbox.idleCompactSteps));
+        if (cr.compactions > 0 || !cr.status.ok()) {
+            std::string msg = "pqueue idle compaction: steps=" + std::to_string(cr.stepsRun) +
+                " compactions=" + std::to_string(cr.compactions);
+            if (!cr.status.ok()) {
+                msg += " error=";
+                msg += pqueue::statusCodeName(cr.status.code);
+                if (cr.status.backendCode != 0) {
+                    msg += " backend=";
+                    msg += std::to_string(cr.status.backendCode);
+                }
+            }
+            logLine(LogLevel::Info, msg);
+        }
+    }
+
     if (app.hasValidTime) {
         syncApiState(app.config, app.currentState, app.apiState, app.apiOutboxClient);
     } else {

@@ -94,6 +94,7 @@ public:
 
     WriteResult send(ApiRequest request);
     OutboxDrainResult drainPending(std::uint64_t nowMs);
+    pqueue::CompactIdleResult compactIdle(size_t maxSteps);
 
 private:
     const ::Config& config_;

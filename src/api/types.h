@@ -20,6 +20,7 @@ struct OutboxConfig {
     int drainRateTickS = 1;
     std::uint32_t retryDelayMs = 10000;
     PqueueLogLevel logLevel = PqueueLogLevel::Info;
+    int idleCompactSteps = 1;
 };
 
 struct ApiRequest {
