@@ -27,7 +27,7 @@ services:
       "--ssl-keyfile", "certs/key.pem",
       "--ssl-certfile", "certs/cert.pem",
       "--log-config", "config/logging.yaml",
-      "--reload"]
+      "--reload", "--reload-dir", "app", "--reload-dir", "static"]
     ports:
       - "8000:8000"
     depends_on:
