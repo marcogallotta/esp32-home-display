@@ -1,5 +1,6 @@
 alembic
 numpy
+scikit-learn
 fastapi
 httpx
 itsdangerous

@@ -53,6 +53,7 @@ def _get_openmeteo_weather(start_ts: str, end_ts: str, lat: float, lon: float) -
     points: list[dict] = []
 
     archive_end = min(end_date, today)
+    archive_ok = False
     if start_date <= archive_end:
         try:
             points.extend(_fetch_meteo(
@@ -60,6 +61,7 @@ def _get_openmeteo_weather(start_ts: str, end_ts: str, lat: float, lon: float) -
                 {**base, "start_date": str(start_date), "end_date": str(archive_end)},
                 "archive",
             ))
+            archive_ok = True
         except Exception:
             logger.warning("Open-Meteo archive fetch failed", exc_info=True)
 
@@ -74,6 +76,22 @@ def _get_openmeteo_weather(start_ts: str, end_ts: str, lat: float, lon: float) -
         except Exception:
             logger.warning("Open-Meteo forecast fetch failed", exc_info=True)
 
+    if not archive_ok and start_date < today:
+        # Archive API unavailable; use forecast API's past_days as fallback
+        past_days = (today - start_date).days
+        try:
+            fallback = _fetch_meteo(
+                _FORECAST_URL,
+                {**base, "past_days": past_days, "forecast_days": 0},
+                "archive",
+            )
+            # Only add points not already covered by other fetches
+            existing_ts = {p["timestamp"] for p in points}
+            points.extend(p for p in fallback if p["timestamp"] not in existing_ts)
+            logger.info("Open-Meteo archive fallback via forecast past_days=%d", past_days)
+        except Exception:
+            logger.warning("Open-Meteo forecast past_days fallback failed", exc_info=True)
+
     seen: dict[str, dict] = {}
     for p in points:
         ts = p["timestamp"]
@@ -81,7 +99,8 @@ def _get_openmeteo_weather(start_ts: str, end_ts: str, lat: float, lon: float) -
             seen[ts] = p
     result = sorted(seen.values(), key=lambda p: p["timestamp"])
 
-    _cache[cache_key] = (time.monotonic(), result)
+    if result:
+        _cache[cache_key] = (time.monotonic(), result)
     return result
 
 
