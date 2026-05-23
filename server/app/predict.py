@@ -164,7 +164,8 @@ def get_temperature_predictions(request: Request):
                     "sensor_name": sensor.name,
                     "predictions": preds,
                 })
-        _cache[cache_key] = (time.monotonic(), result)
+        if result:
+            _cache[cache_key] = (time.monotonic(), result)
         return result
     except Exception:
         logger.exception("Prediction endpoint failed")
