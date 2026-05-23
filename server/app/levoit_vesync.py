@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class VeSyncError(Exception):
@@ -22,10 +23,17 @@ class HumidifierState:
 
 
 class LevoitVeSyncClient:
-    def __init__(self, username: str, password: str, cid: str) -> None:
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        cid: str,
+        token_file_path: str | Path | None = None,
+    ) -> None:
         self._username = username
         self._password = password
         self._cid = cid
+        self._token_file_path = Path(token_file_path) if token_file_path is not None else None
 
     def fetch_state(self) -> HumidifierState:
         return asyncio.run(self._fetch_state())
@@ -35,12 +43,25 @@ class LevoitVeSyncClient:
 
     async def _connect(self):
         from pyvesync import VeSync  # noqa: PLC0415
+        from pyvesync.utils.errors import VeSyncTokenError  # noqa: PLC0415
         manager = VeSync(self._username, self._password)
         await manager.__aenter__()
-        if not await manager.login():
-            await manager.__aexit__(None, None, None)
-            raise VeSyncError("VeSync login failed")
-        await manager.get_devices()
+        loaded = False
+        if self._token_file_path is not None:
+            loaded = await manager.auth.load_credentials_from_file(self._token_file_path)
+        if not loaded:
+            if not await manager.login():
+                await manager.__aexit__(None, None, None)
+                raise VeSyncError("VeSync login failed")
+            if self._token_file_path is not None:
+                await manager.auth.save_credentials_to_file(self._token_file_path)
+        try:
+            await manager.get_devices()
+        except VeSyncTokenError:
+            if not await manager.auth.reauthenticate():
+                await manager.__aexit__(None, None, None)
+                raise VeSyncError("VeSync re-authentication failed")
+            await manager.get_devices()
         for device in manager.devices.humidifiers:
             if device.cid == self._cid:
                 await device.update()

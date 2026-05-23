@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from .config import Config, LevoitAhControllerConfig
 from .levoit_api_client import LevoitApiClient, LevoitApiError, SwitchbotLatestReading, SwitchbotSensorNotFound
 from .levoit_controller import LevoitControlDecision, compute_decision
@@ -74,7 +76,12 @@ def _build_vesync_client(config: Config) -> LevoitVeSyncClient | None:
     cid = config.vesync_device_cid
     if username is None or password is None or cid is None:
         return None
-    return LevoitVeSyncClient(username=username, password=password, cid=cid)
+    return LevoitVeSyncClient(
+        username=username,
+        password=password,
+        cid=cid,
+        token_file_path=Path("/app/data/vesync_auth.json"),
+    )
 
 
 _sentinel = object()

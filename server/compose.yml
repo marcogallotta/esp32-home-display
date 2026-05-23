@@ -46,6 +46,7 @@ services:
       - ./app:/app/app:ro
       - ./config:/app/config:ro
       - ./tools:/app/tools:ro
+      - vesync-data:/app/data
     command: ["python", "tools/run_levoit_ah_controller.py"]
     depends_on:
       app:
@@ -54,3 +55,4 @@ services:
 
 volumes:
   pgdata-dev:
+  vesync-data:
