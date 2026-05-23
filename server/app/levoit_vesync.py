@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 
@@ -62,11 +63,30 @@ class LevoitVeSyncClient:
 
     async def _set_humidity(self, humidity: int) -> None:
         manager, device = await self._connect()
+        captured = []
+
+        class _Cap(logging.Handler):
+            def emit(self, record):
+                captured.append(self.format(record))
+
+        cap = _Cap()
+        logging.getLogger("pyvesync").addHandler(cap)
         try:
+            auto_mode = next(iter(device.mist_modes))
+            if device.state.mode != auto_mode:
+                ok = await device.set_mode(auto_mode)
+                if not ok:
+                    detail = "; ".join(captured) if captured else "no detail"
+                    raise VeSyncError(
+                        f"set_mode(auto) failed for {device.device_name!r}: {detail}"
+                    )
+                captured.clear()
             ok = await device.set_humidity(humidity)
             if not ok:
+                detail = "; ".join(captured) if captured else "no detail"
                 raise VeSyncError(
-                    f"set_humidity({humidity}) returned false for device {device.device_name!r}"
+                    f"set_humidity({humidity}) failed for {device.device_name!r}: {detail}"
                 )
         finally:
+            logging.getLogger("pyvesync").removeHandler(cap)
             await manager.__aexit__(None, None, None)
