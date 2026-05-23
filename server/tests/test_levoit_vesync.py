@@ -20,7 +20,10 @@ def _mock_device(cid="test-cid", name="Bedroom Humidifier", device_type="LUH-A60
     device.device_name = name
     device.device_type = device_type
     device.state.auto_target_humidity = target_humidity
+    device.state.mode = "auto"
+    device.mist_modes = ["auto"]
     device.update = AsyncMock()
+    device.set_mode = AsyncMock(return_value=True)
     device.set_humidity = AsyncMock(return_value=True)
     return device
 

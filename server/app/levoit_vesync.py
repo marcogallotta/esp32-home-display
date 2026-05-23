@@ -85,7 +85,7 @@ class LevoitVeSyncClient:
             if not ok:
                 detail = "; ".join(captured) if captured else "no detail"
                 raise VeSyncError(
-                    f"set_humidity({humidity}) failed for {device.device_name!r}: {detail}"
+                    f"set_humidity({humidity}) returned false for {device.device_name!r}: {detail}"
                 )
         finally:
             logging.getLogger("pyvesync").removeHandler(cap)
