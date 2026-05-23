@@ -28,12 +28,13 @@ enum class TransportError {
 
 struct Response {
     Response() = default;
-    Response(int statusCode, TransportError error, std::string body = {})
-        : statusCode(statusCode), error(error), body(body) {}
+    Response(int statusCode, TransportError error, std::string body = {}, std::uint32_t retryAfterMs = 0)
+        : statusCode(statusCode), error(error), body(body), retryAfterMs(retryAfterMs) {}
 
     int statusCode = kNoStatusCode;
     TransportError error = TransportError::Unknown;
     std::string body;
+    std::uint32_t retryAfterMs = 0; // populated by transport when server sends Retry-After
 };
 
 struct TransportConfig {
@@ -57,7 +58,6 @@ class Transport {
 public:
     virtual ~Transport() = default;
 
-    // TODO: add a generic send() API if/when GET or other methods are supported.
     virtual Response post(
         const char* url,
         const Header* headers,
@@ -120,7 +120,6 @@ struct Config {
 
 class Outbox {
 public:
-    // TODO: add an advanced constructor for dependency-injected core Outbox/storage in tests or custom backends.
     Outbox(
         Config httpConfig,
         Transport& transport,
@@ -131,6 +130,7 @@ public:
     pqueue::SubmitResult submitPost(const std::string& path, const std::string& body);
     pqueue::DrainResult drain();
     pqueue::DrainResult drainUpTo(std::uint16_t maxDrainAttempts);
+    pqueue::CompactIdleResult compactIdle(std::size_t maxSteps);
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     Stats stats();
 

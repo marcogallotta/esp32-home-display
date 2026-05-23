@@ -5,6 +5,8 @@
 #include "pqueue/append_log_common.h"
 #include "pqueue/status.h"
 
+#include "support/pqueue_queue_support.h"
+
 #include "doctest/doctest.h"
 
 #ifndef ARDUINO
@@ -123,17 +125,13 @@ inline void plantLayout(const LayoutSpec& spec) {
 }
 
 inline void storeEnqueue(pqueue::AppendLogStore& store, std::uint32_t seq, const std::string& payload) {
-    CHECK(store.writeRecord(seq, payload).ok());
-    pqueue::FileStoreIndex idx;
-    CHECK(store.readIndex(idx).ok());
-    CHECK(store.writeIndex(idx).ok());
+    CHECK(store.commitEnqueue(seq, payload).ok());
 }
 
 inline void storePop(pqueue::AppendLogStore& store) {
-    pqueue::FileStoreIndex idx;
+    pqueue::QueueIndex idx;
     CHECK(store.readIndex(idx).ok());
-    idx.head++;
-    CHECK(store.writeIndex(idx).ok());
+    CHECK(store.commitPop(idx.head).ok());
 }
 
 inline void expectRecord(pqueue::AppendLogStore& store, std::uint32_t seq, const std::string& payload) {
@@ -156,43 +154,9 @@ inline void expectRecordsAfterRemount(const pqueue::AppendLogConfig& cfg,
         expectRecord(store, seq, payload);
 }
 
-class FaultInjectingFs final : public pqueue::FileSystem {
-public:
-    explicit FaultInjectingFs(std::shared_ptr<pqueue::FileSystem> inner)
-        : inner_(std::move(inner)) {}
-
-    // Fail the next writeFile whose name contains this substring. Cleared on match.
-    std::string failNextWriteFileTo;
-
-    pqueue::Status mount(const std::string& p) override { return inner_->mount(p); }
-    pqueue::Status readFile(const std::string& n, std::string& o) override { return inner_->readFile(n, o); }
-    pqueue::Status writeFile(const std::string& name, const std::string& data) override {
-        if (!failNextWriteFileTo.empty() && name.find(failNextWriteFileTo) != std::string::npos) {
-            failNextWriteFileTo.clear();
-            return pqueue::Status::failure(pqueue::StatusCode::WriteFailed, "injected write failure");
-        }
-        return inner_->writeFile(name, data);
-    }
-    pqueue::Status readAt(const std::string& n, std::uint64_t o, std::size_t s, std::string& out) override { return inner_->readAt(n, o, s, out); }
-    pqueue::Status writeAt(const std::string& n, std::uint64_t o, const std::string& d) override { return inner_->writeAt(n, o, d); }
-    pqueue::Status resizeFile(const std::string& n, std::uint64_t s) override { return inner_->resizeFile(n, s); }
-    pqueue::Status fileSize(const std::string& n, std::uint64_t& o) override { return inner_->fileSize(n, o); }
-    pqueue::Status removeFile(const std::string& n) override { return inner_->removeFile(n); }
-    pqueue::Status renameFile(const std::string& f, const std::string& t) override { return inner_->renameFile(f, t); }
-    pqueue::Status listFiles(std::vector<std::string>& o) override { return inner_->listFiles(o); }
-    pqueue::Status tryAcquireLockFile(const std::string& n, const std::string& c) override { return inner_->tryAcquireLockFile(n, c); }
-    pqueue::Status releaseLockFile(const std::string& n, const std::string& c) override { return inner_->releaseLockFile(n, c); }
-    pqueue::Status recoverStaleLockFile(const std::string& n, const std::string& c) override { return inner_->recoverStaleLockFile(n, c); }
-    std::uint64_t freeBytes() const override { return inner_->freeBytes(); }
-
-private:
-    std::shared_ptr<pqueue::FileSystem> inner_;
-};
-
 inline pqueue::Config makeConfig() {
     pqueue::Config cfg;
     cfg.basePath = kSpoolDir.string();
-    cfg.storeLayout = pqueue::StoreLayout::AppendLog;
     cfg.recordSizeBytes = 256;
     cfg.reservedBytes = 64 * 1024;
     cfg.maxSegmentBytes = 1024; // small to force rotation in tests

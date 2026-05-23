@@ -11,7 +11,7 @@
 
 #include "pqueue/append_log_common.h"
 #include "pqueue/append_log_store.h"
-#include "pqueue/file_store.h"
+#include "pqueue/store_types.h"
 #include "pqueue/status.h"
 #include "counting_file_system.h"
 
@@ -316,24 +316,12 @@ void test_compaction_burst_workload() {
             std::uint32_t t0;
 
             t0 = millis();
-            const auto st = store.writeRecord(nextSeq, makePayload(nextSeq));
+            const auto st = store.commitEnqueue(nextSeq, makePayload(nextSeq));
             t_wr += millis() - t0;
 
             if (st.ok()) {
-                pqueue::FileStoreIndex dummy;
-                t0 = millis();
-                const auto idxSt = store.writeIndex(dummy);
-                t_widx += millis() - t0;
-                if (idxSt.ok()) {
-                    ++nextSeq;
-                    ++queueSize;
-                } else {
-                    Serial.printf("[enq] writeIndex failed: code=%d ranges=%u q=%u\n",
-                        static_cast<int>(idxSt.code),
-                        static_cast<unsigned>(static_cast<unsigned>(store.manifestRanges().size())),
-                        queueSize);
-                    Serial.flush();
-                }
+                ++nextSeq;
+                ++queueSize;
             } else {
                 bool reclaimable = false;
                 for (const auto& rs : buildRangeStats(store)) {
@@ -351,22 +339,20 @@ void test_compaction_burst_workload() {
         const std::uint32_t t_pop0 = millis();
         for (std::uint32_t i = 0; i < toPop; ++i) {
             std::uint32_t t0;
-            pqueue::FileStoreIndex idx;
-            t0 = millis();
-            const bool ok = store.readIndex(idx).ok() && idx.count > 0;
-            t_ridx += millis() - t0;
-            if (ok) {
-                idx.head++;
-                idx.count--;
+            pqueue::QueueIndex idx;
+            if (!store.readIndex(idx).ok() || idx.count == 0) {
+                continue;
+            }
+            {
                 t0 = millis();
-                const auto idxSt = store.writeIndex(idx);
+                const auto idxSt = store.commitPop(idx.head);
                 t_widx += millis() - t0;
                 if (idxSt.ok()) {
                     --queueSize;
                 } else {
-                    Serial.printf("[pop] writeIndex failed: code=%d ranges=%u q=%u\n",
+                    Serial.printf("[pop] commitPop failed: code=%d ranges=%u q=%u\n",
                         static_cast<int>(idxSt.code),
-                        static_cast<unsigned>(static_cast<unsigned>(store.manifestRanges().size())),
+                        static_cast<unsigned>(store.manifestRanges().size()),
                         queueSize);
                     Serial.flush();
                 }
@@ -408,7 +394,7 @@ void test_compaction_burst_workload() {
 
     // Verify all remaining live records are readable and have correct payloads.
     {
-        pqueue::FileStoreIndex idx;
+        pqueue::QueueIndex idx;
         TEST_ASSERT_TRUE_MESSAGE(store.readIndex(idx).ok(), "readIndex failed");
         TEST_ASSERT_EQUAL_UINT32_MESSAGE(queueSize, idx.count,
             "index count mismatch after workload");

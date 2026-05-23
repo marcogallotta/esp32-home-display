@@ -48,11 +48,9 @@ TEST_CASE("rollover: range limit exceeded returns failure") {
     pqueue::AppendLogStore store(storeCfg);
     REQUIRE(store.mount().ok());
 
-    pqueue::FileStoreIndex dummy{};
-    REQUIRE(store.writeRecord(0, "x").ok());
-    REQUIRE(store.writeIndex(dummy).ok()); // seg 9 now full
+    REQUIRE(store.commitEnqueue(0, "x").ok()); // seg 9 now full
 
-    const auto st = store.writeRecord(1, "y"); // triggers rotateSegment() → limit exceeded
+    const auto st = store.commitEnqueue(1, "y"); // triggers rotateSegment() → limit exceeded
     CHECK_FALSE(st.ok());
     CHECK_EQ(st.code, pqueue::StatusCode::RangeLimitExceeded);
 
@@ -112,18 +110,16 @@ TEST_CASE("rollover: failed manifest publish does not poison live object (critic
         REQUIRE(store.mount().ok());
 
         faultFs->failNextWriteFileTo = "manifest";
-        const auto st = store.writeRecord(0, "hello");
+        const auto st = store.commitEnqueue(0, "hello");
         CHECK_FALSE(st.ok());
 
-        pqueue::FileStoreIndex dummy{};
-        REQUIRE(store.writeRecord(0, "hello").ok());
-        REQUIRE(store.writeIndex(dummy).ok());
+        REQUIRE(store.commitEnqueue(0, "hello").ok());
     }
 
     {
         pqueue::AppendLogStore store2(makeStoreConfig());
         REQUIRE(store2.mount().ok());
-        pqueue::FileStoreIndex idx;
+        pqueue::QueueIndex idx;
         REQUIRE(store2.readIndex(idx).ok());
         CHECK_EQ(idx.count, 1U);
         std::string out;
@@ -151,16 +147,13 @@ TEST_CASE("rollover: failed manifest publish during rotation does not poison liv
         pqueue::AppendLogStore store(cfg);
         REQUIRE(store.mount().ok());
 
-        pqueue::FileStoreIndex dummy{};
-        REQUIRE(store.writeRecord(0, "A").ok());
-        REQUIRE(store.writeIndex(dummy).ok()); // seg 1 full
+        REQUIRE(store.commitEnqueue(0, "A").ok()); // seg 1 full
 
         faultFs->failNextWriteFileTo = "manifest";
-        const auto st = store.writeRecord(1, "B"); // rotation fails
+        const auto st = store.commitEnqueue(1, "B"); // rotation fails
         CHECK_FALSE(st.ok());
 
-        REQUIRE(store.writeRecord(1, "B").ok()); // retry succeeds
-        REQUIRE(store.writeIndex(dummy).ok());
+        REQUIRE(store.commitEnqueue(1, "B").ok()); // retry succeeds
     }
 
     {
@@ -168,7 +161,7 @@ TEST_CASE("rollover: failed manifest publish during rotation does not poison liv
         cfg2.maxSegmentBytes = maxSeg;
         pqueue::AppendLogStore store2(cfg2);
         REQUIRE(store2.mount().ok());
-        pqueue::FileStoreIndex idx;
+        pqueue::QueueIndex idx;
         REQUIRE(store2.readIndex(idx).ok());
         CHECK_EQ(idx.count, 2U);
         std::string out;

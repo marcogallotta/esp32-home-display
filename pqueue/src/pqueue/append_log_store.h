@@ -11,7 +11,7 @@
 
 #include "append_log_common.h"
 #include "events.h"
-#include "file_store.h"
+#include "store_types.h"
 #include "file_system.h"
 #include "status.h"
 
@@ -35,14 +35,13 @@ public:
     explicit AppendLogStore(AppendLogConfig config = AppendLogConfig{});
 
     Status mount() override;
-    Status readIndex(FileStoreIndex& out) override;
-    Status readIndexFromDisk(FileStoreIndex& out) override;
-    Status writeIndex(const FileStoreIndex& index) override;
+    Status readIndex(QueueIndex& out) override;
 
-    Status writeRecord(std::uint32_t sequence, const std::string& record) override;
+    Status commitEnqueue(std::uint32_t sequence, const std::string& record) override;
+    Status commitPop(std::uint32_t expectedSequence) override;
     Status rewriteRecord(std::uint32_t sequence, const std::string& record) override;
     Status readRecord(std::uint32_t sequence, std::string& out) override;
-    Status removeRecord(std::uint32_t sequence) override;
+    Status readRecordSize(std::uint32_t sequence, std::size_t& out) override;
 
     Status publishManifest(const append_log_detail::ManifestData& manifest);
     bool readManifest(append_log_detail::ManifestData& out);
@@ -64,10 +63,16 @@ public:
     enum class AllowFullRangeFallback : bool { no = false, yes = true };
     Status compactRange(const CompactionRange& range,
                         std::uint32_t* outputSegCount = nullptr,
-                        AllowFullRangeFallback allowFallback = AllowFullRangeFallback::no);
-    Status compactOneSegment(AllowFullRangeFallback allowFallback = AllowFullRangeFallback::no);
+                        AllowFullRangeFallback allowFallback = AllowFullRangeFallback::no,
+                        std::uint32_t* inputSegCount = nullptr);
+    Status compactOneSegment(AllowFullRangeFallback allowFallback = AllowFullRangeFallback::no,
+                             std::uint32_t* inputSegs = nullptr,
+                             std::uint32_t* outputSegs = nullptr);
+    // Runs until no compaction candidate remains. May take many steps -- offline/maintenance use only.
+    // In firmware loops use compactIdle(n) instead.
     Status compactFull();
     CompactIdleResult compactIdle(std::size_t maxSteps) override;
+    std::uint32_t sumDeadBytes() const;
 
     struct SegmentStat {
         std::uint32_t generation = 0;
@@ -87,10 +92,9 @@ public:
     Status recoverStaleLockFile(const std::string& name, const std::string& currentContents) override;
 
     std::uint64_t freeBytes() const override;
-    bool canEnqueue(std::size_t recordSize, std::uint32_t currentCount) const override;
+    bool canEnqueue(std::size_t recordSize) const override;
 
     Status format() override;
-    Status rebuildMetadata() override;
     ValidationResult validateUnlocked(const ValidationOptions& options = ValidationOptions{}) override;
 
 private:
@@ -137,7 +141,7 @@ private:
     // divergence between publish and mount reconstruction.
     void applyManifestToRam(const append_log_detail::ManifestData& manifest);
 
-    FileStoreIndex indexFromRecords() const;
+    QueueIndex indexFromRecords() const;
 
     AppendLogConfig config_;
     mutable std::shared_ptr<FileSystem> fs_;
@@ -186,9 +190,6 @@ private:
     // queue does not reset to sequence 0 on remount.
     std::uint32_t nextSequence_ = 0;
 
-    // Pending enqueue state (set in writeRecord, cleared in writeIndex)
-    bool hasPendingEnqueue_ = false;
-    SegmentRecord pendingRecord_;
 };
 
 } // namespace pqueue

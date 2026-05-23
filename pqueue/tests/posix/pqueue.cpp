@@ -1,9 +1,9 @@
 #include "pqueue/queue.h"
-#include "pqueue/storage_common.h"
 
 #include "doctest/doctest.h"
 
 #ifndef ARDUINO
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -36,26 +36,12 @@ void writeActiveLockFile() {
     lock << "token=active-test-lock\n";
 }
 
-std::uint64_t testRecordRegionOffset(const pqueue::Config& config) {
-    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
-           pqueue::storage_detail::kCheckpointRecordBytes +
-           config.journalBytes;
-}
-
-std::uint64_t testCheckpointOffset(std::uint32_t slot) {
-    return static_cast<std::uint64_t>(slot) * pqueue::storage_detail::kCheckpointRecordBytes;
-}
-
-std::uint64_t testJournalOffset(std::uint32_t entryIndex) {
-    return static_cast<std::uint64_t>(pqueue::storage_detail::kCheckpointSlots) *
-           pqueue::storage_detail::kCheckpointRecordBytes +
-           static_cast<std::uint64_t>(entryIndex) * pqueue::storage_detail::kJournalEntryBytes;
-}
-
-std::uint64_t testSlotOffset(const pqueue::Config& config, std::uint32_t sequence) {
-    const auto slotSize = pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes;
-    const auto capacity = config.reservedBytes / slotSize;
-    return testRecordRegionOffset(config) + static_cast<std::uint64_t>(sequence % capacity) * slotSize;
+pqueue::Config makeConfig() {
+    pqueue::Config cfg;
+    cfg.basePath = kSpoolDir.string();
+    cfg.maxSegmentBytes = 1024;
+    cfg.minFreeBytes = 0;
+    return cfg;
 }
 #endif
 
@@ -64,9 +50,7 @@ std::uint64_t testSlotOffset(const pqueue::Config& config, std::uint32_t sequenc
 TEST_CASE("pqueue starts empty") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    pqueue::Queue queue(config);
+    pqueue::Queue queue(makeConfig());
 
     std::string out;
     CHECK_FALSE(queue.peek(out).ok());
@@ -77,9 +61,7 @@ TEST_CASE("pqueue starts empty") {
 TEST_CASE("pqueue preserves FIFO order") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    pqueue::Queue queue(config);
+    pqueue::Queue queue(makeConfig());
 
     REQUIRE(queue.enqueue("first").ok());
     REQUIRE(queue.enqueue("second").ok());
@@ -99,29 +81,29 @@ TEST_CASE("pqueue preserves FIFO order") {
 TEST_CASE("pqueue supports multiple live Queue objects on the same base path") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
+    pqueue::Config config = makeConfig();
 
+    // AppendLog instances don't share in-RAM state; each has its own records_.
+    // Both can enqueue to the same base path (lock serialises them), and a fresh
+    // Queue sees all committed records in FIFO order.
     pqueue::Queue first(config);
     pqueue::Queue second(config);
 
     REQUIRE(first.enqueue("first").ok());
     REQUIRE(second.enqueue("second").ok());
 
-    CHECK_EQ(first.stats().count, 2U);
-    CHECK_EQ(second.stats().count, 2U);
+    pqueue::Queue third(config);
+    CHECK_EQ(third.stats().count, 2U);
 
     std::string out;
-    REQUIRE(second.peek(out).ok());
+    REQUIRE(third.peek(out).ok());
     CHECK_EQ(out, "first");
-    REQUIRE(second.pop().ok());
-
-    REQUIRE(first.peek(out).ok());
+    REQUIRE(third.pop().ok());
+    REQUIRE(third.peek(out).ok());
     CHECK_EQ(out, "second");
-    REQUIRE(first.pop().ok());
+    REQUIRE(third.pop().ok());
 
-    CHECK_EQ(first.stats().count, 0U);
-    CHECK_EQ(second.stats().count, 0U);
+    CHECK_EQ(third.stats().count, 0U);
 #endif
 }
 
@@ -129,16 +111,12 @@ TEST_CASE("pqueue survives reopening from disk") {
 #ifndef ARDUINO
     cleanSpool();
     {
-        pqueue::Config config;
-        config.basePath = kSpoolDir.string();
-        pqueue::Queue queue(config);
+        pqueue::Queue queue(makeConfig());
         REQUIRE(queue.enqueue("one").ok());
         REQUIRE(queue.enqueue("two").ok());
     }
 
-    pqueue::Config reopenedConfig;
-    reopenedConfig.basePath = kSpoolDir.string();
-    pqueue::Queue reopened(reopenedConfig);
+    pqueue::Queue reopened(makeConfig());
 
     std::string out;
     REQUIRE(reopened.peek(out).ok());
@@ -147,29 +125,11 @@ TEST_CASE("pqueue survives reopening from disk") {
 #endif
 }
 
-TEST_CASE("pqueue rewriteFront updates the front record without popping it") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    pqueue::Queue queue(config);
-
-    REQUIRE(queue.enqueue("retry=0").ok());
-    REQUIRE(queue.rewriteFront("retry=1").ok());
-
-    std::string out;
-    REQUIRE(queue.peek(out).ok());
-    CHECK_EQ(out, "retry=1");
-#endif
-}
-
 TEST_CASE("pqueue accepts records exactly at the configured max size") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
+    pqueue::Config config = makeConfig();
     config.recordSizeBytes = 4;
-    config.reservedBytes = 128;
     pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("1234").ok());
@@ -184,10 +144,8 @@ TEST_CASE("pqueue accepts records exactly at the configured max size") {
 TEST_CASE("pqueue rejects records over the configured max size") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
+    pqueue::Config config = makeConfig();
     config.recordSizeBytes = 4;
-    config.reservedBytes = 128;
     pqueue::Queue queue(config);
 
     CHECK_FALSE(queue.enqueue("12345").ok());
@@ -195,45 +153,60 @@ TEST_CASE("pqueue rejects records over the configured max size") {
 #endif
 }
 
-
-TEST_CASE("pqueue rejects newest record when the fixed ring is full") {
+TEST_CASE("pqueue rejects newest record when budget is full") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 8;
-    config.reservedBytes = static_cast<std::uint32_t>((pqueue::storage_detail::kRecordHeaderBytes + config.recordSizeBytes) * 2);
-    pqueue::Queue queue(config);
+    pqueue::Config config = makeConfig();
+    config.maxSegmentBytes = 4096;
+    config.reservedBytes = 256;
 
-    REQUIRE(queue.enqueue("one").ok());
-    REQUIRE(queue.enqueue("two").ok());
-    const auto full = queue.enqueue("three");
+    std::vector<std::string> accepted;
+    {
+        pqueue::Queue queue(config);
 
-    CHECK_FALSE(full.ok());
-    CHECK(full.code == pqueue::StatusCode::QueueFull);
-    CHECK_EQ(queue.stats().count, 2U);
+        bool sawFull = false;
+        for (int i = 0; i < 100; ++i) {
+            const std::string payload = "r" + std::to_string(i);
+            const auto status = queue.enqueue(payload);
+            if (!status.ok()) {
+                REQUIRE(status.code == pqueue::StatusCode::QueueFull);
+                sawFull = true;
+                break;
+            }
+            accepted.push_back(payload);
+        }
 
+        REQUIRE(sawFull);
+        CHECK_GE(accepted.size(), 1U);
+        CHECK_EQ(queue.stats().count, accepted.size());
+    }
+
+    pqueue::Queue reopened(config);
+    CHECK_EQ(reopened.stats().count, accepted.size());
+
+    for (const auto& expected : accepted) {
+        std::string out;
+        REQUIRE(reopened.peek(out).ok());
+        CHECK_EQ(out, expected);
+        REQUIRE(reopened.pop().ok());
+    }
     std::string out;
-    REQUIRE(queue.peek(out).ok());
-    CHECK_EQ(out, "one");
+    CHECK(reopened.peek(out).code == pqueue::StatusCode::QueueEmpty);
 #endif
 }
-
-
 
 TEST_CASE("pqueue matches std::deque over deterministic random operations") {
 #ifndef ARDUINO
     cleanSpool();
 
     constexpr std::size_t kRecordSizeBytes = 16;
-    constexpr std::uint32_t kCapacityRecords = 7;
     constexpr int kOperationCount = 1000;
     constexpr std::uint32_t kSeed = 0x70515545U; // "pQUE"
 
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
+    pqueue::Config config = makeConfig();
     config.recordSizeBytes = kRecordSizeBytes;
-    config.reservedBytes = static_cast<std::uint32_t>((sizeof(pqueue::storage_detail::RecordHeader) + config.recordSizeBytes) * kCapacityRecords);
+    config.maxSegmentBytes = 256;
+    config.reservedBytes = 0; // unlimited: QueueFull coverage is in full_queue_policy tests
 
     std::deque<std::string> model;
     auto queue = std::make_unique<pqueue::Queue>(config);
@@ -260,18 +233,12 @@ TEST_CASE("pqueue matches std::deque over deterministic random operations") {
     assertMatchesModel();
 
     for (int step = 0; step < kOperationCount; ++step) {
-        const int op = static_cast<int>(rng() % 5);
+        const int op = static_cast<int>(rng() % 4);
         switch (op) {
         case 0: { // enqueue
             const std::string record = recordFor(step);
-            const pqueue::Status status = queue->enqueue(record);
-            if (model.size() >= kCapacityRecords) {
-                CHECK_FALSE(status.ok());
-                CHECK(status.code == pqueue::StatusCode::QueueFull);
-            } else {
-                REQUIRE(status.ok());
-                model.push_back(record);
-            }
+            REQUIRE(queue->enqueue(record).ok());
+            model.push_back(record);
             break;
         }
         case 1: { // pop
@@ -285,19 +252,7 @@ TEST_CASE("pqueue matches std::deque over deterministic random operations") {
             }
             break;
         }
-        case 2: { // rewriteFront
-            const std::string record = std::string("w") + std::to_string(step);
-            const pqueue::Status status = queue->rewriteFront(record);
-            if (model.empty()) {
-                CHECK_FALSE(status.ok());
-                CHECK(status.code == pqueue::StatusCode::QueueEmpty);
-            } else {
-                REQUIRE(status.ok());
-                model.front() = record;
-            }
-            break;
-        }
-        case 3: { // explicit peek
+        case 2: { // explicit peek
             std::string out;
             const pqueue::Status status = queue->peek(out);
             if (model.empty()) {
@@ -309,7 +264,7 @@ TEST_CASE("pqueue matches std::deque over deterministic random operations") {
             }
             break;
         }
-        case 4: // remount/recreate queue
+        case 3: // remount/recreate queue
             queue.reset();
             queue = std::make_unique<pqueue::Queue>(config);
             break;
@@ -328,10 +283,7 @@ TEST_CASE("pqueue active lock file prevents queue operation") {
 #ifndef ARDUINO
     cleanSpool();
 
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 160;
+    pqueue::Config config = makeConfig();
 
     {
         pqueue::Queue queue(config);
@@ -352,10 +304,7 @@ TEST_CASE("pqueue lock timeout emits a clear diagnostic event") {
     cleanSpool();
 
     std::vector<pqueue::Event> events;
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 160;
+    pqueue::Config config = makeConfig();
     config.events = {capturePqueueEvent, &events};
 
     {
@@ -389,10 +338,7 @@ TEST_CASE("pqueue recovers stale POSIX pid lock") {
 #ifndef ARDUINO
     cleanSpool();
 
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 160;
+    pqueue::Config config = makeConfig();
 
     {
         pqueue::Queue queue(config);
@@ -416,10 +362,7 @@ TEST_CASE("pqueue releases lock after each operation") {
 #ifndef ARDUINO
     cleanSpool();
 
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 160;
+    pqueue::Config config = makeConfig();
 
     {
         pqueue::Queue first(config);
@@ -432,13 +375,124 @@ TEST_CASE("pqueue releases lock after each operation") {
 #endif
 }
 
+TEST_CASE("Queue::enqueue(Span) and peek(MutableSpan) round-trip") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    const char kPayload[] = {0x01, 0x00, 0x02, 0x03}; // contains NUL
+    const pqueue::Span span(reinterpret_cast<const uint8_t*>(kPayload), sizeof(kPayload));
+    REQUIRE(queue.enqueue(span).ok());
+
+    uint8_t buf[16];
+    std::size_t written = 0;
+    REQUIRE(queue.peek(pqueue::MutableSpan(buf, sizeof(buf)), written).ok());
+    REQUIRE_EQ(written, sizeof(kPayload));
+    CHECK_EQ(std::memcmp(buf, kPayload, sizeof(kPayload)), 0);
+#endif
+}
+
+TEST_CASE("Queue::peekSize returns payload size without reading") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    REQUIRE(queue.enqueue("hello").ok());
+
+    std::size_t sz = 0;
+    REQUIRE(queue.peekSize(sz).ok());
+    CHECK_EQ(sz, 5U);
+#endif
+}
+
+TEST_CASE("Queue::peekSize returns QueueEmpty on empty queue") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    std::size_t sz = 0;
+    const auto st = queue.peekSize(sz);
+    CHECK_FALSE(st.ok());
+    CHECK_EQ(st.code, pqueue::StatusCode::QueueEmpty);
+#endif
+}
+
+TEST_CASE("Queue::peek(MutableSpan) returns RecordTooLarge when buffer too small") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    REQUIRE(queue.enqueue("hello world").ok());
+
+    uint8_t buf[4];
+    std::size_t written = 0;
+    const auto st = queue.peek(pqueue::MutableSpan(buf, sizeof(buf)), written);
+    CHECK_FALSE(st.ok());
+    CHECK_EQ(st.code, pqueue::StatusCode::RecordTooLarge);
+#endif
+}
+
+TEST_CASE("Queue::peek(MutableSpan) returns InvalidArgument for null data with non-zero length") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    REQUIRE(queue.enqueue("hello").ok());
+
+    std::size_t written = 0;
+    const auto st = queue.peek(pqueue::MutableSpan(nullptr, 16), written);
+    CHECK_FALSE(st.ok());
+    CHECK_EQ(st.code, pqueue::StatusCode::InvalidArgument);
+#endif
+}
+
+TEST_CASE("Queue::enqueue(Span) rejects null data with non-zero length") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    const auto st = queue.enqueue(pqueue::Span(nullptr, 4));
+    CHECK_FALSE(st.ok());
+    CHECK_EQ(st.code, pqueue::StatusCode::InvalidArgument);
+    CHECK_EQ(queue.stats().count, 0U);
+#endif
+}
+
+TEST_CASE("Queue::enqueue(Span) rejects oversized records") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Config config = makeConfig();
+    config.recordSizeBytes = 4;
+    pqueue::Queue queue(config);
+
+    const char big[] = "12345";
+    const auto st = queue.enqueue(pqueue::Span(reinterpret_cast<const uint8_t*>(big), 5));
+    CHECK_FALSE(st.ok());
+    CHECK_EQ(st.code, pqueue::StatusCode::RecordTooLarge);
+#endif
+}
+
+TEST_CASE("Queue::enqueue(Span) and enqueue(string) are interchangeable") {
+#ifndef ARDUINO
+    cleanSpool();
+    pqueue::Queue queue(makeConfig());
+
+    REQUIRE(queue.enqueue(pqueue::Span(reinterpret_cast<const uint8_t*>("abc"), 3)).ok());
+    REQUIRE(queue.enqueue(std::string("def")).ok());
+
+    std::string out;
+    REQUIRE(queue.peek(out).ok());
+    CHECK_EQ(out, "abc");
+    REQUIRE(queue.pop().ok());
+    REQUIRE(queue.peek(out).ok());
+    CHECK_EQ(out, "def");
+#endif
+}
+
 TEST_CASE("pqueue validate reports clean active records") {
 #ifndef ARDUINO
     cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
+    pqueue::Config config = makeConfig();
     pqueue::Queue queue(config);
 
     REQUIRE(queue.enqueue("first").ok());
@@ -448,265 +502,5 @@ TEST_CASE("pqueue validate reports clean active records") {
     CHECK(result.ok);
     CHECK_EQ(result.checkedRecords, 2U);
     CHECK(result.errors.empty());
-#endif
-}
-
-TEST_CASE("pqueue validate detects corrupt active slot payload") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("payload").ok());
-    }
-
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0) + pqueue::storage_detail::kRecordHeaderBytes));
-    char c = 'X';
-    spool.write(&c, 1);
-    spool.close();
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::SlotCrcMismatch);
-    CHECK_EQ(result.checkedRecords, 0U);
-#endif
-}
-
-TEST_CASE("pqueue validate ignores inactive corrupt slots") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("old").ok());
-        REQUIRE(queue.enqueue("active").ok());
-        REQUIRE(queue.pop().ok());
-    }
-
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    char c = 'X';
-    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0)));
-    spool.write(&c, 1);
-    spool.close();
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    CHECK(result.ok);
-    CHECK_EQ(result.checkedRecords, 1U);
-    CHECK(result.errors.empty());
-#endif
-}
-
-TEST_CASE("pqueue validate caps reported errors") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("first").ok());
-        REQUIRE(queue.enqueue("second").ok());
-    }
-
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    char c = 'X';
-    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 0)));
-    spool.write(&c, 1);
-    spool.seekp(static_cast<std::streamoff>(testSlotOffset(config, 1)));
-    spool.write(&c, 1);
-    spool.close();
-
-    pqueue::ValidationOptions options;
-    options.maxErrors = 1;
-    pqueue::Queue queue(config);
-    const auto result = queue.validate(options);
-    REQUIRE_FALSE(result.ok);
-    CHECK(result.stoppedEarly);
-    CHECK_EQ(result.errors.size(), 1U);
-#endif
-}
-
-TEST_CASE("pqueue validate fails when active lock file exists") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("held").ok());
-    }
-
-    writeActiveLockFile();
-
-    pqueue::Queue second(config);
-    const auto result = second.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::QueueLoadFailed);
-    CHECK(result.errors[0].message.find("queue lock timeout") != std::string::npos);
-#endif
-}
-
-
-TEST_CASE("pqueue validate reports corrupt checkpoint slots even when fallback checkpoint exists") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    config.checkpointEveryOps = 1;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("one").ok());
-        REQUIRE(queue.enqueue("two").ok());
-    }
-
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    char c = 'X';
-    spool.seekp(static_cast<std::streamoff>(testCheckpointOffset(3)));
-    spool.write(&c, 1);
-    spool.close();
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::MetadataCorrupt);
-#endif
-}
-
-TEST_CASE("pqueue validate reports corrupt journal entry before later journal data") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    config.checkpointEveryOps = 64;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("one").ok());
-        REQUIRE(queue.enqueue("two").ok());
-        REQUIRE(queue.enqueue("three").ok());
-    }
-
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    char c = 'X';
-    spool.seekp(static_cast<std::streamoff>(testJournalOffset(1)));
-    spool.write(&c, 1);
-    spool.close();
-
-    pqueue::Queue queue(config);
-    const auto result = queue.validate();
-    REQUIRE_FALSE(result.ok);
-    REQUIRE_FALSE(result.errors.empty());
-    CHECK(result.errors[0].code == pqueue::ValidationIssueCode::JournalCorrupt);
-#endif
-}
-
-TEST_CASE("pqueue recovers enqueued records from journal before checkpoint") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    config.checkpointEveryOps = 64;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("one").ok());
-        REQUIRE(queue.enqueue("two").ok());
-        REQUIRE(queue.enqueue("three").ok());
-    }
-
-    pqueue::Queue reopened(config);
-    CHECK_EQ(reopened.stats().count, 3U);
-
-    std::string out;
-    REQUIRE(reopened.peek(out).ok());
-    CHECK_EQ(out, "one");
-    REQUIRE(reopened.pop().ok());
-    REQUIRE(reopened.peek(out).ok());
-    CHECK_EQ(out, "two");
-#endif
-}
-
-TEST_CASE("pqueue recovers popped records from journal before checkpoint") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    config.checkpointEveryOps = 64;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("one").ok());
-        REQUIRE(queue.enqueue("two").ok());
-        REQUIRE(queue.enqueue("three").ok());
-        REQUIRE(queue.pop().ok());
-        REQUIRE(queue.pop().ok());
-    }
-
-    pqueue::Queue reopened(config);
-    CHECK_EQ(reopened.stats().count, 1U);
-
-    std::string out;
-    REQUIRE(reopened.peek(out).ok());
-    CHECK_EQ(out, "three");
-#endif
-}
-
-TEST_CASE("pqueue ignores torn final journal entry and keeps valid prefix") {
-#ifndef ARDUINO
-    cleanSpool();
-    pqueue::Config config;
-    config.basePath = kSpoolDir.string();
-    config.recordSizeBytes = 32;
-    config.reservedBytes = 512;
-    config.checkpointEveryOps = 64;
-    {
-        pqueue::Queue queue(config);
-        REQUIRE(queue.enqueue("one").ok());
-        REQUIRE(queue.enqueue("two").ok());
-    }
-
-    std::fstream spool(kSpoolDir / "pqueue.spool", std::ios::in | std::ios::out | std::ios::binary);
-    REQUIRE(spool.good());
-    char c = 'X';
-    spool.seekp(static_cast<std::streamoff>(testJournalOffset(1)));
-    spool.write(&c, 1);
-    spool.close();
-
-    pqueue::Queue reopened(config);
-    CHECK_EQ(reopened.stats().count, 1U);
-
-    std::string out;
-    REQUIRE(reopened.peek(out).ok());
-    CHECK_EQ(out, "one");
-
-    const auto validation = reopened.validate();
-    CHECK(validation.ok);
-    CHECK(validation.errors.empty());
 #endif
 }

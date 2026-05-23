@@ -84,6 +84,14 @@ Status AppendLogStore::collectLiveRecords(const CompactionRange& range,
             out.push_back(std::move(lr));
         }
     }
+
+    // collectLiveRecords groups reads by segment generation for I/O efficiency.
+    // Re-sort by sequence before packing/writing so compacted output replays in FIFO order,
+    // especially after REWRITE moves an older sequence into a newer segment.
+    std::sort(out.begin(), out.end(), [](const CompactionLiveRecord& a, const CompactionLiveRecord& b) {
+        return a.sequence < b.sequence;
+    });
+
     return Status::success();
 }
 
@@ -122,7 +130,8 @@ std::size_t AppendLogStore::findParentRangeIdx(std::uint32_t startGen, std::uint
 
 Status AppendLogStore::compactRange(const CompactionRange& range,
                                     std::uint32_t* outputSegCount,
-                                    AllowFullRangeFallback allowFallback) {
+                                    AllowFullRangeFallback allowFallback,
+                                    std::uint32_t* inputSegCount) {
 #ifdef ARDUINO
     const std::uint32_t t_start = millis();
     std::uint32_t ms_exist = 0, ms_pre_scan = 0, ms_pre_size = 0;
@@ -134,13 +143,14 @@ Status AppendLogStore::compactRange(const CompactionRange& range,
     bool did_rotate = false;
     std::uint32_t n_live = 0, n_in = 0, n_out = 0;
     auto logLine = [&](const char* status) {
-        Serial.printf(
-            "[compactRange] req=[%u,%u] hypoEnd=%u eff=[%u,%u] rotate=%u "
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "req=[%u,%u] hypoEnd=%u eff=[%u,%u] rotate=%u "
             "liveRecs=%u inSegs=%u outSegs=%u "
             "exist_ms=%u pre_scan_ms=%u pre_size_ms=%u "
             "rotate_ms=%u resolve_ms=%u collect_ms=%u "
             "pack_ms=%u write_ms=%u publish_ms=%u "
-            "cleanup_ms=%u replace_ms=%u total_ms=%u %s\n",
+            "cleanup_ms=%u replace_ms=%u total_ms=%u %s",
             range.startGen, range.endGen, hypo_e, eff_s, eff_e,
             static_cast<unsigned>(did_rotate),
             n_live, n_in, n_out,
@@ -148,7 +158,7 @@ Status AppendLogStore::compactRange(const CompactionRange& range,
             ms_rotate, ms_resolve, ms_collect,
             ms_pack, ms_write, ms_publish,
             ms_cleanup, ms_replace, millis() - t_start, status);
-        Serial.flush();
+        diagnostic(Severity::Debug, Status{StatusCode::Ok, 0, buf}, "compactRange");
     };
     #define CR_T0(var) const std::uint32_t _t0_##var = millis()
     #define CR_T1(var) var = millis() - _t0_##var
@@ -217,7 +227,7 @@ Status AppendLogStore::compactRange(const CompactionRange& range,
             });
     const bool wouldRotate = subrangeReachesLastGen && tailCanMergeWithLastRange && tailDepsContained;
 
-    // Pre-rotate range-count gate — evaluated before preflight so that a fallback
+    // Pre-rotate range-count gate -- evaluated before preflight so that a fallback
     // expansion of inputRange is reflected in the hypo calculations below.
     // When wouldRotate, the parent extends rightward to activeGeneration_
     // (parent.startGen unchanged), hasRight becomes false, hasLeft is unchanged.
@@ -226,7 +236,7 @@ Status AppendLogStore::compactRange(const CompactionRange& range,
     // if there are no live records, rotate will not fire (guarded below by
     // !hypoPayloadBytes.empty()), so dead-subrange cleanup must not be blocked.
     // activeSegmentBytes_ > kSegmentHeaderBytes means the tail has events, but
-    // those could all be tombstones — use a cheap RAM scan instead.
+    // those could all be tombstones -- use a cheap RAM scan instead.
     const std::uint32_t hypoCheckEnd = wouldRotate ? activeGeneration_ : inputRange.endGen;
     const bool hypoHasLive = std::any_of(records_.begin(), records_.end(),
         [&](const SegmentRecord& sr) {
@@ -354,6 +364,7 @@ Status AppendLogStore::compactRange(const CompactionRange& range,
     eff_s = inputRange.startGen; eff_e = inputRange.endGen;
     n_in  = inputRange.endGen - inputRange.startGen + 1;
 #endif
+    if (inputSegCount) *inputSegCount = inputRange.endGen - inputRange.startGen + 1;
 
     // Phase: collectLiveRecords.
     CR_T0(ms_collect);
@@ -589,38 +600,57 @@ AppendLogStore::CompactionRange AppendLogStore::narrowRange(
     return best;
 }
 
-Status AppendLogStore::compactOneSegment(AllowFullRangeFallback allowFallback) {
+Status AppendLogStore::compactOneSegment(AllowFullRangeFallback allowFallback,
+                                         std::uint32_t* inputSegs,
+                                         std::uint32_t* outputSegs) {
     auto rangeOpt = chooseCompactionRange();
     if (!rangeOpt) return Status::noOp();
     const CompactionRange range = config_.maxOutputSegments > 0
         ? narrowRange(*rangeOpt, config_.maxOutputSegments)
         : *rangeOpt;
-    return compactRange(range, nullptr, allowFallback);
+    return compactRange(range, outputSegs, allowFallback, inputSegs);
+}
+
+std::uint32_t AppendLogStore::sumDeadBytes() const {
+    std::uint32_t total = 0;
+    for (const auto& s : segmentStats()) total += s.deadBytes();
+    return total;
 }
 
 CompactIdleResult AppendLogStore::compactIdle(std::size_t maxSteps) {
     CompactIdleResult result{};
     result.status = Status::success();
+    result.deadBytesBefore = sumDeadBytes();
+    const std::uint32_t diskBefore = totalOnDiskBytes_;
+
     for (std::size_t i = 0; i < maxSteps; ++i) {
-        Status st = compactOneSegment(AllowFullRangeFallback::yes);
+        std::uint32_t stepInput = 0, stepOutput = 0;
+        Status st = compactOneSegment(AllowFullRangeFallback::yes, &stepInput, &stepOutput);
         ++result.stepsRun;
         if (!st.ok()) {
             result.status = st;
-            return result;
+            break;
         }
         if (st.isNoOp()) {
             ++result.noOps;
-            return result; // moreWorkLikely stays false
+            break; // moreWorkLikely stays false
         }
         ++result.compactions;
+        result.inputSegments += stepInput;
+        result.outputSegments += stepOutput;
     }
-    result.moreWorkLikely = (result.compactions > 0);
+    result.moreWorkLikely = result.status.ok() && result.noOps == 0 && result.compactions > 0;
+    result.remainingDeadBytes = sumDeadBytes();
+    result.bytesReclaimed = totalOnDiskBytes_ < diskBefore
+        ? diskBefore - totalOnDiskBytes_ : 0;
     return result;
 }
 
 Status AppendLogStore::compactFull() {
-    const std::size_t initialCount = manifestRanges_.size();
-    const CompactIdleResult result = compactIdle(initialCount);
+    CompactIdleResult result;
+    do {
+        result = compactIdle(1);
+    } while (result.status.ok() && result.compactions > 0);
     return result.status;
 }
 
@@ -645,7 +675,9 @@ void AppendLogStore::cleanupInputSegments(const CompactionRange& effectiveRange)
         const std::uint32_t sz = sit != sealedSegmentBytes_.end() ? sit->second : 0;
 #ifdef ARDUINO
         if (sz == 0 && sit == sealedSegmentBytes_.end()) {
-            Serial.printf("[cleanup] warn: gen=%u not in sealedSegmentBytes_\n", gen);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "gen=%u not in sealedSegmentBytes", gen);
+            diagnostic(Severity::Warning, Status{StatusCode::DataCorrupt, 0, buf}, "cleanupInputSegments");
         }
 #endif
         if (f->removeFile(name).ok()) {
@@ -660,9 +692,12 @@ void AppendLogStore::cleanupInputSegments(const CompactionRange& effectiveRange)
 #endif
     }
 #ifdef ARDUINO
-    Serial.printf("[cleanup] deleted=%u failed=%u bytes=%u range=[%u,%u]\n",
-        nDeleted, nFailed, bytesFreed, effectiveRange.startGen, effectiveRange.endGen);
-    Serial.flush();
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "deleted=%u failed=%u bytes=%u range=[%u,%u]",
+            nDeleted, nFailed, bytesFreed, effectiveRange.startGen, effectiveRange.endGen);
+        diagnostic(Severity::Debug, Status{StatusCode::Ok, 0, buf}, "cleanupInputSegments");
+    }
 #endif
 }
 
@@ -700,9 +735,10 @@ void AppendLogStore::cleanupOneDanglingSegment() {
 #ifdef ARDUINO
         const std::uint32_t ms_total = millis() - t_cl_start;
         if (ms_total > 50) {
-            Serial.printf("[cleanup] none list_ms=%u scan_ms=%u total_ms=%u\n",
+            char buf[96];
+            snprintf(buf, sizeof(buf), "none list_ms=%u scan_ms=%u total_ms=%u",
                 ms_list, ms_scan, ms_total);
-            Serial.flush();
+            diagnostic(Severity::Debug, Status{StatusCode::Ok, 0, buf}, "cleanupDangling");
         }
 #endif
         return;
@@ -730,14 +766,13 @@ void AppendLogStore::cleanupOneDanglingSegment() {
 #ifdef ARDUINO
     const std::uint32_t ms_total = millis() - t_cl_start;
     if (ms_total > 50 || removed) {
-        if (removed) {
-            Serial.printf("[cleanup] deleted=%s list_ms=%u scan_ms=%u size_ms=%u remove_ms=%u total_ms=%u\n",
-                dangling.c_str(), ms_list, ms_scan, ms_size, ms_remove, ms_total);
-        } else {
-            Serial.printf("[cleanup] rm-failed=%s list_ms=%u scan_ms=%u size_ms=%u remove_ms=%u total_ms=%u\n",
-                dangling.c_str(), ms_list, ms_scan, ms_size, ms_remove, ms_total);
-        }
-        Serial.flush();
+        char buf[160];
+        snprintf(buf, sizeof(buf), "%s=%s list_ms=%u scan_ms=%u size_ms=%u remove_ms=%u total_ms=%u",
+            removed ? "deleted" : "rm-failed",
+            dangling.c_str(), ms_list, ms_scan, ms_size, ms_remove, ms_total);
+        diagnostic(removed ? Severity::Debug : Severity::Warning,
+            Status{removed ? StatusCode::Ok : StatusCode::RemoveFailed, 0, buf},
+            "cleanupDangling");
     }
 #endif
 }

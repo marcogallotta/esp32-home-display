@@ -72,7 +72,13 @@ void delayMs(int ms) {
     delay(ms);
 }
 
+static bool g_doctorMode = false;
+
+void setDoctorMode(bool active) { g_doctorMode = active; }
+bool isDoctorMode()             { return g_doctorMode; }
+
 void printLine(const std::string& s) {
+    if (g_doctorMode) return;
     Serial.println(s.c_str());
 }
 

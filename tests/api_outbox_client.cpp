@@ -411,4 +411,44 @@ TEST_CASE("api outbox client rejects Xiaomi reading with no sensor values") {
     CHECK_EQ(transport.posts.size(), 0U);
 }
 
+TEST_CASE("api outbox client uses AppendLog layout after enqueue") {
+    cleanTestFiles();
+    auto config = testConfig();
+    FakeTransport transport;
+    transport.responses.push_back({pqueue::http::kNoStatusCode, pqueue::http::TransportError::Network});
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
+
+    const bool hasManifestA = std::filesystem::exists(kApiOutboxSpoolDir / "manifest-a.bin");
+    const bool hasManifestB = std::filesystem::exists(kApiOutboxSpoolDir / "manifest-b.bin");
+    CHECK((hasManifestA || hasManifestB));
+
+    bool hasSegBin = false;
+    for (const auto& entry : std::filesystem::directory_iterator(kApiOutboxSpoolDir)) {
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("seg-", 0) == 0 && name.size() > 4) {
+            hasSegBin = true;
+            break;
+        }
+    }
+    CHECK(hasSegBin);
+
+    CHECK_FALSE(std::filesystem::exists(kApiOutboxSpoolDir / "pqueue.spool"));
+}
+
+TEST_CASE("api outbox client compactIdle on empty store returns ok with zero compactions") {
+    cleanTestFiles();
+    const auto config = testConfig();
+    FakeTransport transport;
+    FakeClock clock;
+    auto client = makeClient(config, transport, clock);
+
+    const auto result = client.compactIdle(1);
+
+    CHECK(result.status.ok());
+    CHECK_EQ(result.compactions, 0U);
+}
+
 #endif // !ARDUINO

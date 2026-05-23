@@ -5,7 +5,6 @@
 #include "pqueue/queue.h"
 #include "pqueue/outbox.h"
 #include "pqueue/http/outbox.h"
-#include "pqueue/storage_common.h"
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +36,8 @@ struct ProfilingConfig {
     std::uint32_t maxTotalBytes     = 1024 * 1024;
     std::uint32_t maxSegments       = 200;
     std::uint32_t maxOutputSegments = 8;
+    std::uint32_t minFreeBytes      = 0;   // FS floor; 0 = disabled
+    std::uint32_t fsTotalBytes      = 0;   // simulated FS size; 0 = effectively unlimited
 };
 
 // ---------------------------------------------------------------------------
@@ -97,7 +98,7 @@ pqueue::Config queueConfig(const std::string& basePath, std::shared_ptr<Counting
     pqueue::Config cfg;
     cfg.basePath = basePath;
     cfg.recordSizeBytes = recordSizeBytes;
-    cfg.reservedBytes = requestedRecords * static_cast<std::uint32_t>(pqueue::storage_detail::kRecordHeaderBytes + recordSizeBytes);
+    cfg.reservedBytes = requestedRecords * static_cast<std::uint32_t>(pqueue::append_log_detail::kEnqueueOverheadBytes + recordSizeBytes);
     cfg.storageBackend = pqueue::StorageBackend::Posix;
     cfg.fileSystem = fs;
     return cfg;
@@ -227,7 +228,7 @@ PreparedHttpOutbox prepareHttpOutboxBacklog(std::uint32_t records, std::uint32_t
     pqueue::http::Config cfg;
     cfg.queue = queueConfig(tempBase(baseName), prepared.fs, 2048, records + 8);
     cfg.outbox.maxDrainAttemptsPerSecond = 1000;
-    cfg.outbox.retryDelayMs = 1;
+    cfg.outbox.initialRetryDelayMs = 1;
     cfg.baseUrl = "https://example.test";
 
     prepared.outbox = std::make_unique<pqueue::http::Outbox>(cfg, *prepared.transport, fakeClock, prepared.clock.get());
@@ -252,7 +253,7 @@ ScenarioResult scenarioHttpOutboxOfflineSubmit(std::uint32_t records, std::uint3
     pqueue::http::Config cfg;
     cfg.queue = queueConfig(tempBase("http_outbox_offline_submit"), fs, 2048, records + 8);
     cfg.outbox.maxDrainAttemptsPerSecond = 1000;
-    cfg.outbox.retryDelayMs = 1;
+    cfg.outbox.initialRetryDelayMs = 1;
     cfg.baseUrl = "https://example.test";
 
     pqueue::http::Outbox outbox(cfg, *transport, fakeClock, clock.get());
@@ -325,6 +326,7 @@ struct CompactionBurstResult {
     std::uint64_t maxLatencyUs    = 0;
     std::uint32_t deadlocks       = 0;
     std::uint32_t capExhausted    = 0;
+    std::uint32_t fsFloorHit      = 0;
     std::uint32_t finalQSize      = 0;
     FsCounters    fs;
     bool          ok              = true;
@@ -462,7 +464,7 @@ pqueue::AppendLogConfig makeStoreCfg(const char* basePath, std::shared_ptr<Count
     cfg.maxSegments        = pcfg.maxSegments;
     cfg.maxTotalBytes      = pcfg.maxTotalBytes;
     cfg.maxOutputSegments  = pcfg.maxOutputSegments;
-    cfg.minFreeBytes       = 0;
+    cfg.minFreeBytes       = pcfg.minFreeBytes;
     cfg.fileSystem         = counting;
     return cfg;
 }
@@ -476,7 +478,7 @@ CompactionBurstResult scenarioCompactionBurst(
     std::uint32_t rangePressureTrigger = 3,
     FsLatency latency = {})
 {
-    auto memFs    = std::make_shared<MemoryFileSystem>();
+    auto memFs    = std::make_shared<MemoryFileSystem>(pcfg.fsTotalBytes);
     auto counting = std::make_shared<CountingFileSystem>(memFs);
     counting->setLatency(latency);
 
@@ -545,27 +547,28 @@ CompactionBurstResult scenarioCompactionBurst(
 
     for (std::uint32_t cycle = 0; cycle < cycles; ++cycle) {
         for (std::uint32_t i = 0; i < burstSize; ++i) {
-            const auto st = store.writeRecord(nextSeq, payload);
+            const auto st = store.commitEnqueue(nextSeq, payload);
             if (st.ok()) {
-                pqueue::FileStoreIndex dummy;
-                store.writeIndex(dummy);
                 ++nextSeq;
                 ++queueSize;
             } else {
-                bool reclaimable = false;
-                for (const auto& rs : buildCompactRangeStats(store))
-                    if (rs.deadRatio() >= 0.01f) { reclaimable = true; break; }
-                if (reclaimable) ++result.deadlocks;
-                else             ++result.capExhausted;
+                if (pcfg.minFreeBytes > 0 && std::string_view(st.message) == "insufficient filesystem free space") {
+                    ++result.fsFloorHit;
+                } else {
+                    bool reclaimable = false;
+                    for (const auto& rs : buildCompactRangeStats(store))
+                        if (rs.deadRatio() >= 0.01f) { reclaimable = true; break; }
+                    if (reclaimable) ++result.deadlocks;
+                    else             ++result.capExhausted;
+                }
             }
             checkAndCompact();
         }
         const std::uint32_t toPop = static_cast<std::uint32_t>(static_cast<float>(queueSize) * pcfg.popRatio);
         for (std::uint32_t i = 0; i < toPop; ++i) {
-            pqueue::FileStoreIndex idx;
+            pqueue::QueueIndex idx;
             if (store.readIndex(idx).ok() && idx.count > 0) {
-                idx.head++; idx.count--;
-                store.writeIndex(idx);
+                store.commitPop(idx.head);
                 --queueSize;
             }
             checkAndCompact();
@@ -599,6 +602,7 @@ struct IdleCompactionResult {
     std::uint32_t hotCompactions   = 0;    // compactions triggered on write path (should be 0)
     std::uint32_t deadlocks        = 0;
     std::uint32_t capExhausted     = 0;
+    std::uint32_t fsFloorHit       = 0;
     bool          ok               = true;
 };
 
@@ -609,7 +613,7 @@ IdleCompactionResult scenarioIdleCompaction(
     const ProfilingConfig& pcfg,
     FsLatency latency = {})
 {
-    auto memFs    = std::make_shared<MemoryFileSystem>();
+    auto memFs    = std::make_shared<MemoryFileSystem>(pcfg.fsTotalBytes);
     auto counting = std::make_shared<CountingFileSystem>(memFs);
     counting->setLatency(latency);
 
@@ -633,29 +637,30 @@ IdleCompactionResult scenarioIdleCompaction(
         // Rotations produce no readFile; compactions read input segments.
         for (std::uint32_t i = 0; i < burstSize; ++i) {
             const std::uint64_t rfBefore = counting->counters().readFile;
-            const auto st = store.writeRecord(nextSeq, payload);
+            const auto st = store.commitEnqueue(nextSeq, payload);
             if (counting->counters().readFile > rfBefore) ++result.hotCompactions;
             if (st.ok()) {
-                pqueue::FileStoreIndex dummy;
-                store.writeIndex(dummy);
                 ++nextSeq;
                 ++queueSize;
             } else {
-                bool reclaimable = false;
-                for (const auto& rs : buildCompactRangeStats(store))
-                    if (rs.deadRatio() >= 0.01f) { reclaimable = true; break; }
-                if (reclaimable) ++result.deadlocks;
-                else             ++result.capExhausted;
+                if (pcfg.minFreeBytes > 0 && std::string_view(st.message) == "insufficient filesystem free space") {
+                    ++result.fsFloorHit;
+                } else {
+                    bool reclaimable = false;
+                    for (const auto& rs : buildCompactRangeStats(store))
+                        if (rs.deadRatio() >= 0.01f) { reclaimable = true; break; }
+                    if (reclaimable) ++result.deadlocks;
+                    else             ++result.capExhausted;
+                }
             }
         }
 
         // Phase 2: drain
         const std::uint32_t toPop = static_cast<std::uint32_t>(static_cast<float>(queueSize) * pcfg.popRatio);
         for (std::uint32_t i = 0; i < toPop; ++i) {
-            pqueue::FileStoreIndex idx;
+            pqueue::QueueIndex idx;
             if (store.readIndex(idx).ok() && idx.count > 0) {
-                idx.head++; idx.count--;
-                store.writeIndex(idx);
+                store.commitPop(idx.head);
                 --queueSize;
             }
         }
@@ -691,10 +696,13 @@ void printIdleCompactionResult(const IdleCompactionResult& r, bool simMode) {
             static_cast<double>(r.totalIdleUs) / 1000.0);
         std::printf("  (multiply ms by 100 for predicted on-device ms at calibrated flash speed)\n");
     }
-    std::printf("  deadlocks=%-4u capExhausted=%-4u\n", r.deadlocks, r.capExhausted);
+    std::printf("  deadlocks=%-4u capExhausted=%-4u fsFloorHit=%-4u\n",
+        r.deadlocks, r.capExhausted, r.fsFloorHit);
     if (!r.ok) std::printf("  FAILED: mount error\n");
     if (r.hotCompactions > 0)
         std::printf("  WARNING: hot-path compactions fired during burst -- clean-storage invariant violated\n");
+    if (r.fsFloorHit > 0)
+        std::printf("  WARNING: enqueue rejected by FS floor (minFreeBytes) -- increase --fs-total-bytes or reduce --min-free-bytes\n");
 }
 
 void printCompactionBurstResult(const CompactionBurstResult& r) {
@@ -703,12 +711,14 @@ void printCompactionBurstResult(const CompactionBurstResult& r) {
     std::printf("  compactions=%-4u noOps=%-4u maxOutSegs=%-3u simMaxLatency=%.1fms\n",
         r.compactions, r.noOps, r.maxOutSegs,
         static_cast<double>(r.maxLatencyUs) / 1000.0);
-    std::printf("  deadlocks=%-4u capExhausted=%-4u finalQ=%-4u\n",
-        r.deadlocks, r.capExhausted, r.finalQSize);
+    std::printf("  deadlocks=%-4u capExhausted=%-4u fsFloorHit=%-4u finalQ=%-4u\n",
+        r.deadlocks, r.capExhausted, r.fsFloorHit, r.finalQSize);
     std::printf("  readFile=%-6lu readAt=%-6lu writeFile=%-6lu listFiles=%-6lu removeFile=%-6lu\n",
         (unsigned long)r.fs.readFile, (unsigned long)r.fs.readAt, (unsigned long)r.fs.writeFile,
         (unsigned long)r.fs.listFiles, (unsigned long)r.fs.removeFile);
     if (!r.ok) std::printf("  FAILED: mount error\n");
+    if (r.fsFloorHit > 0)
+        std::printf("  WARNING: enqueue rejected by FS floor (minFreeBytes) -- increase --fs-total-bytes or reduce --min-free-bytes\n");
 }
 
 void printHeader() {
@@ -723,7 +733,6 @@ void printHeader() {
               << std::setw(8) << "readAt"
               << std::setw(8) << "writeAt"
               << std::setw(10) << "writeFile"
-              << std::setw(8) << "rename"
               << std::setw(8) << "remove"
               << std::setw(12) << "bytesW"
               << std::setw(12) << "bytesR"
@@ -743,7 +752,6 @@ void printResult(const ScenarioResult& r) {
               << std::setw(8) << r.fs.readAt
               << std::setw(8) << r.fs.writeAt
               << std::setw(10) << r.fs.writeFile
-              << std::setw(8) << r.fs.renameFile
               << std::setw(8) << r.fs.removeFile
               << std::setw(12) << r.fs.bytesWritten
               << std::setw(12) << r.fs.bytesRead
@@ -786,6 +794,8 @@ ProfilingConfig parseFlags(int argc, char** argv, int firstFlag) {
         else if (flag == "--max-total-bytes")    { pcfg.maxTotalBytes     = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
         else if (flag == "--max-segments")       { pcfg.maxSegments       = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
         else if (flag == "--max-output-segments"){ pcfg.maxOutputSegments = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
+        else if (flag == "--min-free-bytes")     { pcfg.minFreeBytes      = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
+        else if (flag == "--fs-total-bytes")     { pcfg.fsTotalBytes      = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10)); }
     }
     return pcfg;
 }
@@ -803,7 +813,9 @@ void usage(const char* argv0) {
         "  --max-segment-bytes <n>    cfg.maxSegmentBytes (default 4096)\n"
         "  --max-total-bytes <n>      cfg.maxTotalBytes (default 1048576)\n"
         "  --max-segments <n>         cfg.maxSegments (default 200)\n"
-        "  --max-output-segments <n>  cfg.maxOutputSegments (default 8)\n",
+        "  --max-output-segments <n>  cfg.maxOutputSegments (default 8)\n"
+        "  --min-free-bytes <n>       cfg.minFreeBytes: enqueue requires freeBytes >= n + write growth (default 0 = disabled)\n"
+        "  --fs-total-bytes <n>       simulated FS total size in bytes (default 0 = effectively unlimited)\n",
         argv0, argv0, argv0);
 }
 

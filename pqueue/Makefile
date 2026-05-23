@@ -11,7 +11,11 @@ OBJ_DIR := $(BUILD_DIR)/obj
 TEST_TARGET := $(BUILD_DIR)/pqueue-tests
 COV_DIR := $(BUILD_DIR)/coverage
 COV_TARGET := $(COV_DIR)/pqueue-tests-cov
+EXAMPLE_BASIC_QUEUE := $(BUILD_DIR)/examples/basic-queue
+EXAMPLE_OUTBOX := $(BUILD_DIR)/examples/outbox
 REPAIR_TOOL_TARGET := $(BUILD_DIR)/pqueue-repair-tool
+APPENDLOG_DIAG_TARGET := $(BUILD_DIR)/pqueue-appendlog-diag
+DOCTOR_DUMP_TARGET := $(BUILD_DIR)/pqueue-doctor-dump
 PROFILING_TARGET := $(BUILD_DIR)/pqueue-profiling
 SIM_TARGET := $(BUILD_DIR)/pqueue-compaction-sim
 
@@ -25,10 +29,8 @@ PQUEUE_SRC := \
 	src/pqueue/http/outbox.cpp \
 	src/pqueue/http/posix_curl_transport.cpp \
 	src/pqueue/http/request_envelope.cpp \
-	src/pqueue/file_store.cpp \
 	src/pqueue/internal/lock_owner.cpp \
 	src/pqueue/diagnostics.cpp \
-	src/pqueue/storage_common.cpp \
 	src/pqueue/storage_posix.cpp \
 	src/pqueue/storage_littlefs.cpp \
 	src/pqueue/outbox.cpp \
@@ -41,14 +43,13 @@ TEST_SRC := \
 	tests/posix/pqueue_append_log_manifest.cpp \
 	tests/posix/pqueue_append_log_rollover.cpp \
 	tests/posix/pqueue_append_log_compaction.cpp \
-	tests/posix/pqueue_diagnostics.cpp \
+	tests/posix/pqueue_append_log_seq_edges.cpp \
+	tests/posix/pqueue_append_log_validate.cpp \
 	tests/posix/pqueue_envelope.cpp \
-	tests/posix/pqueue_file_store.cpp \
 	tests/posix/pqueue_full_queue_policy.cpp \
 	tests/posix/pqueue_http_outbox.cpp \
 	tests/posix/pqueue_http_request_envelope.cpp \
 	tests/posix/pqueue_outbox.cpp \
-	tests/posix/pqueue_rebuild_metadata.cpp \
 	tests/posix/pqueue_repair.cpp \
 	tests/posix/pqueue_queue_edges.cpp \
 	$(PQUEUE_SRC)
@@ -59,7 +60,7 @@ DOCS_DIR := docs
 DOCS_MD := $(wildcard $(DOCS_DIR)/*.md)
 DOCS_PDF := $(DOCS_MD:.md=.pdf)
 
-.PHONY: all test tests run-tests repair-tool profiling sim docs coverage clean .FORCE
+.PHONY: all test tests run-tests examples run-examples repair-tool appendlog-diag doctor-dump profiling sim docs coverage clean .FORCE
 
 all: test
 
@@ -75,7 +76,25 @@ tests: run-tests
 run-tests: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
+examples: $(EXAMPLE_BASIC_QUEUE) $(EXAMPLE_OUTBOX)
+
+run-examples: examples
+	./$(EXAMPLE_BASIC_QUEUE)
+	./$(EXAMPLE_OUTBOX)
+
+$(EXAMPLE_BASIC_QUEUE): examples/basic_queue.cpp $(PQUEUE_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(EXAMPLE_OUTBOX): examples/outbox.cpp $(PQUEUE_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
+
 repair-tool: $(REPAIR_TOOL_TARGET)
+
+appendlog-diag: $(APPENDLOG_DIAG_TARGET)
+
+doctor-dump: $(DOCTOR_DUMP_TARGET)
 
 profiling: $(PROFILING_TARGET)
 
@@ -92,6 +111,14 @@ $(SIM_TARGET): tools/pqueue_compaction_sim.cpp $(PQUEUE_SRC)
 $(REPAIR_TOOL_TARGET): tools/pqueue_repair_tool.cpp $(PQUEUE_SRC)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(APPENDLOG_DIAG_TARGET): tools/pqueue_appendlog_diag.cpp $(PQUEUE_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(DOCTOR_DUMP_TARGET): tools/pqueue_doctor_dump_posix.cpp $(PQUEUE_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -Itools $^ -o $@ $(LDFLAGS)
 
 $(TEST_TARGET): $(OBJ)
 	@mkdir -p $(dir $@)

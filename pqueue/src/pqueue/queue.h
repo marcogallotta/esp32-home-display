@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "file_store.h"
+#include "store_types.h"
 #include "status.h"
 #include "types.h"
 
@@ -28,15 +28,16 @@ public:
     Queue(const Queue&) = delete;
     Queue& operator=(const Queue&) = delete;
 
+    Status enqueue(Span record);
     Status enqueue(const std::string& record);
+    Status peekSize(std::size_t& out);
+    Status peek(MutableSpan out, std::size_t& written);
     Status peek(std::string& out);
     Status pop();
-    Status rewriteFront(const std::string& record);
     Status format();
     CompactIdleResult compactIdle(std::size_t maxSteps);
     Status dropFrontIfCorrupt();
     Status recoverStaleLock();
-    Status rebuildMetadata();
     ValidationResult validate(const ValidationOptions& options = ValidationOptions{});
     StatsResult statsResult();
     Stats stats();
@@ -44,6 +45,8 @@ public:
 private:
     friend class Outbox;
     using RecordVisitor = bool (*)(void* context, const std::string& record, std::uint32_t sequence, std::uint32_t ordinal);
+
+    Status rewriteFront(const std::string& record);
 
     class ScopedLock;
 
@@ -57,7 +60,7 @@ private:
 
     Config config_;
     std::unique_ptr<Store> store_;
-    FileStoreIndex index_;
+    QueueIndex index_;
     std::string lockContents_;
     bool lockHeld_ = false;
 };

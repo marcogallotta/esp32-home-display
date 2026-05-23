@@ -10,33 +10,12 @@
 
 namespace {
 
-const char* issueCodeName(pqueue::ValidationIssueCode code) {
-    switch (code) {
-        case pqueue::ValidationIssueCode::InvalidConfig: return "invalid_config";
-        case pqueue::ValidationIssueCode::MetadataMissing: return "metadata_missing";
-        case pqueue::ValidationIssueCode::MetadataCorrupt: return "metadata_corrupt";
-        case pqueue::ValidationIssueCode::JournalCorrupt: return "journal_corrupt";
-        case pqueue::ValidationIssueCode::ConfigMismatch: return "config_mismatch";
-        case pqueue::ValidationIssueCode::SpoolMissing: return "spool_missing";
-        case pqueue::ValidationIssueCode::SpoolSizeMismatch: return "spool_size_mismatch";
-        case pqueue::ValidationIssueCode::InvalidRingState: return "invalid_ring_state";
-        case pqueue::ValidationIssueCode::SlotReadFailed: return "slot_read_failed";
-        case pqueue::ValidationIssueCode::SlotHeaderInvalid: return "slot_header_invalid";
-        case pqueue::ValidationIssueCode::SlotCrcMismatch: return "slot_crc_mismatch";
-        case pqueue::ValidationIssueCode::QueueLoadFailed: return "queue_load_failed";
-        case pqueue::ValidationIssueCode::QueueIndexMismatch: return "queue_index_mismatch";
-        case pqueue::ValidationIssueCode::OutboxEnvelopeInvalid: return "outbox_envelope_invalid";
-        case pqueue::ValidationIssueCode::HttpRequestEnvelopeInvalid: return "http_request_envelope_invalid";
-    }
-    return "unknown";
-}
 
 const char* repairActionHuman(pqueue::ValidationRepairAction action) {
     switch (action) {
         case pqueue::ValidationRepairAction::None: return "none";
         case pqueue::ValidationRepairAction::Format: return "format queue";
         case pqueue::ValidationRepairAction::DropFrontIfCorrupt: return "drop corrupt front record";
-        case pqueue::ValidationRepairAction::RebuildMetadata: return "rebuild metadata from slot scan";
     }
     return "unknown";
 }
@@ -98,11 +77,11 @@ int runValidate(pqueue::Queue& queue) {
     for (std::size_t i = 0; i < validation.errors.size(); ++i) {
         const auto& issue = validation.errors[i];
         std::cout << "\nIssue " << (i + 1) << ":\n"
-                  << "  code: " << issueCodeName(issue.code) << "\n"
+                  << "  code: " << pqueue::validationIssueCodeName(issue.code) << "\n"
                   << "  message: " << issue.message << "\n"
                   << "  repair hint: " << repairActionHuman(issue.repairAction) << "\n";
-        if (issue.hasSlotIndex) {
-            std::cout << "  slot: " << issue.slotIndex << "\n";
+        if (issue.hasRecordIndex) {
+            std::cout << "  record: " << issue.recordIndex << "\n";
         }
         if (issue.hasExpectedSequence) {
             std::cout << "  expected sequence: " << issue.expectedSequence << "\n";
@@ -121,7 +100,6 @@ enum class Command {
     Format,
     DropFrontIfCorrupt,
     RecoverStaleLock,
-    RebuildMetadata,
 };
 
 void addConfigOptions(CLI::App& app, pqueue::Config& config) {
@@ -129,11 +107,7 @@ void addConfigOptions(CLI::App& app, pqueue::Config& config) {
         ->capture_default_str();
     app.add_option("--reserved-bytes", config.reservedBytes, "Reserved spool bytes")
         ->capture_default_str();
-    app.add_option("--record-size-bytes", config.recordSizeBytes, "Record slot size in bytes")
-        ->capture_default_str();
-    app.add_option("--journal-bytes", config.journalBytes, "Journal region size in bytes")
-        ->capture_default_str();
-    app.add_option("--checkpoint-every-ops", config.checkpointEveryOps, "Checkpoint interval in queue operations")
+    app.add_option("--record-size-bytes", config.recordSizeBytes, "Maximum record payload size in bytes")
         ->capture_default_str();
 }
 
@@ -163,10 +137,6 @@ int main(int argc, char** argv) {
     addConfigOptions(*recoverLock, config);
     recoverLock->callback([&command]() { command = Command::RecoverStaleLock; });
 
-    auto* rebuild = app.add_subcommand("rebuild-metadata", "Reconstruct checkpoint and journal by scanning slot headers");
-    addConfigOptions(*rebuild, config);
-    rebuild->callback([&command]() { command = Command::RebuildMetadata; });
-
     try {
         app.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
@@ -193,17 +163,6 @@ int main(int argc, char** argv) {
                 return 1;
             }
             std::cout << "Failed to recover stale lock.\n"
-                      << "status: " << pqueue::statusCodeName(st.code) << "\n"
-                      << "message: " << st.message << "\n";
-            return 2;
-        }
-        case Command::RebuildMetadata: {
-            const pqueue::Status st = queue.rebuildMetadata();
-            if (st.ok()) {
-                std::cout << "Metadata rebuilt from slot scan.\n";
-                return 0;
-            }
-            std::cout << "Rebuild failed.\n"
                       << "status: " << pqueue::statusCodeName(st.code) << "\n"
                       << "message: " << st.message << "\n";
             return 2;

@@ -36,10 +36,8 @@ PQUEUE_SRC := \
 	pqueue/src/pqueue/append_log_store/store.cpp \
 	pqueue/src/pqueue/append_log_store/manifest.cpp \
 	pqueue/src/pqueue/append_log_store/compaction.cpp \
-	pqueue/src/pqueue/file_store.cpp \
 	pqueue/src/pqueue/internal/lock_owner.cpp \
 	pqueue/src/pqueue/diagnostics.cpp \
-	pqueue/src/pqueue/storage_common.cpp \
 	pqueue/src/pqueue/storage_posix.cpp \
 	pqueue/src/pqueue/storage_littlefs.cpp \
 	pqueue/src/pqueue/outbox.cpp \
@@ -97,8 +95,6 @@ TEST_SRC := \
 	tests/main.cpp \
 	pqueue/tests/posix/pqueue.cpp \
 	pqueue/tests/posix/pqueue_envelope.cpp \
-	pqueue/tests/posix/pqueue_file_store.cpp \
-	pqueue/tests/posix/pqueue_diagnostics.cpp \
 	pqueue/tests/posix/pqueue_http_outbox.cpp \
 	pqueue/tests/posix/pqueue_http_request_envelope.cpp \
 	pqueue/tests/posix/pqueue_outbox.cpp \

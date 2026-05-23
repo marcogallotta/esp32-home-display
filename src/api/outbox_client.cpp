@@ -203,18 +203,21 @@ void logPqueueEvent(const pqueue::Event& event, api::PqueueLogLevel configured) 
         message += event.operation;
     }
 
-    message += ": ";
-    message += event.status.message == nullptr || event.status.message[0] == '\0'
-        ? pqueue::statusCodeName(event.status.code)
-        : event.status.message;
+    if (event.kind != pqueue::EventKind::RequestRetried) {
+        message += ": ";
+        message += event.status.message == nullptr || event.status.message[0] == '\0'
+            ? pqueue::statusCodeName(event.status.code)
+            : event.status.message;
 
-    message += " code=";
-    message += pqueue::statusCodeName(event.status.code);
+        message += " code=";
+        message += pqueue::statusCodeName(event.status.code);
 
-    if (event.status.backendCode != 0) {
-        message += " backend=";
-        message += std::to_string(event.status.backendCode);
+        if (event.status.backendCode != 0) {
+            message += " backend=";
+            message += std::to_string(event.status.backendCode);
+        }
     }
+
     if (event.queueCount != 0) {
         message += " queued=";
         message += std::to_string(event.queueCount);
@@ -224,7 +227,7 @@ void logPqueueEvent(const pqueue::Event& event, api::PqueueLogLevel configured) 
         message += std::to_string(event.attempt);
     }
     if (event.remainingMs != 0) {
-        message += " remaining_ms=";
+        message += event.kind == pqueue::EventKind::RequestRetried ? " next_retry_ms=" : " remaining_ms=";
         message += std::to_string(event.remainingMs);
     }
     if (event.method != nullptr && event.method[0] != '\0') {
@@ -446,11 +449,42 @@ struct OutboxClientImpl {
     }
 
     static void onPqueueEvent(const pqueue::Event& event, void* context) {
-        const auto* self = static_cast<const OutboxClientImpl*>(context);
-        logPqueueEvent(
-            event,
-            self == nullptr ? api::PqueueLogLevel::Info : self->config.api.outbox.logLevel
-        );
+        auto* self = static_cast<OutboxClientImpl*>(context);
+        if (self == nullptr) {
+            logPqueueEvent(event, api::PqueueLogLevel::Info);
+            return;
+        }
+
+        const bool isTransportFailure =
+            event.kind == pqueue::EventKind::Diagnostic &&
+            event.operation != nullptr &&
+            std::string_view(event.operation) == "transport_post_complete" &&
+            !event.status.ok();
+
+        if (isTransportFailure) {
+            if (self->transportOk) {
+                self->transportOk = false;
+                // Let first failure WARN through
+            } else {
+                return; // suppress repeat transport failure events
+            }
+        } else if (event.kind == pqueue::EventKind::RequestRetried && !self->transportOk) {
+            if (event.attempt % 12 == 0) {
+                std::string msg = "pqueue: still retrying attempt=" + std::to_string(event.attempt);
+                if (event.remainingMs != 0) {
+                    msg += " next_retry_ms=" + std::to_string(event.remainingMs);
+                }
+                logLine(LogLevel::Warn, msg);
+            }
+            return;
+        } else if (event.kind == pqueue::EventKind::RequestSent && !self->transportOk) {
+            self->transportOk = true;
+            const auto stats = self->outbox.stats();
+            logLine(LogLevel::Info,
+                "pqueue: server reachable, remaining=" + std::to_string(stats.count));
+        }
+
+        logPqueueEvent(event, self->config.api.outbox.logLevel);
     }
 
     void logDrop(
@@ -493,6 +527,7 @@ struct OutboxClientImpl {
     pqueue::http::Transport* transport = nullptr;
     pqueue::http::Outbox outbox;
     std::optional<pqueue::http::Response> lastResponse;
+    bool transportOk = true;
 };
 
 OutboxClient::OutboxClient(const ::Config& config)
@@ -620,6 +655,10 @@ WriteResult OutboxClient::send(ApiRequest request) {
     return makeWriteResult(WriteStatus::DroppedPermanent);
 }
 
+pqueue::CompactIdleResult OutboxClient::compactIdle(size_t maxSteps) {
+    return pqueue_->outbox.compactIdle(maxSteps);
+}
+
 OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     (void)nowMs;
     OutboxDrainResult result;
@@ -630,6 +669,7 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     result.attempted = drainResult.attempts;
     result.sent = drainResult.sent;
     result.dropped = drainResult.dropped + drainResult.corruptDropped;
+    result.removedQueuedBytes = drainResult.removedQueuedBytes;
     result.notDueYet = drainResult.notDue || drainResult.rateLimited;
     result.blockedByRetryableFailure = drainResult.sendError || drainResult.queueError;
 
@@ -637,7 +677,8 @@ OutboxDrainResult OutboxClient::drainPending(std::uint64_t nowMs) {
     if (drainResult.sent > 0 || totalDropped > 0 || drainResult.sendError || drainResult.queueError) {
         std::string msg = "pqueue drain:"
             " sent=" + std::to_string(drainResult.sent) +
-            " dropped=" + std::to_string(totalDropped);
+            " dropped=" + std::to_string(totalDropped) +
+            " remaining=" + std::to_string(pqueue_->outbox.stats().count);
         if (drainResult.sendError || drainResult.queueError) {
             msg += " error=1";
         }

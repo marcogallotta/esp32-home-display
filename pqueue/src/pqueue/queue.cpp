@@ -1,9 +1,9 @@
 #include "queue.h"
 #include "append_log_store.h"
 #include "internal/lock_owner.h"
-#include "storage_common.h"
 
 #include <cstdint>
+#include <cstring>
 #include <sstream>
 #include <utility>
 
@@ -69,36 +69,18 @@ ValidationIssue makeQueueIssue(ValidationIssueCode code, std::string message, Va
 bool isFormatRepairIssue(ValidationIssueCode code) {
     switch (code) {
         case ValidationIssueCode::ConfigMismatch:
-        case ValidationIssueCode::SpoolMissing:
-        case ValidationIssueCode::SpoolSizeMismatch:
         case ValidationIssueCode::QueueLoadFailed:
         case ValidationIssueCode::QueueIndexMismatch:
-            return true;
-        case ValidationIssueCode::MetadataMissing:
         case ValidationIssueCode::MetadataCorrupt:
         case ValidationIssueCode::JournalCorrupt:
-        case ValidationIssueCode::InvalidRingState:
+            return true;
         case ValidationIssueCode::InvalidConfig:
-        case ValidationIssueCode::SlotReadFailed:
-        case ValidationIssueCode::SlotHeaderInvalid:
-        case ValidationIssueCode::SlotCrcMismatch:
+        case ValidationIssueCode::RecordCrcMismatch:
         case ValidationIssueCode::OutboxEnvelopeInvalid:
         case ValidationIssueCode::HttpRequestEnvelopeInvalid:
             return false;
     }
     return false;
-}
-
-bool isRebuildMetadataIssue(ValidationIssueCode code) {
-    switch (code) {
-        case ValidationIssueCode::MetadataMissing:
-        case ValidationIssueCode::MetadataCorrupt:
-        case ValidationIssueCode::JournalCorrupt:
-        case ValidationIssueCode::InvalidRingState:
-            return true;
-        default:
-            return false;
-    }
 }
 
 void addRepairHints(ValidationResult& result, std::uint32_t head) {
@@ -110,11 +92,7 @@ void addRepairHints(ValidationResult& result, std::uint32_t head) {
             issue.repairAction = ValidationRepairAction::Format;
             continue;
         }
-        if (isRebuildMetadataIssue(issue.code)) {
-            issue.repairAction = ValidationRepairAction::RebuildMetadata;
-            continue;
-        }
-        if (issue.code == ValidationIssueCode::SlotHeaderInvalid || issue.code == ValidationIssueCode::SlotCrcMismatch) {
+        if (issue.code == ValidationIssueCode::RecordCrcMismatch) {
             if (issue.hasExpectedSequence && issue.expectedSequence == head) {
                 issue.repairAction = ValidationRepairAction::DropFrontIfCorrupt;
             } else {
@@ -124,7 +102,7 @@ void addRepairHints(ValidationResult& result, std::uint32_t head) {
     }
 }
 
-bool sameIndex(const FileStoreIndex& lhs, const FileStoreIndex& rhs) {
+bool sameIndex(const QueueIndex& lhs, const QueueIndex& rhs) {
     return lhs.head == rhs.head && lhs.tail == rhs.tail && lhs.count == rhs.count;
 }
 
@@ -137,30 +115,23 @@ bool isCorruptRecordStatus(StatusCode code) {
 
 namespace {
 
+std::string spanToString(Span s) {
+    if (s.len == 0) return std::string();
+    return std::string(reinterpret_cast<const char*>(s.data), s.len);
+}
+
 std::unique_ptr<Store> makeStore(const Config& config) {
-    if (config.storeLayout == StoreLayout::AppendLog) {
-        AppendLogConfig ac;
-        ac.basePath = config.basePath;
-        ac.backend = config.storageBackend;
-        ac.events = config.events;
-        ac.fileSystem = config.fileSystem;
-        ac.maxRecordBytes = config.recordSizeBytes;
-        ac.maxTotalBytes = config.reservedBytes;
-        ac.maxSegmentBytes = config.maxSegmentBytes;
-        ac.minFreeBytes = config.minFreeBytes;
-        ac.maxSegments = config.maxSegments;
-        return std::make_unique<AppendLogStore>(std::move(ac));
-    }
-    FileStoreConfig fc;
-    fc.basePath = config.basePath;
-    fc.backend = config.storageBackend;
-    fc.events = config.events;
-    fc.fileSystem = config.fileSystem;
-    fc.reservedBytes = config.reservedBytes;
-    fc.recordSizeBytes = config.recordSizeBytes;
-    fc.journalBytes = config.journalBytes;
-    fc.checkpointEveryOps = config.checkpointEveryOps;
-    return std::make_unique<FileStore>(std::move(fc));
+    AppendLogConfig ac;
+    ac.basePath = config.basePath;
+    ac.backend = config.storageBackend;
+    ac.events = config.events;
+    ac.fileSystem = config.fileSystem;
+    ac.maxRecordBytes = config.recordSizeBytes;
+    ac.maxTotalBytes = config.reservedBytes;
+    ac.maxSegmentBytes = config.maxSegmentBytes;
+    ac.minFreeBytes = config.minFreeBytes;
+    ac.maxSegments = config.maxSegments;
+    return std::make_unique<AppendLogStore>(std::move(ac));
 }
 
 } // namespace
@@ -258,14 +229,17 @@ Status Queue::recoverStaleLock() {
 }
 
 Status Queue::loadLatestIndex() {
-    const Status st = store_->readIndexFromDisk(index_);
+    const Status st = store_->readIndex(index_);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "loadLatestIndex");
     }
     return Status::success();
 }
 
-Status Queue::enqueue(const std::string& record) {
+Status Queue::enqueue(Span record) {
+    if (record.len > 0 && record.data == nullptr) {
+        return Status::failure(StatusCode::InvalidArgument, "Span has non-zero length but null data");
+    }
     ScopedLock lock(*this);
     if (!lock.status().ok()) {
         return lock.status();
@@ -274,10 +248,10 @@ Status Queue::enqueue(const std::string& record) {
     if (!st.ok()) {
         return st;
     }
-    if (record.size() > config_.recordSizeBytes) {
+    if (record.len > config_.recordSizeBytes) {
         return diagnostic(Severity::Warning, Status::failure(StatusCode::RecordTooLarge, "record exceeds configured queue maximum"), "enqueue");
     }
-    if (!store_->canEnqueue(record.size(), index_.count)) {
+    if (!store_->canEnqueue(record.len)) {
         if (config_.fullQueuePolicy == FullQueuePolicy::DropOldest) {
             const Status evictStatus = evictFront();
             if (!evictStatus.ok()) {
@@ -290,30 +264,75 @@ Status Queue::enqueue(const std::string& record) {
     }
 
     const std::uint32_t sequence = index_.tail;
-    st = store_->writeRecord(sequence, record);
+    const std::string recordStr = spanToString(record);
+    st = store_->commitEnqueue(sequence, recordStr);
     if (!st.ok() && st.code == StatusCode::QueueFull &&
         config_.fullQueuePolicy == FullQueuePolicy::DropOldest && index_.count > 0) {
-        // writeRecord may return QueueFull when maxTotalBytes is exhausted and compaction
-        // finds nothing to reclaim. Evicting the front record creates dead bytes that the
-        // next writeRecord call can compact away to make room.
         const Status evictStatus = evictFront();
         if (!evictStatus.ok()) return evictStatus;
         diagnostic(Severity::Warning, Status::failure(StatusCode::QueueFull, "queue full: oldest record evicted"), "enqueue");
-        st = store_->writeRecord(sequence, record);
+        st = store_->commitEnqueue(sequence, recordStr);
     }
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "enqueue");
     }
 
-    FileStoreIndex next = index_;
-    next.tail += 1;
-    next.count += 1;
-    st = store_->writeIndex(next);
-    if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "enqueue");
-    }
+    index_.tail += 1;
+    index_.count += 1;
+    return Status::success();
+}
 
-    index_ = next;
+Status Queue::enqueue(const std::string& record) {
+    return enqueue(Span(reinterpret_cast<const uint8_t*>(record.data()), record.size()));
+}
+
+Status Queue::peekSize(std::size_t& out) {
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
+    if (!st.ok()) {
+        return st;
+    }
+    if (index_.count == 0) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
+    }
+    return store_->readRecordSize(index_.head, out);
+}
+
+Status Queue::peek(MutableSpan out, std::size_t& written) {
+    if (out.len > 0 && out.data == nullptr) {
+        return Status::failure(StatusCode::InvalidArgument, "MutableSpan has non-zero length but null data");
+    }
+    ScopedLock lock(*this);
+    if (!lock.status().ok()) {
+        return lock.status();
+    }
+    Status st = loadLatestIndex();
+    if (!st.ok()) {
+        return st;
+    }
+    if (index_.count == 0) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
+    }
+    std::size_t n = 0;
+    st = store_->readRecordSize(index_.head, n);
+    if (!st.ok()) {
+        return st;
+    }
+    if (n > out.len) {
+        return Status::failure(StatusCode::RecordTooLarge, "record payload exceeds buffer length");
+    }
+    std::string tmp;
+    st = store_->readRecord(index_.head, tmp);
+    if (!st.ok()) {
+        return st;
+    }
+    if (out.data != nullptr && n > 0) {
+        std::memcpy(out.data, tmp.data(), n);
+    }
+    written = n;
     return Status::success();
 }
 
@@ -345,18 +364,13 @@ Status Queue::pop() {
         return Status::failure(StatusCode::QueueEmpty, "queue is empty");
     }
 
-    const std::uint32_t oldHead = index_.head;
-    FileStoreIndex next = index_;
-    next.head += 1;
-    next.count -= 1;
-
-    st = store_->writeIndex(next);
+    st = store_->commitPop(index_.head);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "pop");
     }
 
-    index_ = next;
-    store_->removeRecord(oldHead);
+    index_.head += 1;
+    index_.count -= 1;
     return Status::success();
 }
 
@@ -382,18 +396,13 @@ Status Queue::rewriteFront(const std::string& record) {
 
 
 Status Queue::evictFront() {
-    const std::uint32_t oldHead = index_.head;
-    FileStoreIndex next = index_;
-    next.head += 1;
-    next.count -= 1;
-
-    const Status st = store_->writeIndex(next);
+    const Status st = store_->commitPop(index_.head);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "evictFront");
     }
 
-    index_ = next;
-    store_->removeRecord(oldHead);
+    index_.head += 1;
+    index_.count -= 1;
     return Status::success();
 }
 
@@ -420,18 +429,13 @@ Status Queue::dropFrontIfCorrupt() {
         return st;
     }
 
-    const std::uint32_t corruptHead = index_.head;
-    FileStoreIndex next = index_;
-    next.head += 1;
-    next.count -= 1;
-
-    st = store_->writeIndex(next);
+    st = store_->commitPop(index_.head);
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "dropFrontIfCorrupt");
     }
 
-    index_ = next;
-    store_->removeRecord(corruptHead);
+    index_.head += 1;
+    index_.count -= 1;
     return Status::success();
 }
 
@@ -452,21 +456,10 @@ Status Queue::format() {
     if (!st.ok()) {
         return diagnostic(Severity::Error, st, "format");
     }
-    index_ = FileStoreIndex{};
+    index_ = QueueIndex{};
     return Status::success();
 }
 
-Status Queue::rebuildMetadata() {
-    ScopedLock lock(*this);
-    if (!lock.status().ok()) {
-        return lock.status();
-    }
-    Status st = store_->rebuildMetadata();
-    if (!st.ok()) {
-        return diagnostic(Severity::Error, st, "rebuildMetadata");
-    }
-    return loadLatestIndex();
-}
 
 Status Queue::visitRecords(RecordVisitor visitor, void* context) {
     ScopedLock lock(*this);
@@ -520,8 +513,8 @@ ValidationResult Queue::validate(const ValidationOptions& options) {
         return result;
     }
 
-    FileStoreIndex diskIndex;
-    const Status st = store_->readIndexFromDisk(diskIndex);
+    QueueIndex diskIndex;
+    const Status st = store_->readIndex(diskIndex);
     if (!st.ok()) {
         addQueueValidationError(result, options, makeQueueIssue(ValidationIssueCode::QueueLoadFailed, st.message, ValidationRepairAction::Format));
         return result;

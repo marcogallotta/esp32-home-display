@@ -30,4 +30,8 @@ void delayMs(int ms);
 // Print line (for now console)
 void printLine(const std::string& s);
 
+// Doctor mode: suppresses Serial and file log output while active.
+void setDoctorMode(bool active);
+bool isDoctorMode();
+
 } // namespace platform

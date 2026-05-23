@@ -498,7 +498,7 @@ TEST_CASE("maxTotalBytes: enqueue blocked when footprint full and nothing to com
     storeEnqueue(store, 1, "a");
     storeEnqueue(store, 2, "b"); // on-disk footprint = 70 bytes; cap reached
 
-    const auto st = store.writeRecord(3, "c");
+    const auto st = store.commitEnqueue(3, "c");
     CHECK_FALSE(st.ok());
     CHECK_EQ(st.code, pqueue::StatusCode::QueueFull);
     CHECK_FALSE(std::filesystem::exists(segmentPath(2)));
@@ -518,16 +518,13 @@ TEST_CASE("maxTotalBytes: compaction makes room for a blocked enqueue") {
     storePop(store); // POP overflows gen=1 → rotation; gen=1: 70b (full), gen=2: 40b
 
     // footprint=110; +25 for enqueue=135 > 120 → compact gen=1; then fits
-    CHECK(store.writeRecord(3, "c").ok());
-    pqueue::FileStoreIndex idx;
-    CHECK(store.readIndex(idx).ok());
-    CHECK(store.writeIndex(idx).ok());
+    CHECK(store.commitEnqueue(3, "c").ok());
 
     expectRecords(store, {{2,"b"},{3,"c"}});
     expectRecordsAfterRemount(cfg, {{2,"b"},{3,"c"}});
 }
 
-TEST_CASE("maxTotalBytes: DropOldest evicts and retries when writeRecord returns QueueFull") {
+TEST_CASE("maxTotalBytes: DropOldest evicts and retries when commitEnqueue returns QueueFull") {
     resetSpool();
     auto cfg = makeConfig();
     cfg.maxSegmentBytes = 100;
@@ -546,15 +543,26 @@ TEST_CASE("maxTotalBytes: DropOldest evicts and retries when writeRecord returns
     REQUIRE(q.peek(out).ok()); CHECK_EQ(out, "c");
 }
 
-TEST_CASE("sequence exhaustion: writeRecord fails closed at UINT32_MAX") {
+TEST_CASE("sequence exhaustion: commitEnqueue fails closed at UINT32_MAX") {
     resetSpool();
     auto cfg = makeStoreConfig();
     pqueue::AppendLogStore store(cfg);
     CHECK(store.mount().ok());
 
-    const auto st = store.writeRecord(std::numeric_limits<std::uint32_t>::max(), "data");
+    const auto st = store.commitEnqueue(std::numeric_limits<std::uint32_t>::max(), "data");
     CHECK_FALSE(st.ok());
     CHECK_EQ(st.code, pqueue::StatusCode::SequenceExhausted);
+}
+
+TEST_CASE("commitPop: sequence mismatch returns InvalidIndex") {
+    resetSpool();
+    pqueue::AppendLogStore store(makeStoreConfig());
+    CHECK(store.mount().ok());
+    CHECK(store.commitEnqueue(0, "a").ok());
+
+    const auto st = store.commitPop(99);
+    CHECK_FALSE(st.ok());
+    CHECK_EQ(st.code, pqueue::StatusCode::InvalidIndex);
 }
 
 // ---------------------------------------------------------------------------
@@ -1294,4 +1302,598 @@ TEST_CASE("subrange: live suffix triggers rotate-before-compact extending inputR
     expectRecord(store, 3, kP3);
     expectRecord(store, 4, kP4);
     checkTracking(store);
+}
+
+// ---------------------------------------------------------------------------
+// rewriteFront / rewrite semantics tests
+//
+// Dead bytes for compaction come from the REWRITE event superseding the
+// original ENQUEUE bytes. No pop of the rewritten record is needed.
+// maxSegmentBytes=300 keeps the REWRITE in the same sealed segment as the
+// original ENQUEUE so collectLiveRecords reads the rewritten payload and
+// the compaction output carries it forward without FIFO disruption.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+pqueue::AppendLogConfig makeRewriteCompactionConfig() {
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 300;
+    return cfg;
+}
+
+const std::string kP6(60, 'f');
+const std::string kP7(60, 'g');
+const std::string kP8(60, 'h');
+
+} // namespace
+
+TEST_CASE("rewrite: rewriteFront payload survives compaction and remount") {
+    // maxSegmentBytes=300: seq=1..3 fit in gen=1 alongside their REWRITE event.
+    // Dead bytes = original ENQUEUE bytes for seq=1 (superseded by REWRITE).
+    // No pop of seq=1 needed; dead bytes from the REWRITE itself trigger compaction.
+    //
+    // storeEnqueue(1,kP1): gen=1=104B.
+    // storeEnqueue(2,kP2): gen=1=188B.
+    // rewriteRecord(1,"X"): REWRITE(25B) in gen=1=213B. seq=1.segGen=gen=1.
+    // storeEnqueue(3,kP3): gen=1=297B.
+    // storeEnqueue(4,kP4): 297+84=381>300 -> rotate gen=1 sealed. ranges=[{1,1}], tail=2.
+    //
+    // compactRange({1,1}): live=[seq=1("X"),seq=2(kP2),seq=3(kP3)]. Dead=84B (original ENQUEUE seq=1).
+    // rotate-before-compact fires (gen=2 tail contiguous, deps={}): gen=3 becomes new tail,
+    // inputRange extends to {1,2}, output goes to gen=4. ranges=[{4,4}], tail=3.
+    // Remount: front=seq=1 payload="X". FIFO preserved.
+    resetSpool();
+    auto rwCfg = makeRewriteCompactionConfig();
+    pqueue::AppendLogStore store(rwCfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, kP1);
+    storeEnqueue(store, 2, kP2);
+    CHECK(store.rewriteRecord(1, std::string(1, 'X')).ok()); // REWRITE in gen=1, 213B; no rotation
+    storeEnqueue(store, 3, kP3);
+    storeEnqueue(store, 4, kP4); // 297+84>300 -> rotate gen=1 sealed
+
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   1u);
+    CHECK_EQ(store.tailGeneration(), 2u);
+
+    const auto st = store.compactRange({1, 1});
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+
+    // rotate-before-compact fires (gen=2 tail contiguous, deps={}):
+    // gen=3 created as new tail, inputRange extended to {1,2}, output gen=4.
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 4u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   4u);
+    CHECK_EQ(store.tailGeneration(), 3u);
+
+    expectRecord(store, 1, std::string(1, 'X'));
+    expectRecord(store, 2, kP2);
+    expectRecord(store, 3, kP3);
+    expectRecord(store, 4, kP4);
+    checkTracking(store);
+
+    expectRecordsAfterRemount(rwCfg, {{1, std::string(1,'X')}, {2, kP2}, {3, kP3}, {4, kP4}});
+}
+
+TEST_CASE("rewrite: rewriteFront payload survives subrange compaction and remount") {
+    // Same maxSegmentBytes=300 setup; build two sealed ranges so we can compact a prefix subrange.
+    //
+    // storeEnqueue(1..8): gen=1 sealed (seq=1..3 + REWRITE seq=1). gen=2 sealed (seq=4..6).
+    //   gen=3 (tail) has seq=7..8. ranges=[{1,2}], tail=3.
+    // compactRange({1,1}): prefix of {1,2}. live=[seq=1("X"),seq=2,seq=3]. Dead=84B.
+    // Output gen=4. ranges=[{4,4},{2,2}], tail=3. seq=1 payload="X" after remount.
+    resetSpool();
+    auto rwCfg = makeRewriteCompactionConfig();
+    pqueue::AppendLogStore store(rwCfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, kP1);
+    storeEnqueue(store, 2, kP2);
+    CHECK(store.rewriteRecord(1, std::string(1, 'X')).ok()); // REWRITE in gen=1
+    storeEnqueue(store, 3, kP3);
+    storeEnqueue(store, 4, kP4); // 297+84>300 -> rotate gen=1. ranges=[{1,1}], tail=2.
+    storeEnqueue(store, 5, kP5);
+    storeEnqueue(store, 6, kP6); // fills gen=2 (104+84=188B)
+    storeEnqueue(store, 7, kP7); // 272+84=356>300 -> rotate gen=2; seq=7 in gen=3. ranges=[{1,2}], tail=3.
+    storeEnqueue(store, 8, kP8); // seq=8 in gen=3: 104+84=188B.
+
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   2u);
+    CHECK_EQ(store.tailGeneration(), 3u);
+
+    // compact prefix {1,1}: dead bytes from original ENQUEUE seq=1; live=seq=1("X"),seq=2,seq=3
+    const auto st = store.compactRange({1, 1});
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+
+    REQUIRE_EQ(store.manifestRanges().size(), 2u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 4u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   4u);
+    CHECK_EQ(store.manifestRanges()[1].startGen, 2u);
+    CHECK_EQ(store.manifestRanges()[1].endGen,   2u);
+    CHECK_EQ(store.tailGeneration(), 3u);
+
+    expectRecord(store, 1, std::string(1, 'X'));
+    expectRecord(store, 4, kP4);
+    checkTracking(store);
+
+    expectRecordsAfterRemount(rwCfg, {
+        {1, std::string(1,'X')}, {2,kP2}, {3,kP3},
+        {4,kP4}, {5,kP5}, {6,kP6}, {7,kP7}, {8,kP8}
+    });
+}
+
+TEST_CASE("tail dep: rewrite event in tail suppresses rotate-before-compact (cross-range)") {
+    // Only a cross-range REWRITE dep suppresses rotate. Dead bytes in gen=4 come from a
+    // pre-planted REWRITE superseding the original ENQUEUE (not a current-session event),
+    // so activeTailAffectedGenerations_ contains only the dep on gen=1 -- the sole out-of-range dep.
+    //
+    // Plant: ranges=[{1,4}], tail=5, nextGen=6.
+    //   gen=1..3: ENQUEUE(seq=1..3). gen=5: ENQUEUE(seq=5) [tail].
+    //   gen=4: ENQUEUE(seq=4,kP4=60B) + REWRITE(seq=4,"D"=1B). 129B total.
+    //     Mount applies REWRITE by sequence: seq=4.segGen=4, payload="D". Dead=84B (original ENQUEUE).
+    //
+    // Mount: records={seq=1(gen=1),seq=2(gen=2),seq=3(gen=3),seq=4(gen=4,"D"),seq=5(gen=5)}.
+    //   tracking=false, deps={}.
+    //
+    // storeEnqueue(6, kP6): 104+84=188>185 -> rotate gen=5 sealed; ranges=[{1,5}], tail=6.
+    //   tracking=true, deps={}.
+    //
+    // rewriteRecord(1, "R"): REWRITE(25B) in gen=6: 104+25=129B. seq=1.segGen=1->6. deps={1}.
+    //
+    // compactRange({4,5}):
+    //   suffix of {1,5}. gen=4: 84B dead (original ENQUEUE superseded). gen=5: live (seq=5).
+    //   Live records in [4,5]: seq=4("D",1B) + seq=5(kP5,60B). Both fit in one output segment.
+    //   tailDepsContained: gen=1 not in [4,6] -> FALSE. Rotate suppressed.
+    //   Output gen=7. ranges=[{1,3},{7,7}], tail=6.
+    plantLayout({
+        .ranges = {{1, 4}},
+        .tail   = 5,
+        .next   = 6,
+        .segments = {
+            {.gen=1, .firstSeq=1, .body=serializeEnqueueEvent(1, kP1)},
+            {.gen=2, .firstSeq=2, .body=serializeEnqueueEvent(2, kP2)},
+            {.gen=3, .firstSeq=3, .body=serializeEnqueueEvent(3, kP3)},
+            {.gen=4, .firstSeq=4, .body=serializeEnqueueEvent(4, kP4) + serializeRewriteEvent(4, std::string(1,'D'))},
+            {.gen=5, .firstSeq=5, .body=serializeEnqueueEvent(5, kP5)},
+        }
+    });
+
+    pqueue::AppendLogStore store(makeSubrangeConfig());
+    CHECK(store.mount().ok());
+    CHECK_EQ(store.tailGeneration(), 5u);
+
+    storeEnqueue(store, 6, kP6); // 104+84=188>185 -> rotate gen=5 sealed; tail=6, tracking=true
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   5u);
+    CHECK_EQ(store.tailGeneration(), 6u);
+
+    // REWRITE seq=1 (segGen=1, cross-range) into gen=6: sole active-tail dep
+    CHECK(store.rewriteRecord(1, std::string(1, 'R')).ok());
+
+    const auto st = store.compactRange({4, 5});
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+
+    // rotate must NOT have fired -- cross-range REWRITE dep on gen=1 suppresses it
+    CHECK_EQ(store.tailGeneration(), 6u);
+
+    REQUIRE_EQ(store.manifestRanges().size(), 2u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   3u);
+    CHECK_EQ(store.manifestRanges()[1].startGen, 7u);
+    CHECK_EQ(store.manifestRanges()[1].endGen,   7u);
+
+    CHECK(std::filesystem::exists(segmentPath(1)));
+    CHECK(std::filesystem::exists(segmentPath(2)));
+    CHECK(std::filesystem::exists(segmentPath(3)));
+    CHECK_FALSE(std::filesystem::exists(segmentPath(4)));
+    CHECK_FALSE(std::filesystem::exists(segmentPath(5)));
+    CHECK(std::filesystem::exists(segmentPath(6)));
+    CHECK(std::filesystem::exists(segmentPath(7)));
+
+    expectRecord(store, 4, std::string(1,'D'));
+    expectRecord(store, 5, kP5);
+    checkTracking(store);
+
+    expectRecordsAfterRemount(makeSubrangeConfig(), {
+        {1, std::string(1,'R')}, {2, kP2}, {3, kP3},
+        {4, std::string(1,'D')}, {5, kP5}, {6, kP6}
+    });
+}
+
+TEST_CASE("tail dep: contained rewrite dependency allows rotate-before-compact") {
+    // When all active-tail deps fall within the compaction input range, rotate fires.
+    // The REWRITE dependency (old segGen=4, current location gen=6) is contained within [4,6];
+    // subsequent POP deps (poppedGen=6, poppedGen=4) are also contained. tailDepsContained=TRUE.
+    //
+    // Plant: ranges=[{1,4}], tail=5, nextGen=6.
+    //   gen=1..3: header-only. gen=4: enqueue(1,kP1)+enqueue(2,kP2)=188B.
+    //   gen=5: enqueue(3,kP3)=104B (tail).
+    //
+    // Mount + storeEnqueue(4,kP4): 104+84=188>185 -> rotate gen=5 sealed; ranges=[{1,5}], tail=6.
+    //   tracking=true, deps={}.
+    //
+    // rewriteRecord(1, "R"): seq=1 in gen=4. REWRITE event=25B in gen=6. 104+25=129<=185.
+    //   deps={4}. seq=1->gen=6.
+    // storePop seq=1 (poppedGen=6): gen=6=149B. deps={4,6}.
+    // storePop seq=2 (poppedGen=4): gen=6=169B. deps={4,6}.
+    //
+    // compactRange({4,5}):
+    //   suffix of {1,5}. gen=4 dead(seq=1 rewritten+seq=2 popped), gen=5 live(seq=3).
+    //   tailDepsContained: {4,6} in [4,6] -> TRUE. wouldRotate=TRUE. Rotate fires!
+    //   gen=6 sealed -> merge {1,6}. tail=7. inputRange extended to {4,6}.
+    //   Live in {4,6}: seq=3(gen=5), seq=4(gen=6,kP4). Output: gen=8(seq=3), gen=9(seq=4).
+    //   Result: ranges=[{1,3},{8,9}], tail=7.
+    plantLayout({
+        .ranges = {{1, 4}},
+        .tail   = 5,
+        .next   = 6,
+        .segments = {
+            {.gen=1, .firstSeq=0, .body={}},
+            {.gen=2, .firstSeq=0, .body={}},
+            {.gen=3, .firstSeq=0, .body={}},
+            {.gen=4, .firstSeq=1, .body=serializeEnqueueEvent(1, kP1) + serializeEnqueueEvent(2, kP2)},
+            {.gen=5, .firstSeq=3, .body=serializeEnqueueEvent(3, kP3)},
+        }
+    });
+
+    pqueue::AppendLogStore store(makeSubrangeConfig());
+    CHECK(store.mount().ok());
+    CHECK_EQ(store.tailGeneration(), 5u);
+
+    storeEnqueue(store, 4, kP4); // 104+84>185 -> rotate gen=5 sealed; seq=4 in gen=6
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   5u);
+    CHECK_EQ(store.tailGeneration(), 6u);
+
+    // REWRITE seq=1 (in gen=4) into gen=6: creates dep={4}, not a POP
+    CHECK(store.rewriteRecord(1, std::string(1, 'R')).ok());
+    storePop(store); // seq=1 (poppedGen=6): deps={4,6}
+    storePop(store); // seq=2 (poppedGen=4): deps={4,6}
+
+    const auto st = store.compactRange({4, 5});
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+
+    // rotate MUST have fired
+    CHECK_EQ(store.tailGeneration(), 7u);
+
+    REQUIRE_EQ(store.manifestRanges().size(), 2u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   3u);
+    CHECK_EQ(store.manifestRanges()[1].startGen, 8u);
+    CHECK_EQ(store.manifestRanges()[1].endGen,   9u);
+
+    CHECK_FALSE(std::filesystem::exists(segmentPath(4)));
+    CHECK_FALSE(std::filesystem::exists(segmentPath(5)));
+    CHECK_FALSE(std::filesystem::exists(segmentPath(6)));
+    CHECK(std::filesystem::exists(segmentPath(8)));
+    CHECK(std::filesystem::exists(segmentPath(9)));
+
+    expectRecord(store, 3, kP3);
+    expectRecord(store, 4, kP4);
+    checkTracking(store);
+}
+
+TEST_CASE("rewrite: rewriteFront into newer segment; compact+remount preserves FIFO order (regression)") {
+    // Regression: collectLiveRecords iterated by segment generation (std::map order), so a
+    // rewrite that moved seq=1's segmentGeneration past seq=2 and seq=3 caused the compacted
+    // output to be written in generation order [B,X,C] instead of FIFO order [X,B,C].
+    // After remount, records_.front().sequence was 2 ("B") instead of 1 ("X").
+    //
+    // maxSegmentBytes=45: exactly one 1-byte record per segment.
+    //   enqueue(1,"A"): gen=1 full -> rotate. enqueue(2,"B"): gen=2 full -> rotate.
+    //   enqueue(3,"C"): gen=3 (tail). rewriteRecord(1,"X"): REWRITE in gen=3 -> seq=1.segGen=3.
+    //   rotate-before-compact seals gen=3; range {1,3}: byGen={2:[B], 3:[X,C]}.
+    //   Without FIFO sort output=[B,X,C]. Fix: sort by sequence -> [X,B,C].
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 45;
+    {
+        pqueue::AppendLogStore store(cfg);
+        CHECK(store.mount().ok());
+        storeEnqueue(store, 1, "A");
+        storeEnqueue(store, 2, "B");
+        storeEnqueue(store, 3, "C");
+        CHECK(store.rewriteRecord(1, "X").ok());
+        const auto result = store.compactIdle(16);
+        CHECK(result.status.ok());
+        CHECK_GT(result.compactions, 0u);
+    }
+
+    pqueue::AppendLogStore store(cfg);
+    CHECK(store.mount().ok());
+    pqueue::QueueIndex idx;
+    CHECK(store.readIndex(idx).ok());
+    CHECK_EQ(idx.head, 1u); // must be seq=1 ("X"), not seq=2 ("B")
+
+    std::string out;
+    CHECK(store.readRecord(1, out).ok()); CHECK_EQ(out, "X");
+    CHECK(store.readRecord(2, out).ok()); CHECK_EQ(out, "B");
+    CHECK(store.readRecord(3, out).ok()); CHECK_EQ(out, "C");
+}
+
+TEST_CASE("rewrite: pop + rewriteRecord + compact + remount preserves FIFO order (regression)") {
+    // Regression companion to the collectLiveRecords FIFO-sort fix.
+    // After pop() removes the front, rewriteRecord(2,"X") moves seq=2
+    // into the tail segment (gen=4), which has a higher generation than seq=3
+    // (gen=3). Without the sort, collectLiveRecords returns live records in
+    // segment-generation order: [C(gen3), X(gen4), D(gen4)], producing wrong
+    // FIFO output [C, X, D] after compaction. With the fix, records are sorted
+    // by sequence: [X(seq=2), C(seq=3), D(seq=4)].
+    //
+    // maxSegmentBytes=45: each 1-byte record fills exactly one segment.
+    //   enqueue(1..4): ranges=[{1,3}], tail=4.
+    //   pop seq=1: dead in gen=1; pop event lands in gen=4.
+    //   rewriteRecord(2,"X"): REWRITE in gen=4; seq=2.segGen becomes 4.
+    //   Without sort: byGen={gen=3:[C], gen=4:[X,D]} -> compact output [C,X,D].
+    //   With fix: sort by seq -> [X,C,D].
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 45;
+    {
+        pqueue::AppendLogStore store(cfg);
+        CHECK(store.mount().ok());
+        storeEnqueue(store, 1, "A");
+        storeEnqueue(store, 2, "B");
+        storeEnqueue(store, 3, "C");
+        storeEnqueue(store, 4, "D"); // ranges=[{1,3}], tail=4
+        storePop(store);             // seq=1 dead in gen=1; pop tombstone in gen=4
+        CHECK(store.rewriteRecord(2, "X").ok()); // seq=2.segGen: gen=2 -> gen=4
+        const auto result = store.compactIdle(16);
+        CHECK(result.status.ok());
+        CHECK_GT(result.compactions, 0u);
+    }
+    expectRecordsAfterRemount(cfg, {{2,"X"},{3,"C"},{4,"D"}});
+}
+
+TEST_CASE("rewrite: index head and ordinals are correct after rewrite+compact+remount") {
+    // After a rewrite moves a record into a newer segment, compaction, and remount:
+    // - the index head must still point at the lowest live sequence
+    // - reading by ordinal (head, head+1, head+2, ...) must yield the correct payloads
+    // This validates that the index is internally consistent with the compacted segment layout.
+    //
+    // Setup is the same as the pop+rewrite regression above: after compaction the live
+    // records are seq=2("X"), seq=3("C"), seq=4("D"), so head=2, count=3.
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 45;
+    {
+        pqueue::AppendLogStore store(cfg);
+        CHECK(store.mount().ok());
+        storeEnqueue(store, 1, "A");
+        storeEnqueue(store, 2, "B");
+        storeEnqueue(store, 3, "C");
+        storeEnqueue(store, 4, "D");
+        storePop(store);
+        CHECK(store.rewriteRecord(2, "X").ok());
+        const auto result = store.compactIdle(16);
+        CHECK(result.status.ok());
+        CHECK_GT(result.compactions, 0u);
+    }
+
+    struct Expected { std::uint32_t seq; const char* payload; };
+    const Expected expected[] = {{2,"X"},{3,"C"},{4,"D"}};
+
+    auto checkOrdinals = [&](pqueue::AppendLogStore& s) {
+        pqueue::QueueIndex idx;
+        CHECK(s.readIndex(idx).ok());
+        CHECK_EQ(idx.head, 2u);
+        CHECK_EQ(idx.count, 3u);
+        for (std::uint32_t ordinal = 0; ordinal < 3u; ++ordinal) {
+            const std::uint32_t seq = idx.head + ordinal;
+            CHECK_EQ(seq, expected[ordinal].seq);
+            std::string out;
+            CHECK(s.readRecord(seq, out).ok());
+            CHECK_EQ(out, std::string(expected[ordinal].payload));
+        }
+    };
+
+    pqueue::AppendLogStore s1(cfg);
+    CHECK(s1.mount().ok());
+    checkOrdinals(s1);
+
+    pqueue::AppendLogStore s2(cfg);
+    CHECK(s2.mount().ok());
+    checkOrdinals(s2);
+}
+
+// Randomized model test (rewrite+compact+remount FIFO) deferred -- scope too broad for this patch.
+// Future task: start with no compaction, add remount, then add compactIdle.
+// Every operation must REQUIRE before mutating model; diagnostic output required from the start.
+
+// ---------------------------------------------------------------------------
+// Transition-matrix tests
+//
+// One focused test per operation-sequence transition. Every test asserts
+// payload FIFO order after remount. maxSegmentBytes is kept tiny where useful
+// so records cross segment boundaries, exercising sequence-sort in
+// collectLiveRecords.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("transition: pop → compact → remount preserves FIFO order") {
+    // maxSegmentBytes=70: header(20) + 2×enqueue(25) = 70B → sealed after 2 records.
+    // enqueue(1,2): gen=1 sealed (70B); enqueue(3): gen=2 tail (45B).
+    // storePop: pop event(20B) in gen=2 → 65B, no rotation; seq=1 dead.
+    // compactOneSegment: range {1,1} has dead bytes; rotate-before-compact fires
+    // (gen=2 contiguous, dep={1} ⊆ [1,2]); gen=3 tail created.
+    // Remount: {2,"b"},{3,"c"}.
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 70;
+    pqueue::AppendLogStore store(cfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, "a");
+    storeEnqueue(store, 2, "b");
+    storeEnqueue(store, 3, "c"); // gen=1 sealed (seq=1,2); gen=2 tail (seq=3)
+    storePop(store);              // seq=1 dead; pop tombstone in gen=2 (65B, no rotation)
+
+    const auto st = store.compactOneSegment();
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+
+    expectRecordsAfterRemount(cfg, {{2,"b"},{3,"c"}});
+}
+
+TEST_CASE("transition: rewrite → compact → remount preserves FIFO order") {
+    // The rewritten payload must survive compaction and appear first in FIFO order
+    // after remount. rotate-before-compact fires because tail (gen=2) is contiguous.
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 70; // 20B header + 2×25B enqueue → gen fills after 2 records
+    pqueue::AppendLogStore store(cfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, "a");
+    storeEnqueue(store, 2, "b");
+    storeEnqueue(store, 3, "c"); // gen=1 full (seq=1,2), gen=2 tail (seq=3)
+    CHECK(store.rewriteRecord(1, "R").ok()); // REWRITE in gen=2; dead bytes in gen=1
+
+    CHECK(store.compactOneSegment().ok());
+    expectRecordsAfterRemount(cfg, {{1,"R"},{2,"b"},{3,"c"}});
+}
+
+TEST_CASE("transition: pop → rewrite → compact → remount preserves FIFO order") {
+    // Pop the front record, then rewrite the new front. Compact must sort live
+    // records by sequence, not by source-segment generation.
+    //
+    // maxSegmentBytes=45: header(20)+enqueue(25)=45B → each enqueue fills its own segment.
+    //   enqueue(1..4): gen=1(seq=1), gen=2(seq=2), gen=3(seq=3) sealed; gen=4 tail(seq=4).
+    //   ranges=[{1,3}].
+    //   storePop: pop event(20B) overflows gen=4 (45+20=65>45) → rotate! gen=4 sealed
+    //   into {1,4}; gen=5 created (fresh tail). Pop event in gen=5 → gen=5=40B. dep={1}.
+    //   rewrite(2,"X"): REWRITE(25B) overflows gen=5 (40+25=65>45) → rotate! gen=5 sealed
+    //   into {1,5}; gen=6 created. REWRITE in gen=6 → gen=6=45B. seq=2.segGen=6; dep={1,2}.
+    //   compactOneSegment: range {1,5}; wouldRotate (gen=6 contiguous, dep={1,2}⊆[1,6]).
+    //   Rotate → gen=6 sealed into {1,6}; gen=7 tail. Live: seq=2("X"),3("C"),4("D").
+    //   3 output segs. Remount: {2,"X"},{3,"C"},{4,"D"}.
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 45;
+    pqueue::AppendLogStore store(cfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, "A"); // gen=1 sealed (45B)
+    storeEnqueue(store, 2, "B"); // gen=2 sealed (45B)
+    storeEnqueue(store, 3, "C"); // gen=3 sealed (45B)
+    storeEnqueue(store, 4, "D"); // gen=4 tail (45B); ranges=[{1,3}]
+    storePop(store);              // overflows gen=4 → gen=4 sealed into {1,4}; pop in gen=5
+    CHECK(store.rewriteRecord(2, "X").ok()); // overflows gen=5 → gen=5 sealed; REWRITE in gen=6
+
+    CHECK(store.compactOneSegment().ok());
+    expectRecordsAfterRemount(cfg, {{2,"X"},{3,"C"},{4,"D"}});
+}
+
+TEST_CASE("transition: rewrite → pop → compact → remount preserves FIFO order") {
+    // Rewrite the front record to move its live bytes into the tail, then pop it.
+    // The popped record must not appear after compaction; the remaining records
+    // must be in correct FIFO order after remount.
+    //
+    // maxSegmentBytes=100: header(20)+3×enqueue(25)=95B < 100 → all three fit in gen=1.
+    // rewrite(1,"R"): 95+25=120>100 → rotate gen=1 (sealed, 95B); gen=2 created (20B).
+    //   REWRITE event in gen=2 → gen=2=45B. seq=1.segGen=2; dep={1} (old segGen).
+    // storePop: pop event(20B) in gen=2 → gen=2=65B < 100, no rotation.
+    //   poppedGen=gen=2 (seq=1's current segGen) → dep={1,2}.
+    // State: ranges=[{1,1}] (gen=1 sealed by the rewrite rotation), tail=2.
+    // compactOneSegment: {1,1} has dead bytes (seq=1's original ENQUEUE superseded+popped).
+    //   wouldRotate (dep={1,2}⊆[1,2]); rotate → gen=2 sealed into {1,2}; gen=3 tail.
+    //   Live: seq=2(gen=1,"b"), seq=3(gen=1,"c") → 1 output seg (gen=4).
+    //   Remount: {2,"b"},{3,"c"}.
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 100;
+    pqueue::AppendLogStore store(cfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, "a");
+    storeEnqueue(store, 2, "b");
+    storeEnqueue(store, 3, "c"); // all in gen=1 (95B); no rotation during enqueues
+    CHECK(store.rewriteRecord(1, "R").ok()); // 95+25>100 → rotate gen=1; REWRITE in gen=2
+    storePop(store);                          // pop seq=1; gen=2=65B; dep={1,2}
+
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   1u);
+    CHECK_EQ(store.tailGeneration(), 2u);
+
+    CHECK(store.compactOneSegment().ok());
+    expectRecordsAfterRemount(cfg, {{2,"b"},{3,"c"}});
+}
+
+TEST_CASE("transition: rewrite old/front → rotate tail → compact → remount preserves FIFO order") {
+    // Rewrite a sealed record (seq=1 in gen=1) into the current tail (gen=2),
+    // then enqueue enough to fill and rotate gen=2, sealing the rewrite into the
+    // range. Compact must produce the rewritten value at the correct FIFO position
+    // after remount, not at the position of the source segment.
+    //
+    // maxSegmentBytes=70: enqueue(1): gen=1=45B; enqueue(2): gen=1=70B (not >70, no rotation);
+    //   enqueue(3): 70+25=95>70 → rotate gen=1→{1,1}; gen=2=45B.
+    //   rewrite(1,"R"): 45+25=70B (not >70, no rotation); gen=2=70B; dep={1}.
+    //   enqueue(4): 70+25=95>70 → rotate gen=2 → merged into {1,2}; gen=3 created (fresh
+    //   tail, dep reset to {}). enqueue(4) in gen=3: gen=3=45B.
+    //   compactOneSegment: range {1,2} has dead bytes (seq=1's original ENQUEUE superseded).
+    //   wouldRotate: gen=3 contiguous, dep={} (fresh tail) → vacuously true → rotate fires.
+    //   gen=3 sealed → {1,3}; gen=4 tail. live={1("R"),2("b"),3("c"),4("d")} → 2 output segs.
+    resetSpool();
+    auto cfg = makeStoreConfig();
+    cfg.maxSegmentBytes = 70;
+    pqueue::AppendLogStore store(cfg);
+    CHECK(store.mount().ok());
+
+    storeEnqueue(store, 1, "a");             // gen=1: 45B
+    storeEnqueue(store, 2, "b");             // gen=1: 70B (not >70, no rotation yet)
+    storeEnqueue(store, 3, "c");             // 95>70 → rotate gen=1→{1,1}; gen=2 tail: 45B
+    CHECK(store.rewriteRecord(1, "R").ok()); // 70B (not >70); gen=2=70B; dep={1} in gen=2
+    storeEnqueue(store, 4, "d");             // 95>70 → rotate gen=2→{1,2}; gen=3 fresh tail
+
+    REQUIRE_EQ(store.manifestRanges().size(), 1u);
+    CHECK_EQ(store.manifestRanges()[0].startGen, 1u);
+    CHECK_EQ(store.manifestRanges()[0].endGen,   2u);
+    CHECK_EQ(store.tailGeneration(), 3u);
+
+    CHECK(store.compactOneSegment().ok());
+    expectRecordsAfterRemount(cfg, {{1,"R"},{2,"b"},{3,"c"},{4,"d"}});
+}
+
+TEST_CASE("transition: subrange compact → remount preserves FIFO order (live suffix)") {
+    // Suffix subrange compaction on a partially-dead range.
+    // Pop seq=1,2,3 making records in gens 1-3 dead; compact suffix {3,4} (gen=3 dead,
+    // gen=4 live). After remount the manifest must have two ranges and the
+    // live records {seq=4,kP4} and {seq=5,kP5} must be accessible in FIFO order.
+    resetSpool();
+    pqueue::AppendLogStore store(makeSubrangeConfig());
+    CHECK(store.mount().ok());
+    setupSubrangeStore(store); // seqs 1-5; ranges=[{1,4}], tail=5, next=6
+    storePop(store); storePop(store); storePop(store); // seq=1,2,3 dead
+
+    const auto st = store.compactRange({3, 4});
+    CHECK(st.ok());
+    CHECK_FALSE(st.isNoOp());
+    REQUIRE_EQ(store.manifestRanges().size(), 2u); // {1,2} + {6,6}
+
+    expectRecordsAfterRemount(makeSubrangeConfig(), {{4,kP4},{5,kP5}});
+}
+
+TEST_CASE("transition: full compact (compactFull) → remount preserves FIFO order") {
+    // Three dead records (seq=1,2,3 popped) and two live records (seq=4,5).
+    // compactFull must collapse the dead portions of the range and the rotation
+    // triggered by rotate-before-compact; remount must see only the two live
+    // records in correct FIFO order.
+    resetSpool();
+    pqueue::AppendLogStore store(makeSubrangeConfig());
+    CHECK(store.mount().ok());
+    setupSubrangeStore(store); // seqs 1-5; ranges=[{1,4}], tail=5, next=6
+    storePop(store); storePop(store); storePop(store); // seq=1,2,3 dead
+
+    CHECK(store.compactFull().ok());
+    expectRecordsAfterRemount(makeSubrangeConfig(), {{4,kP4},{5,kP5}});
 }

@@ -252,6 +252,63 @@ TEST_CASE("config validates API values") {
         }
     }
 
+    SUBCASE("idle_compact_steps parses") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["idle_compact_steps"] = 3;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.idleCompactSteps, 3);
+    }
+
+    SUBCASE("idle_compact_steps defaults to 1 when omitted") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"].remove("idle_compact_steps");
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.idleCompactSteps, 1);
+    }
+
+    SUBCASE("idle_compact_steps zero is valid (disables compaction)") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["idle_compact_steps"] = 0;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.idleCompactSteps, 0);
+    }
+
+    SUBCASE("idle_compact_steps negative is invalid") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["idle_compact_steps"] = -1;
+        expectInvalid(doc);
+    }
+
+    SUBCASE("compact_bytes_per_step parses") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["compact_bytes_per_step"] = 8192;
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.compactBytesPerStep, 8192U);
+    }
+
+    SUBCASE("compact_bytes_per_step defaults to 4096 when omitted") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"].remove("compact_bytes_per_step");
+
+        Config config;
+        REQUIRE(parses(doc, config));
+        CHECK_EQ(config.api.outbox.compactBytesPerStep, 4096U);
+    }
+
+    SUBCASE("compact_bytes_per_step zero is invalid") {
+        auto doc = exampleConfig();
+        doc["api"]["outbox"]["compact_bytes_per_step"] = 0;
+        expectInvalid(doc);
+    }
+
     SUBCASE("API disk outbox values use defaults when omitted") {
         auto doc = exampleConfig();
         doc["api"]["outbox"].remove("disk_reserve_bytes");

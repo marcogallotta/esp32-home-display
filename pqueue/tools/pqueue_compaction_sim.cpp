@@ -345,10 +345,8 @@ static SimMetrics runSimulation(const WorkloadParams& wp, Strategy& strategy) {
 
     auto doEnqueue = [&]() {
         counting->resetCounters();
-        auto st = store.writeRecord(nextSeq, payload);
+        auto st = store.commitEnqueue(nextSeq, payload);
         if (st.ok()) {
-            pqueue::FileStoreIndex dummy;
-            store.writeIndex(dummy);
             ++nextSeq;
             ++queueSize;
             metrics.flashWearBytes += counting->counters().bytesWritten;
@@ -370,12 +368,10 @@ static SimMetrics runSimulation(const WorkloadParams& wp, Strategy& strategy) {
 
     auto doPop = [&]() {
         counting->resetCounters();
-        pqueue::FileStoreIndex idx;
+        pqueue::QueueIndex idx;
         store.readIndex(idx);
         if (idx.count > 0) {
-            idx.head++;
-            idx.count--;
-            store.writeIndex(idx);
+            store.commitPop(idx.head);
             --queueSize;
             metrics.flashWearBytes += counting->counters().bytesWritten;
         }

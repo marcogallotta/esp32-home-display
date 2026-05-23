@@ -99,8 +99,8 @@ bool AppendLogStore::isSegmentName(const std::string& name, std::uint32_t& gener
     return true;
 }
 
-FileStoreIndex AppendLogStore::indexFromRecords() const {
-    FileStoreIndex idx;
+QueueIndex AppendLogStore::indexFromRecords() const {
+    QueueIndex idx;
     if (records_.empty()) {
         idx.head = nextSequence_;
         idx.tail = nextSequence_;
@@ -176,6 +176,8 @@ Status AppendLogStore::scanSegments() {
         if (g + 1 > nextGeneration_) nextGeneration_ = g + 1;
     }
 
+    std::unordered_set<std::uint32_t> tailAffectedGens;
+
     for (std::size_t segIdx = 0; segIdx < activeGenerations_.size(); ++segIdx) {
         const std::uint32_t gen = activeGenerations_[segIdx];
         const bool isLastSegment = (segIdx + 1 == activeGenerations_.size());
@@ -247,13 +249,28 @@ Status AppendLogStore::scanSegments() {
                     sr.payloadBytes = eh.payloadBytes;
                     records_.push_back(sr);
                 } else {
+                    bool found = false;
                     for (auto& r : records_) {
                         if (r.sequence == eh.sequence) {
+                            if (isLastSegment) tailAffectedGens.insert(r.segmentGeneration);
                             r.segmentGeneration = gen;
                             r.payloadOffset = offset + kEnqueueHeaderBytes;
                             r.payloadBytes = eh.payloadBytes;
+                            found = true;
                             break;
                         }
+                    }
+                    if (!found) {
+                        // Original ENQUEUE was compacted away; REWRITE is authoritative.
+                        // Insert in sequence order to preserve the deque invariant.
+                        SegmentRecord sr;
+                        sr.sequence = eh.sequence;
+                        sr.segmentGeneration = gen;
+                        sr.payloadOffset = offset + kEnqueueHeaderBytes;
+                        sr.payloadBytes = eh.payloadBytes;
+                        auto it = records_.begin();
+                        while (it != records_.end() && it->sequence < sr.sequence) ++it;
+                        records_.insert(it, sr);
                     }
                 }
                 if (eh.sequence + 1 > nextSequence_) nextSequence_ = eh.sequence + 1;
@@ -269,6 +286,7 @@ Status AppendLogStore::scanSegments() {
                 if (!parsePopEvent(popBuf, pe)) { corrupt = true; break; }
 
                 if (!records_.empty() && records_.front().sequence == pe.sequence) {
+                    if (isLastSegment) tailAffectedGens.insert(records_.front().segmentGeneration);
                     records_.pop_front();
                 }
                 if (pe.sequence + 1 > nextSequence_) nextSequence_ = pe.sequence + 1;
@@ -327,8 +345,8 @@ Status AppendLogStore::scanSegments() {
         sealedSegmentBytes_[gen] = szU;
     }
 
-    activeTailDependenciesTracked_ = false;
-    activeTailAffectedGenerations_.clear();
+    activeTailDependenciesTracked_ = true;
+    activeTailAffectedGenerations_ = std::move(tailAffectedGens);
     cleanupOneDanglingSegment();
     return Status::success();
 }
@@ -376,10 +394,13 @@ Status AppendLogStore::rotateSegment() {
     manifest.nextGeneration = newGen + 1;
     st = publishManifest(manifest);
 #ifdef ARDUINO
-    Serial.printf("[rotate] old=%u new=%u create_ms=%u probe_ms=%u write_ms=%u total_ms=%u\n",
-        oldTailGen, newGen,
-        ms_create, dbgLastProbeMs_, dbgLastWriteMs_, millis() - t_rot_start);
-    Serial.flush();
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "old=%u new=%u create_ms=%u probe_ms=%u write_ms=%u total_ms=%u",
+            oldTailGen, newGen,
+            ms_create, dbgLastProbeMs_, dbgLastWriteMs_, millis() - t_rot_start);
+        diagnostic(Severity::Debug, Status{StatusCode::Ok, 0, buf}, "rotate");
+    }
 #endif
     if (!st.ok()) return st;
 
@@ -443,11 +464,22 @@ Status AppendLogStore::appendPopEvent(std::uint32_t sequence) {
 }
 
 Status AppendLogStore::appendRewriteEvent(std::uint32_t sequence, const std::string& record) {
+    // Find the record before touching the segment: if the sequence is not live,
+    // reject now rather than writing a dangling REWRITE event to disk.
+    SegmentRecord* target = nullptr;
+    for (auto& r : records_) {
+        if (r.sequence == sequence) { target = &r; break; }
+    }
+    if (!target) {
+        return Status::failure(StatusCode::InvalidRecord, "sequence not in live record range");
+    }
+
     const std::uint32_t totalBytes = kEnqueueOverheadBytes + static_cast<std::uint32_t>(record.size());
     if (activeSegmentBytes_ > kSegmentHeaderBytes &&
         activeSegmentBytes_ + totalBytes > config_.maxSegmentBytes) {
         Status st = rotateSegment();
         if (!st.ok()) return st;
+        // rotateSegment does not mutate records_; target remains valid.
     }
     Status ensureSt = ensureActiveSegment(sequence);
     if (!ensureSt.ok()) return ensureSt;
@@ -460,18 +492,12 @@ Status AppendLogStore::appendRewriteEvent(std::uint32_t sequence, const std::str
     activeSegmentBytes_ += n;
     totalOnDiskBytes_   += n;
 
-    // Update RAM state for rewritten record
-    for (auto& r : records_) {
-        if (r.sequence == sequence) {
-            if (activeTailDependenciesTracked_) {
-                activeTailAffectedGenerations_.insert(r.segmentGeneration);
-            }
-            r.segmentGeneration = activeGeneration_;
-            r.payloadOffset = payloadOffset;
-            r.payloadBytes = static_cast<std::uint32_t>(record.size());
-            break;
-        }
+    if (activeTailDependenciesTracked_) {
+        activeTailAffectedGenerations_.insert(target->segmentGeneration);
     }
+    target->segmentGeneration = activeGeneration_;
+    target->payloadOffset     = payloadOffset;
+    target->payloadBytes      = static_cast<std::uint32_t>(record.size());
     return Status::success();
 }
 
@@ -504,18 +530,15 @@ std::uint32_t AppendLogStore::appendGrowthBytes(std::uint32_t recordSize) const 
 
 // --- Store interface implementation ---
 
-Status AppendLogStore::readIndex(FileStoreIndex& out) {
+Status AppendLogStore::readIndex(QueueIndex& out) {
     Status st = ensureMounted();
     if (!st.ok()) return st;
     out = indexFromRecords();
     return Status::success();
 }
 
-Status AppendLogStore::readIndexFromDisk(FileStoreIndex& out) {
-    return readIndex(out);
-}
 
-Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& record) {
+Status AppendLogStore::commitEnqueue(std::uint32_t sequence, const std::string& record) {
 #ifdef ARDUINO
     const std::uint32_t t_wr_start = millis();
     std::uint32_t ms_ensure = 0, ms_compact = 0, ms_rotate = 0, ms_ensure_seg = 0, ms_append = 0;
@@ -534,18 +557,18 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
     if (record.size() > config_.maxRecordBytes) {
         return diagnostic(Severity::Warning,
             Status::failure(StatusCode::RecordTooLarge, "record exceeds append-log maximum record size"),
-            "writeRecord");
+            "commitEnqueue");
     }
     if (kSegmentHeaderBytes + kEnqueueOverheadBytes + record.size() > config_.maxSegmentBytes) {
         return diagnostic(Severity::Warning,
             Status::failure(StatusCode::RecordTooLarge, "record too large to fit in a segment"),
-            "writeRecord");
+            "commitEnqueue");
     }
 
     if (sequence == std::numeric_limits<std::uint32_t>::max()) {
         return diagnostic(Severity::Error,
             Status::failure(StatusCode::SequenceExhausted, "sequence space exhausted; format() required"),
-            "writeRecord");
+            "commitEnqueue");
     }
 
     const std::uint32_t eventBytes = kEnqueueOverheadBytes + static_cast<std::uint32_t>(record.size());
@@ -556,11 +579,11 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
 #endif
         while (totalOnDiskBytes() + appendGrowthBytes(static_cast<std::uint32_t>(record.size())) > config_.maxTotalBytes) {
             Status compact = compactOneSegment();
-            if (!compact.ok()) return diagnostic(Severity::Error, compact, "writeRecord");
+            if (!compact.ok()) return diagnostic(Severity::Error, compact, "commitEnqueue");
             if (compact.isNoOp()) {
                 return diagnostic(Severity::Warning,
                     Status::failure(StatusCode::QueueFull, "queue footprint limit reached"),
-                    "writeRecord");
+                    "commitEnqueue");
             }
 #ifdef ARDUINO
             did_compact = true;
@@ -577,7 +600,7 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
         if (free < static_cast<std::uint64_t>(config_.minFreeBytes) + growth) {
             return diagnostic(Severity::Warning,
                 Status::failure(StatusCode::QueueFull, "insufficient filesystem free space"),
-                "writeRecord");
+                "commitEnqueue");
         }
     }
 
@@ -585,7 +608,7 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
         activeSegmentBytes_ + eventBytes > config_.maxSegmentBytes) {
         if (needsCompaction()) {
             Status cst = compactOneSegment();
-            if (!cst.ok()) return diagnostic(Severity::Error, cst, "writeRecord");
+            if (!cst.ok()) return diagnostic(Severity::Error, cst, "commitEnqueue");
 #ifdef ARDUINO
             did_compact = true;
 #endif
@@ -600,7 +623,7 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
             ms_rotate = millis() - _tr;
             did_rotate = true;
 #endif
-            if (!rst.ok()) return diagnostic(Severity::Error, rst, "writeRecord");
+            if (!rst.ok()) return diagnostic(Severity::Error, rst, "commitEnqueue");
         }
     }
 
@@ -611,7 +634,7 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
 #ifdef ARDUINO
     ms_ensure_seg = millis() - _t_ensure_seg;
 #endif
-    if (!est.ok()) return diagnostic(Severity::Error, est, "writeRecord");
+    if (!est.ok()) return diagnostic(Severity::Error, est, "commitEnqueue");
 
     const std::uint32_t payloadOffset = activeSegmentBytes_ + kEnqueueHeaderBytes;
     const std::string eventData = serializeEnqueueEvent(sequence, record);
@@ -623,12 +646,12 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
 #ifdef ARDUINO
     ms_append = millis() - _t_append;
 #endif
-    if (!ast.ok()) return diagnostic(Severity::Error, ast, "writeRecord");
+    if (!ast.ok()) return diagnostic(Severity::Error, ast, "commitEnqueue");
 
 #ifdef ARDUINO
     const std::uint32_t ms_total = millis() - t_wr_start;
     if (ms_total > 500) {
-        Serial.printf("[writeRecord] seq=%u recBytes=%u rotate=%u compact=%u "
+        Serial.printf("[commitEnqueue] seq=%u recBytes=%u rotate=%u compact=%u "
             "ensure_ms=%u compact_ms=%u rotate_ms=%u ensure_seg_ms=%u append_ms=%u total_ms=%u\n",
             sequence, static_cast<unsigned>(record.size()),
             static_cast<unsigned>(did_rotate), static_cast<unsigned>(did_compact),
@@ -637,40 +660,28 @@ Status AppendLogStore::writeRecord(std::uint32_t sequence, const std::string& re
     }
 #endif
 
-    pendingRecord_.sequence = sequence;
-    pendingRecord_.segmentGeneration = activeGeneration_;
-    pendingRecord_.payloadOffset = payloadOffset;
-    pendingRecord_.payloadBytes = static_cast<std::uint32_t>(record.size());
-    hasPendingEnqueue_ = true;
+    records_.push_back({sequence, activeGeneration_, payloadOffset,
+                        static_cast<std::uint32_t>(record.size())});
     return Status::success();
 }
 
-Status AppendLogStore::writeIndex(const FileStoreIndex& index) {
+Status AppendLogStore::commitPop(std::uint32_t expectedSequence) {
     Status st = ensureMounted();
     if (!st.ok()) return st;
-
-    if (hasPendingEnqueue_) {
-        // Commit the enqueue that was just written by writeRecord
-        records_.push_back(pendingRecord_);
-        hasPendingEnqueue_ = false;
-        return Status::success();
+    if (records_.empty() || records_.front().sequence != expectedSequence) {
+        return diagnostic(Severity::Error,
+            Status::failure(StatusCode::InvalidIndex, "commitPop: sequence mismatch"),
+            "commitPop");
     }
 
-    // Detect pop: head advanced
-    const FileStoreIndex current = indexFromRecords();
-    if (index.head > current.head && !records_.empty()) {
-        const std::uint32_t poppedSeq = records_.front().sequence;
-        const std::uint32_t poppedGen = records_.front().segmentGeneration;
-        st = appendPopEvent(poppedSeq);
-        if (!st.ok()) {
-            return diagnostic(Severity::Error, st, "writeIndex");
-        }
-        if (activeTailDependenciesTracked_) {
-            activeTailAffectedGenerations_.insert(poppedGen);
-        }
-        records_.pop_front();
+    const std::uint32_t poppedSeq = records_.front().sequence;
+    const std::uint32_t poppedGen = records_.front().segmentGeneration;
+    st = appendPopEvent(poppedSeq);
+    if (!st.ok()) return diagnostic(Severity::Error, st, "commitPop");
+    if (activeTailDependenciesTracked_) {
+        activeTailAffectedGenerations_.insert(poppedGen);
     }
-
+    records_.pop_front();
     return Status::success();
 }
 
@@ -719,8 +730,20 @@ Status AppendLogStore::readRecord(std::uint32_t sequence, std::string& out) {
     return Status::success();
 }
 
-Status AppendLogStore::removeRecord(std::uint32_t) {
-    // No-op: POP events are written by writeIndex.
+Status AppendLogStore::readRecordSize(std::uint32_t sequence, std::size_t& out) {
+    Status st = ensureMounted();
+    if (!st.ok()) return st;
+
+    if (records_.empty()) {
+        return Status::failure(StatusCode::QueueEmpty, "queue is empty");
+    }
+
+    const std::uint32_t head = records_.front().sequence;
+    if (sequence < head || static_cast<std::size_t>(sequence - head) >= records_.size()) {
+        return Status::failure(StatusCode::InvalidRecord, "sequence not in live record range");
+    }
+
+    out = records_[sequence - head].payloadBytes;
     return Status::success();
 }
 
@@ -746,9 +769,9 @@ std::uint64_t AppendLogStore::freeBytes() const {
     return fs_ ? fs_->freeBytes() : 0;
 }
 
-bool AppendLogStore::canEnqueue(std::size_t /*recordSize*/, std::uint32_t /*currentCount*/) const {
+bool AppendLogStore::canEnqueue(std::size_t /*recordSize*/) const {
     // Only checks the hard FS floor. Finer admission (maxTotalBytes cap, required record
-    // headroom) is enforced inside writeRecord() after a compaction attempt. Checking any
+    // headroom) is enforced inside commitEnqueue() after a compaction attempt. Checking any
     // of that here would block the write that triggers compaction.
     return freeBytes() >= config_.minFreeBytes;
 }
@@ -782,7 +805,6 @@ Status AppendLogStore::format() {
     activeGenerations_.clear();
     sealedSegmentBytes_.clear();
     records_.clear();
-    hasPendingEnqueue_ = false;
     cachedWrittenSlot_ = nullptr;
     cachedWrittenEpoch_ = 0;
     activeGeneration_ = 0;
@@ -796,14 +818,6 @@ Status AppendLogStore::format() {
     return Status::success();
 }
 
-Status AppendLogStore::rebuildMetadata() {
-    // For append-log, rebuilding means re-scanning all segments from scratch.
-    activeGenerations_.clear();
-    records_.clear();
-    hasPendingEnqueue_ = false;
-    mounted_ = false;
-    return mount();
-}
 
 ValidationResult AppendLogStore::validateUnlocked(const ValidationOptions& options) {
     ValidationResult result;
@@ -832,6 +846,24 @@ ValidationResult AppendLogStore::validateUnlocked(const ValidationOptions& optio
         return result;
     }
 
+    // --- Manifest pass ---
+
+    auto tryReadSlot = [&](const char* slotName, ManifestData& md) -> bool {
+        std::string data;
+        if (!f->readFile(slotName, data).ok()) return false;
+        return parseManifest(reinterpret_cast<const std::uint8_t*>(data.data()), data.size(), md);
+    };
+    auto slotExists = [&](const char* slotName) -> bool {
+        std::uint64_t dummy;
+        return f->fileSize(slotName, dummy).ok();
+    };
+
+    ManifestData mdA, mdB;
+    const bool existsA = slotExists(kManifestSlotA);
+    const bool existsB = slotExists(kManifestSlotB);
+    const bool validA  = tryReadSlot(kManifestSlotA, mdA);
+    const bool validB  = tryReadSlot(kManifestSlotB, mdB);
+
     std::vector<std::string> files;
     st = f->listFiles(files);
     if (!st.ok()) {
@@ -839,117 +871,216 @@ ValidationResult AppendLogStore::validateUnlocked(const ValidationOptions& optio
         return result;
     }
 
-    std::vector<std::uint32_t> sortedGenerations;
-    for (const auto& name : files) {
+    bool hasSegments = false;
+    for (const auto& fname : files) {
         std::uint32_t gen = 0;
-        if (isSegmentName(name, gen)) {
-            sortedGenerations.push_back(gen);
+        if (isSegmentName(fname, gen)) { hasSegments = true; break; }
+    }
+
+    if (!validA && !validB) {
+        if (existsA || existsB) {
+            addErr(ValidationIssueCode::MetadataCorrupt,
+                "manifest slot(s) present but none parseable");
+            return result;
+        }
+        if (hasSegments) {
+            addErr(ValidationIssueCode::MetadataCorrupt,
+                "segment files present but no valid manifest");
+            return result;
+        }
+        return result; // fresh empty store
+    }
+
+    // Elect winning slot (mirrors chooseWinningSlot in manifest.cpp)
+    ManifestData winning;
+    if (validA && validB) {
+        winning = (mdB.epoch > mdA.epoch) ? mdB : mdA;
+    } else {
+        winning = validA ? mdA : mdB;
+    }
+
+    // Validate manifest structure
+    std::uint32_t maxSealedGen = 0;
+    for (const auto& r : winning.ranges) {
+        if (r.startGen == 0 || r.endGen == 0 || r.startGen > r.endGen) {
+            addErr(ValidationIssueCode::MetadataCorrupt, "manifest range has invalid generation bounds");
+            return result;
+        }
+        if (r.endGen == std::numeric_limits<std::uint32_t>::max()) {
+            addErr(ValidationIssueCode::MetadataCorrupt, "manifest range endGen at UINT32_MAX");
+            return result;
+        }
+        maxSealedGen = std::max(maxSealedGen, r.endGen);
+    }
+    // Pairwise overlap check -- post-compaction, numeric order of ranges is not guaranteed
+    for (std::size_t i = 0; i < winning.ranges.size(); ++i) {
+        for (std::size_t j = i + 1; j < winning.ranges.size(); ++j) {
+            const auto& ri = winning.ranges[i];
+            const auto& rj = winning.ranges[j];
+            if (std::max(ri.startGen, rj.startGen) <= std::min(ri.endGen, rj.endGen)) {
+                addErr(ValidationIssueCode::MetadataCorrupt, "manifest ranges overlap");
+                return result;
+            }
         }
     }
-    std::sort(sortedGenerations.begin(), sortedGenerations.end());
 
-    for (std::uint32_t gen : sortedGenerations) {
-        if (result.stoppedEarly) break;
-        const std::string name = segmentName(gen);
-
-        std::uint64_t fileSize = 0;
-        if (!f->fileSize(name, fileSize).ok() || fileSize < kSegmentHeaderBytes) {
-            addErr(ValidationIssueCode::MetadataCorrupt,
-                "segment " + name + " is missing or too small");
-            continue;
+    if (winning.tailGeneration != 0) {
+        for (const auto& r : winning.ranges) {
+            if (winning.tailGeneration >= r.startGen && winning.tailGeneration <= r.endGen) {
+                addErr(ValidationIssueCode::MetadataCorrupt,
+                    "tail generation appears within a sealed range");
+                return result;
+            }
         }
+    }
 
-        std::string headerBytes;
-        if (!f->readAt(name, 0, kSegmentHeaderBytes, headerBytes).ok()) {
+    const std::uint32_t maxRefGen = (winning.tailGeneration != 0)
+        ? std::max(maxSealedGen, winning.tailGeneration)
+        : maxSealedGen;
+    if (maxRefGen > 0 && maxRefGen >= winning.nextGeneration) {
+        addErr(ValidationIssueCode::MetadataCorrupt,
+            "nextGeneration not greater than max referenced generation");
+        return result;
+    }
+
+    const bool hasTail = (winning.tailGeneration != 0);
+    const std::uint32_t tailGen = winning.tailGeneration;
+
+    // Guard: reject manifests that claim more segment generations than exist on disk.
+    // This prevents a corrupt range like {startGen=1, endGen=4000000000} from causing
+    // O(4B) iteration. Bounded by the real filesystem, which is physically limited.
+    {
+        std::uint64_t segmentFileCount = 0;
+        for (const auto& fname : files) {
+            std::uint32_t dummy = 0;
+            if (isSegmentName(fname, dummy)) ++segmentFileCount;
+        }
+        std::uint64_t referencedCount = hasTail ? 1 : 0;
+        for (const auto& r : winning.ranges) {
+            referencedCount += static_cast<std::uint64_t>(r.endGen) - r.startGen + 1;
+            if (referencedCount > segmentFileCount) {
+                addErr(ValidationIssueCode::MetadataCorrupt,
+                    "manifest references more segments than exist on disk");
+                return result;
+            }
+        }
+    }
+
+    // Verify each referenced segment exists and is large enough (lazy, no gen expansion)
+    auto checkSegExists = [&](std::uint32_t gen) {
+        if (result.stoppedEarly) return;
+        const std::string name = segmentName(gen);
+        std::uint64_t sz = 0;
+        if (!f->fileSize(name, sz).ok() || sz < kSegmentHeaderBytes)
+            addErr(ValidationIssueCode::MetadataCorrupt,
+                "referenced segment " + name + " missing or too small");
+    };
+    for (const auto& r : winning.ranges)
+        for (std::uint32_t g = r.startGen; g <= r.endGen; ++g) checkSegExists(g);
+    if (hasTail) checkSegExists(tailGen);
+
+    if (!result.ok) return result;
+
+    // --- Segment scan pass (lazy iteration, no gen vector) ---
+
+    auto scanSegment = [&](std::uint32_t gen, bool isTail) {
+        const std::string name = segmentName(gen);
+        std::uint64_t fileSize = 0;
+        f->fileSize(name, fileSize); // already validated above
+
+        std::string hdrBytes;
+        if (!f->readAt(name, 0, kSegmentHeaderBytes, hdrBytes).ok()) {
             addErr(ValidationIssueCode::MetadataCorrupt,
                 "cannot read segment header for " + name);
-            continue;
+            return;
+        }
+        SegmentHeader segHdr;
+        if (!parseSegmentHeader(hdrBytes, segHdr)) {
+            addErr(ValidationIssueCode::MetadataCorrupt, "corrupt segment header in " + name);
+            return;
+        }
+        if (segHdr.generation != gen) {
+            addErr(ValidationIssueCode::MetadataCorrupt, "segment generation mismatch in " + name);
+            return;
         }
 
-        SegmentHeader segHeader;
-        if (!parseSegmentHeader(headerBytes, segHeader)) {
-            addErr(ValidationIssueCode::MetadataCorrupt,
-                "corrupt segment header in " + name);
-            continue;
-        }
-        if (segHeader.generation != gen) {
-            addErr(ValidationIssueCode::MetadataCorrupt,
-                "segment generation mismatch in " + name);
-            continue;
-        }
+        enum class ScanExit { Clean, Torn, Corrupt };
+        ScanExit scanExit = ScanExit::Clean;
+        std::string corruptReason;
 
-        // Scan events
+        auto torn    = [&]{ scanExit = ScanExit::Torn; };
+        auto corrupt = [&](const char* why) { scanExit = ScanExit::Corrupt; corruptReason = why; };
+
         std::uint32_t offset = kSegmentHeaderBytes;
         while (offset < static_cast<std::uint32_t>(fileSize)) {
             if (result.stoppedEarly) break;
             const std::uint32_t remaining = static_cast<std::uint32_t>(fileSize) - offset;
-            if (remaining < 4) break;
+            if (remaining < 4) { torn(); break; }
 
             std::string headerBuf;
             const std::uint32_t toRead = std::min(remaining, static_cast<std::uint32_t>(kEnqueueHeaderBytes));
-            if (!f->readAt(name, offset, toRead, headerBuf).ok()) break;
-            if (headerBuf.size() < 4) break;
+            if (!f->readAt(name, offset, toRead, headerBuf).ok()) { torn(); break; }
+            if (headerBuf.size() < 4) { torn(); break; }
 
             const std::uint32_t magic = readLE32(headerBuf, 0);
 
             if (magic == kEnqueueMagic || magic == kRewriteMagic) {
-                if (toRead < kEnqueueHeaderBytes) break;
+                if (toRead < kEnqueueHeaderBytes) { torn(); break; }
                 EnqueueHeader eh;
-                if (!parseEnqueueHeader(headerBuf, eh)) {
-                    addErr(ValidationIssueCode::JournalCorrupt,
-                        "invalid enqueue header in " + name);
-                    break;
-                }
-                if (eh.payloadBytes > config_.maxRecordBytes) {
-                    addErr(ValidationIssueCode::JournalCorrupt,
-                        "payloadBytes exceeds maxRecordBytes at offset " + std::to_string(offset) + " in " + name);
-                    break;
-                }
+                if (!parseEnqueueHeader(headerBuf, eh)) { corrupt("bad enqueue header"); break; }
+                if (eh.payloadBytes > config_.maxRecordBytes) { corrupt("payload exceeds max record size"); break; }
+
                 const std::uint32_t totalEventBytes = kEnqueueOverheadBytes + eh.payloadBytes;
-                if (totalEventBytes > remaining) break; // overflow-safe
+                if (totalEventBytes > remaining) { torn(); break; }
 
                 std::string payloadAndTrailer;
                 if (!f->readAt(name, offset + kEnqueueHeaderBytes,
-                               eh.payloadBytes + kEventTrailerBytes, payloadAndTrailer).ok()) break;
-                if (payloadAndTrailer.size() < eh.payloadBytes + kEventTrailerBytes) break;
+                               eh.payloadBytes + kEventTrailerBytes, payloadAndTrailer).ok()) { torn(); break; }
+                if (payloadAndTrailer.size() < eh.payloadBytes + kEventTrailerBytes) { torn(); break; }
 
-                const std::string   payload     = payloadAndTrailer.substr(0, eh.payloadBytes);
-                const std::uint32_t expectedCrc = enqueueEventCrc(eh, payload);
-                const std::uint32_t storedCrc   = readLE32(payloadAndTrailer, eh.payloadBytes);
+                const std::string   payload      = payloadAndTrailer.substr(0, eh.payloadBytes);
+                const std::uint32_t expectedCrc  = enqueueEventCrc(eh, payload);
+                const std::uint32_t storedCrc    = readLE32(payloadAndTrailer, eh.payloadBytes);
                 const std::uint32_t storedFooter = readLE32(payloadAndTrailer, eh.payloadBytes + 4);
 
-                if (storedCrc != expectedCrc) {
-                    addErr(ValidationIssueCode::SlotCrcMismatch,
-                        "CRC mismatch for event at offset " + std::to_string(offset) + " in " + name);
-                    break;
-                }
-                if (storedFooter != kFooterMagic) {
-                    addErr(ValidationIssueCode::JournalCorrupt,
-                        "missing commit footer at offset " + std::to_string(offset) + " in " + name);
-                    break;
-                }
+                if (storedCrc != expectedCrc || storedFooter != kFooterMagic) { corrupt("CRC or footer mismatch"); break; }
 
                 ++result.checkedRecords;
                 offset += totalEventBytes;
 
             } else if (magic == kPopMagic) {
-                if (remaining < kPopEventBytes) break;
+                if (remaining < kPopEventBytes) { torn(); break; }
                 std::string popBuf;
-                if (!f->readAt(name, offset, kPopEventBytes, popBuf).ok()) break;
+                if (!f->readAt(name, offset, kPopEventBytes, popBuf).ok()) { torn(); break; }
                 PopEvent pe;
-                if (!parsePopEvent(popBuf, pe)) {
-                    addErr(ValidationIssueCode::JournalCorrupt,
-                        "invalid pop event at offset " + std::to_string(offset) + " in " + name);
-                    break;
-                }
+                if (!parsePopEvent(popBuf, pe)) { corrupt("bad pop event"); break; }
                 ++result.checkedRecords;
                 offset += kPopEventBytes;
 
             } else {
+                corrupt("unknown event magic");
                 break;
             }
         }
+
+        // Corrupt data is always an error. Torn data is ok only in the tail segment.
+        if (scanExit == ScanExit::Corrupt) {
+            addErr(ValidationIssueCode::JournalCorrupt,
+                "corrupt data in segment " + name + ": " + corruptReason);
+        } else if (scanExit == ScanExit::Torn && !isTail) {
+            addErr(ValidationIssueCode::JournalCorrupt,
+                "incomplete (torn) data in sealed segment " + name);
+        }
+    };
+
+    for (const auto& r : winning.ranges) {
+        for (std::uint32_t g = r.startGen; g <= r.endGen; ++g) {
+            if (result.stoppedEarly) break;
+            scanSegment(g, false);
+        }
+        if (result.stoppedEarly) break;
     }
+    if (hasTail && !result.stoppedEarly) scanSegment(tailGen, true);
 
     return result;
 }
