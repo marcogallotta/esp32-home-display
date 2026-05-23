@@ -1,6 +1,6 @@
 #ifdef ARDUINO
 #include <Arduino.h>
-#include "pqueue_doctor_session.h"
+#include "pqueue/doctor/session.h"
 #endif
 
 #include <algorithm>
