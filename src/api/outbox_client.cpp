@@ -335,7 +335,7 @@ pqueue::http::Config makeHttpConfig(
     httpConfig.queue.basePath = queueBasePath;
     httpConfig.queue.reservedBytes = config.api.outbox.diskReserveBytes;
     httpConfig.queue.events = {onEvent, callbackContext};
-    httpConfig.outbox.retryDelayMs = config.api.outbox.retryDelayMs;
+    httpConfig.outbox.maxRetryDelayMs = config.api.outbox.retryDelayMs;
     httpConfig.outbox.events = {onEvent, callbackContext};
     httpConfig.outbox.maxDrainAttemptsPerSecond = config.api.outbox.drainRateCap <= 0
         ? 1
