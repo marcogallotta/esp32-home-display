@@ -1,5 +1,7 @@
 #ifdef ARDUINO
 
+#include "platform.h"
+
 // file_log.h (and log.h) must come before any FormatLog header so that
 // log.h's #ifndef LOG_LEVEL guard sets LOG_LEVEL = APP_LOG_LEVEL_INFO (2)
 // before FormatLog's Settings.h can claim it as LOG_LEVEL_TRACE (5), which
@@ -52,9 +54,8 @@ bool initFileLogging() {
 }
 
 void writeFileLog(LogLevel level, const std::string& msg) {
-    if (!gFileSink || static_cast<int>(level) < APP_LOG_LEVEL_WARN) {
-        return;
-    }
+    if (!gFileSink || static_cast<int>(level) < APP_LOG_LEVEL_WARN) return;
+    if (platform::isDoctorMode()) return;
     gFileSink->write(msg.c_str(), msg.size());
     gFileSink->write("\n", 1);
 }

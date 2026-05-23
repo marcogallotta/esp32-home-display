@@ -1,5 +1,6 @@
 #ifdef ARDUINO
 #include <Arduino.h>
+#include "pqueue_doctor_session.h"
 #endif
 
 #include <algorithm>
@@ -409,10 +410,47 @@ void syncOutputs(AppContext& app, std::time_t now) {
     renderUi(app.currentState, app.currentUiState, doFullDraw);
 }
 
+#ifdef ARDUINO
+// Accumulates Serial bytes and returns true when "PQUEUE_DOCTOR\n" is seen.
+bool checkDoctorTrigger() {
+    static std::string sBuf;
+    while (Serial.available()) {
+        const char c = static_cast<char>(Serial.read());
+        if (c == '\r') continue;
+        if (c == '\n') {
+            const bool hit = (sBuf == "PQUEUE_DOCTOR");
+            sBuf.clear();
+            if (hit) return true;
+        } else {
+            sBuf += c;
+            if (sBuf.size() > 32) sBuf.clear();
+        }
+    }
+    return false;
+}
+
+void enterDoctorMode() {
+    platform::setDoctorMode(true);
+    pqueue::doctor::runSession();
+    delay(100);
+    ESP.restart();
+}
+#endif
+
 void sleepUntilNextDue(AppContext& app) {
-    const int delayMs = computeSleepMs(std::time(nullptr), app.timing);
-    logLine(LogLevel::Debug, "Next update check in " + std::to_string(delayMs / 1000) + " seconds");
-    platform::delayMs(delayMs);
+    const int totalMs = computeSleepMs(std::time(nullptr), app.timing);
+    logLine(LogLevel::Debug, "Next update check in " + std::to_string(totalMs / 1000) + " seconds");
+#ifdef ARDUINO
+    int remaining = totalMs;
+    while (remaining > 0) {
+        const int step = std::min(remaining, 100);
+        platform::delayMs(step);
+        remaining -= step;
+        if (checkDoctorTrigger()) enterDoctorMode();
+    }
+#else
+    platform::delayMs(totalMs);
+#endif
 }
 
 void logHeapStats(const char* label, const platform::HeapStats& stats) {
