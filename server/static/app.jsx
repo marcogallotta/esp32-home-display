@@ -368,39 +368,21 @@ function App() {
       }));
   }, [tempPredictions, switchbotSensorsToPlot]);
 
-  const _backtestDatasets = React.useCallback((valueFn) => {
-    const visibleNames = new Set(switchbotSensorsToPlot.map((s) => s.name));
-    return tempPredictions
-      .filter((pred) => visibleNames.has(pred.sensor_name) && pred.backtest?.length)
-      .map((pred) => ({
-        label: `${pred.sensor_name} backtest`,
-        data: pred.backtest.map((p) => ({ x: new Date(p.timestamp), y: valueFn(p) })),
-        borderColor: _SENSOR_COLORS[pred.sensor_name] || "rgb(128,128,128)",
-        backgroundColor: "transparent",
-        borderDash: [2, 2],
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0.15,
-      }));
-  }, [tempPredictions, switchbotSensorsToPlot]);
-
-  const tempPredictionDatasets = React.useMemo(() =>
+const tempPredictionDatasets = React.useMemo(() =>
     _predDatasets((p) => p.temperature_c),
   [_predDatasets]);
 
   const tempDatasets = React.useMemo(() => {
     const omDatasets = showOpenMeteo && !selectedSwitchbotSensor ? openMeteoTempDatasets : [];
     const predDatasets = showOpenMeteo ? tempPredictionDatasets : [];
-    const btDatasets = showOpenMeteo ? _backtestDatasets((p) => p.temperature_c) : [];
     return [
       ...switchbotSensorsToPlot.map((sensor) =>
         _sensorDataset(sensor, historyFor(sensor.id), (row) => row.temperature_c == null ? null : window.metrics.round1(row.temperature_c))
       ),
       ...omDatasets,
       ...predDatasets,
-      ...btDatasets,
     ];
-  }, [switchbotSensorsToPlot, selectedSwitchbotSensor, showOpenMeteo, historyFor, openMeteoTempDatasets, tempPredictionDatasets, _backtestDatasets]);
+  }, [switchbotSensorsToPlot, selectedSwitchbotSensor, showOpenMeteo, historyFor, openMeteoTempDatasets, tempPredictionDatasets]);
 
   const humidityDatasets = React.useMemo(() => {
     return [
@@ -409,9 +391,8 @@ function App() {
       ),
       ...(showOpenMeteo && !selectedSwitchbotSensor ? openMeteoHumidityDatasets : []),
       ...(showOpenMeteo ? _predDatasets((p) => p.humidity_pct) : []),
-      ...(showOpenMeteo ? _backtestDatasets((p) => p.humidity_pct) : []),
     ];
-  }, [switchbotSensorsToPlot, showOpenMeteo, historyFor, openMeteoHumidityDatasets, _predDatasets, _backtestDatasets]);
+  }, [switchbotSensorsToPlot, showOpenMeteo, historyFor, openMeteoHumidityDatasets, _predDatasets]);
 
   const absHumidityDatasets = React.useMemo(() => {
     return [
