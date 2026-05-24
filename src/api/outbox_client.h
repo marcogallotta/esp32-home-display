@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "../config.h"
 #include "../sensor_readings.h"
@@ -98,6 +99,7 @@ public:
     pqueue::CompactIdleResult compactIdle(size_t maxSteps);
 
 private:
+    WriteResult sendCompact(const std::string& path, const std::vector<std::uint8_t>& compact);
     const ::Config& config_;
     std::unique_ptr<OutboxClientImpl> pqueue_;
 };

@@ -30,7 +30,10 @@ BLE radio
   -> State::fooSensors[]                        [state.h]
   -> syncApiState()                             [api_sync.cpp]
   -> api::OutboxClient::postFooReading()        [outbox_client.cpp]
-  -> pqueue::http::Outbox::submitPost()
+  -> encodeCompact() / toJson()                 [payloads.cpp]
+  -> pqueue::http::Outbox::submitCompactPost()  (compact path, SwitchBot + single-field Xiaomi)
+  -> pqueue::http::Outbox::submitPost()         (JSON path, multi-field Xiaomi fallback)
+  -> [at drain time] expandCompact() -> JSON    [payloads.cpp, via ExpandBodyCallback]
   -> POST /foo/reading  (server)
   -> ingest_reading()   (server/app/service.py)
   -> foo_readings table
@@ -147,12 +150,48 @@ virtual WriteResult postFooReading(const SensorIdentity&, const FooReading&) = 0
 `api::OutboxClient` implements it. Each `postFooReading` method:
 
 1. Calls `makeFooPayload(identity, reading)` (from `api/payloads.h`) to build a `FooPayload` struct. Returns `nullopt` if the reading is not valid (missing required fields or timestamp), which results in `WriteStatus::DroppedPermanent`.
-2. Serializes to JSON via `toJson(payload)`. Wire fields always include `mac`, `name`, `type` (integer), and `timestamp` (UTC ISO-8601 string derived from epoch seconds), plus device-specific measurement fields.
-3. Calls `send(ApiRequest{ "/foo/reading", jsonBody })`.
+2. Encodes via `encodeCompact(payload)` (compact binary path) or `toJson(payload)` (JSON path) -- see Compact binary encoding below.
+3. Calls `sendCompact()` -> `submitCompactPost()` for compact records, or `send()` -> `submitPost()` for JSON records.
 
-`send()` calls `pqueue::http::Outbox::submitPost()`. The outbox either delivers immediately (Sent) or enqueues on disk (Queued) when the network is unavailable. The pqueue spool lives at `/pqueue_api_spool` on LittleFS (ESP32) or `build/pqueue-spools/pqueue_api_spool` on desktop.
+`send()` / `sendCompact()` call into `pqueue::http::Outbox`. The outbox either delivers immediately (Sent) or enqueues on disk (Queued) when the network is unavailable. The pqueue spool lives at `/pqueue_api_spool` on LittleFS (ESP32) or `build/pqueue-spools/pqueue_api_spool` on desktop.
 
-`drainPending()` is called once per tick before `syncApiState()`. It drains up to `drainRateCap` queued requests. Do not change pqueue/outbox drain semantics while adding a device unless the task is explicitly about queue behavior.
+`drainPending()` is called once per tick before `syncApiState()`. It drains up to `drainRateCap` queued requests. Compact records are expanded to JSON at drain time via the `ExpandBodyCallback` (`expandCompact`, registered in `makeHttpConfig()`). Do not change pqueue/outbox drain semantics while adding a device unless the task is explicitly about queue behavior.
+
+### Compact binary encoding (api/payloads.h, api/payloads.cpp)
+
+Sensor records are stored on disk as compact binary rather than full JSON to reduce flash usage (~2.3x for SwitchBot: ~185 B JSON vs ~81 B compact). JSON is reconstructed from binary at drain time, just before the HTTP send.
+
+**Current encoding policy:**
+
+- SwitchBot: always compact (`encodeCompact(SwitchbotPayload)`).
+- Xiaomi single-field (timeout flush with partial data): compact (`encodeCompact(XiaomiPayload)` requires exactly one measurement field). Use `isSingleFieldXiaomiPayload()` before calling `encodeCompact` -- an empty return means encode error, not multi-field.
+- Xiaomi multi-field (normal flush with complete data): JSON fallback via `send()`.
+
+**Binary format** (all multi-byte integers little-endian):
+
+```
+[1]  version = 1
+[1]  type: 0x01=switchbot  0x02=xiaomi_temp  0x03=xiaomi_moisture
+          0x04=xiaomi_lux  0x05=xiaomi_conductivity
+[6]  mac: raw 6 bytes
+[4]  epoch_s: uint32
+[1]  name_len: uint8
+[N]  name: UTF-8, no null terminator
+[fields per type:]
+  switchbot (0x01):     [2] temp_x10 int16  [1] humidity_pct uint8
+  xiaomi_temp (0x02):   [2] temp_x10 int16
+  xiaomi_moisture(0x03):[1] moisture_pct uint8
+  xiaomi_lux (0x04):    [4] lux uint32
+  xiaomi_conductivity(0x05): [2] conductivity uint16
+```
+
+Encode returns an empty vector on any error (bad MAC, name > 255, out-of-range value, non-finite temperature). Range checks: `epochS` in `[0, UINT32_MAX]`, `temp_x10` in `[INT16_MIN, INT16_MAX]`, `lightLux >= 0`, `conductivityUsCm` in `[0, UINT16_MAX]`.
+
+`expandCompact` matches the `ExpandBodyCallback` signature and reconstructs JSON using the same `toJson()` path. It is registered on `pqueue::http::Config::expandBody` in `OutboxClientImpl::makeHttpConfig()`.
+
+**Adding compact encoding for a new device type:** add a type constant, implement `encodeCompact(FooPayload)` and a decode branch in `expandCompact`, add round-trip tests in `tests/api_payloads.cpp`.
+
+**Downgrade note:** `encodeRequestEnvelope` always writes format version 2. Old firmware rejects all v2 records (including Raw) on version mismatch. Downgrading after any new records have been written to the spool requires a spool wipe.
 
 ---
 
@@ -354,3 +393,4 @@ Integration test file `tests/foo_api_integration.cpp` (modelled on `xiaomi_api_i
 - `lastSent` is updated on `Queued` (not just `Sent`) because a queued reading is durably stored in pqueue and will be delivered. Updating on Queued prevents duplicate sends when the queue drains.
 - Conflict response from the server is HTTP 200 with `result: "conflict"` -- the server already has a reading at that timestamp with different values. The correct firmware response is to reset `lastSent` to empty so the next tick re-evaluates whether to send.
 - The server deduplicates on `(mac, timestamp)`. Duplicate timestamps with identical values return 200 with `result: "duplicate"`. Duplicate timestamps with different values return 200 with `result: "conflict"` (not 409).
+- All pqueue records written by current firmware use envelope version 2 (both compact and raw). Old firmware rejects version 2 records with a version mismatch. Downgrading firmware after any new records are written requires wiping the spool (`/pqueue_api_spool`).

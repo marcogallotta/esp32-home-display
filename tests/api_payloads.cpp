@@ -4,6 +4,7 @@
 #include "ArduinoJson.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -188,4 +189,178 @@ TEST_CASE("xiaomi single-field payload helpers reject missing requested field") 
     CHECK_FALSE(api::makeXiaomiMoisturePayload(identity(), reading).has_value());
     CHECK_FALSE(api::makeXiaomiLuxPayload(identity(), reading).has_value());
     CHECK_FALSE(api::makeXiaomiConductivityPayload(identity(), reading).has_value());
+}
+
+namespace {
+
+std::string expandBytes(const std::vector<std::uint8_t>& bytes) {
+    std::string out;
+    const auto* data = bytes.empty() ? nullptr : bytes.data();
+    const bool ok = api::expandCompact(nullptr, data, bytes.size(), nullptr, out);
+    REQUIRE(ok);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("compact encode/expand round-trip: switchbot") {
+    const auto payload = api::makeSwitchbotPayload(identity(), completeSwitchbotReading());
+    REQUIRE(payload.has_value());
+
+    const auto compact = api::encodeCompact(*payload);
+    REQUIRE_FALSE(compact.empty());
+
+    const auto doc = parseJson(expandBytes(compact));
+    checkCommonPayloadFields(doc, "switchbot");
+    CHECK_EQ(doc["temperature_c"].as<float>(), doctest::Approx(21.5f));
+    CHECK_EQ(doc["humidity_pct"].as<int>(), 56);
+}
+
+TEST_CASE("compact encode/expand round-trip: xiaomi temperature") {
+    XiaomiReading reading;
+    reading.temperatureC = 23.4f;
+    reading.lastSeenEpochS = 1710000000;
+    const auto payload = api::makeXiaomiTemperaturePayload(identity(), reading);
+    REQUIRE(payload.has_value());
+
+    const auto compact = api::encodeCompact(*payload);
+    REQUIRE_FALSE(compact.empty());
+
+    const auto doc = parseJson(expandBytes(compact));
+    checkCommonPayloadFields(doc, "xiaomi");
+    CHECK_EQ(doc["temperature_c"].as<float>(), doctest::Approx(23.4f).epsilon(0.01));
+    CHECK_FALSE(hasKey(doc, "moisture_pct"));
+    CHECK_FALSE(hasKey(doc, "light_lux"));
+    CHECK_FALSE(hasKey(doc, "conductivity_us_cm"));
+}
+
+TEST_CASE("compact encode/expand round-trip: xiaomi moisture") {
+    const auto payload = api::makeXiaomiMoisturePayload(identity(), completeXiaomiReading());
+    REQUIRE(payload.has_value());
+
+    const auto compact = api::encodeCompact(*payload);
+    REQUIRE_FALSE(compact.empty());
+
+    const auto doc = parseJson(expandBytes(compact));
+    checkCommonPayloadFields(doc, "xiaomi");
+    CHECK_EQ(doc["moisture_pct"].as<int>(), 42);
+}
+
+TEST_CASE("compact encode/expand round-trip: xiaomi lux") {
+    const auto payload = api::makeXiaomiLuxPayload(identity(), completeXiaomiReading());
+    REQUIRE(payload.has_value());
+
+    const auto compact = api::encodeCompact(*payload);
+    REQUIRE_FALSE(compact.empty());
+
+    const auto doc = parseJson(expandBytes(compact));
+    checkCommonPayloadFields(doc, "xiaomi");
+    CHECK_EQ(doc["light_lux"].as<int>(), 1234);
+}
+
+TEST_CASE("compact encode/expand round-trip: xiaomi conductivity") {
+    const auto payload = api::makeXiaomiConductivityPayload(identity(), completeXiaomiReading());
+    REQUIRE(payload.has_value());
+
+    const auto compact = api::encodeCompact(*payload);
+    REQUIRE_FALSE(compact.empty());
+
+    const auto doc = parseJson(expandBytes(compact));
+    checkCommonPayloadFields(doc, "xiaomi");
+    CHECK_EQ(doc["conductivity_us_cm"].as<int>(), 567);
+}
+
+TEST_CASE("compact encode returns empty for multi-field xiaomi payload") {
+    const auto payload = api::makeXiaomiPayload(identity(), completeXiaomiReading());
+    REQUIRE(payload.has_value());
+    CHECK_FALSE(api::isSingleFieldXiaomiPayload(*payload));
+    CHECK(api::encodeCompact(*payload).empty());
+}
+
+TEST_CASE("compact encode returns empty on invalid inputs") {
+    SUBCASE("bad MAC") {
+        api::SwitchbotPayload payload;
+        payload.mac = "not-a-mac";
+        payload.name = "X";
+        payload.epochS = 1710000000;
+        payload.temperatureC = 20.0f;
+        payload.humidityPct = 50;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+
+    SUBCASE("name too long") {
+        api::SwitchbotPayload payload;
+        payload.mac = "AA:BB:CC:DD:EE:FF";
+        payload.name = std::string(256, 'X');
+        payload.epochS = 1710000000;
+        payload.temperatureC = 20.0f;
+        payload.humidityPct = 50;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+
+    SUBCASE("negative epoch") {
+        api::SwitchbotPayload payload;
+        payload.mac = "AA:BB:CC:DD:EE:FF";
+        payload.name = "X";
+        payload.epochS = -1;
+        payload.temperatureC = 20.0f;
+        payload.humidityPct = 50;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+
+    SUBCASE("temperature NaN") {
+        api::SwitchbotPayload payload;
+        payload.mac = "AA:BB:CC:DD:EE:FF";
+        payload.name = "X";
+        payload.epochS = 1710000000;
+        payload.temperatureC = std::numeric_limits<float>::quiet_NaN();
+        payload.humidityPct = 50;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+
+    SUBCASE("temperature out of int16 range") {
+        api::SwitchbotPayload payload;
+        payload.mac = "AA:BB:CC:DD:EE:FF";
+        payload.name = "X";
+        payload.epochS = 1710000000;
+        payload.temperatureC = 4000.0f;
+        payload.humidityPct = 50;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+
+    SUBCASE("lux negative") {
+        api::XiaomiPayload payload;
+        payload.mac = "AA:BB:CC:DD:EE:FF";
+        payload.name = "X";
+        payload.epochS = 1710000000;
+        payload.lightLux = -1;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+
+    SUBCASE("conductivity out of range") {
+        api::XiaomiPayload payload;
+        payload.mac = "AA:BB:CC:DD:EE:FF";
+        payload.name = "X";
+        payload.epochS = 1710000000;
+        payload.conductivityUsCm = 70000;
+        CHECK(api::encodeCompact(payload).empty());
+    }
+}
+
+TEST_CASE("expandCompact rejects null data with nonzero size") {
+    std::string out;
+    CHECK_FALSE(api::expandCompact(nullptr, nullptr, 1, nullptr, out));
+}
+
+TEST_CASE("expandCompact rejects truncated input") {
+    const auto payload = api::makeSwitchbotPayload(identity(), completeSwitchbotReading());
+    REQUIRE(payload.has_value());
+    const auto compact = api::encodeCompact(*payload);
+    REQUIRE_FALSE(compact.empty());
+
+    // Every prefix shorter than the full record should fail.
+    for (std::size_t len = 0; len < compact.size() - 1; ++len) {
+        std::string out;
+        CHECK_FALSE(api::expandCompact(nullptr, compact.data(), len, nullptr, out));
+    }
 }

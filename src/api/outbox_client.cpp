@@ -289,6 +289,8 @@ std::string dropReasonName(pqueue::http::DropReason reason) {
             return "decode_failed";
         case pqueue::http::DropReason::ServerRejected:
             return "server_rejected";
+        case pqueue::http::DropReason::ExpandFailed:
+            return "expand_failed";
     }
     return "dropped";
 }
@@ -347,6 +349,8 @@ pqueue::http::Config makeHttpConfig(
     httpConfig.onResponse = onResponse;
     httpConfig.dropContext = callbackContext;
     httpConfig.onDrop = onDrop;
+    httpConfig.expandBody = api::expandCompact;
+    httpConfig.expandBodyContext = nullptr;
     return httpConfig;
 }
 
@@ -493,7 +497,17 @@ struct OutboxClientImpl {
         const pqueue::http::Response* response
     ) const {
         const std::string path = request == nullptr ? std::string{} : request->path;
-        const std::string body = request == nullptr ? std::string{} : request->body;
+        std::string body;
+        if (request != nullptr) {
+            if (request->encoding == pqueue::http::BodyEncoding::Compact) {
+                const auto* d = reinterpret_cast<const std::uint8_t*>(request->body.data());
+                if (!expandCompact(request->path.c_str(), d, request->body.size(), nullptr, body)) {
+                    body.clear();
+                }
+            } else {
+                body = request->body;
+            }
+        }
         const ApiRequest apiRequest{path, body};
         const std::string mac = diagnosticMac(apiRequest);
         const network::HttpResponse networkResponse = response == nullptr
@@ -562,10 +576,11 @@ WriteResult OutboxClient::postSwitchbotReading(
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
-    return send(ApiRequest{
-        "/switchbot/reading",
-        toJson(*payload),
-    });
+    const auto compact = encodeCompact(*payload);
+    if (compact.empty()) {
+        return makeWriteResult(WriteStatus::DroppedPermanent);
+    }
+    return sendCompact("/switchbot/reading", compact);
 }
 
 WriteResult OutboxClient::postXiaomiReading(
@@ -582,10 +597,80 @@ WriteResult OutboxClient::postXiaomiReading(
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
 
-    return send(ApiRequest{
-        "/xiaomi/reading",
-        toJson(*payload),
-    });
+    if (!isSingleFieldXiaomiPayload(*payload)) {
+        return send(ApiRequest{"/xiaomi/reading", toJson(*payload)});
+    }
+    const auto compact = encodeCompact(*payload);
+    if (compact.empty()) {
+        return makeWriteResult(WriteStatus::DroppedPermanent);
+    }
+    return sendCompact("/xiaomi/reading", compact);
+}
+
+WriteResult OutboxClient::sendCompact(const std::string& path, const std::vector<std::uint8_t>& compact) {
+    pqueue_->lastResponse.reset();
+    const pqueue::SubmitResult submitResult =
+        pqueue_->outbox.submitCompactPost(path, pqueue::Span{compact.data(), compact.size()});
+
+    const network::HttpResponse response = pqueue_->lastResponse.has_value()
+        ? toNetworkResponse(*pqueue_->lastResponse)
+        : network::HttpResponse{};
+
+    switch (submitResult.status) {
+        case pqueue::SubmitStatus::Sent:
+            return makeWriteResult(
+                WriteStatus::Sent,
+                parseBackendWriteResult(response),
+                response.statusCode,
+                response.body
+            );
+
+        case pqueue::SubmitStatus::Queued: {
+            const auto stats = pqueue_->outbox.stats();
+            if (stats.count == 0) {
+                return makeWriteResult(
+                    WriteStatus::FailedTemporary,
+                    BackendWriteResult::Failed,
+                    response.statusCode,
+                    response.body
+                );
+            }
+            logLine(
+                LogLevel::Debug,
+                "Queued API request in pqueue: " +
+                std::to_string(stats.count) + " queued"
+            );
+            return makeWriteResult(
+                WriteStatus::Queued,
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body,
+                stats.count > 1 ? WriteQueueReason::BacklogPresent : WriteQueueReason::RetryableFailure
+            );
+        }
+
+        case pqueue::SubmitStatus::Dropped:
+            return makeWriteResult(
+                WriteStatus::DroppedPermanent,
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body
+            );
+
+        case pqueue::SubmitStatus::QueueFull:
+            logDroppedQueueFullRequest(ApiRequest{path, {}});
+            return makeWriteResult(WriteStatus::DroppedQueueFull);
+
+        case pqueue::SubmitStatus::SendError:
+            return makeWriteResult(
+                WriteStatus::FailedTemporary,
+                BackendWriteResult::Failed,
+                response.statusCode,
+                response.body
+            );
+    }
+
+    return makeWriteResult(WriteStatus::DroppedPermanent);
 }
 
 WriteResult OutboxClient::send(ApiRequest request) {
