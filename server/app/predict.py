@@ -55,19 +55,13 @@ def _calc_vpd(temp_c: float, rh_pct: float) -> float:
     return svp * (1 - rh_pct / 100)
 
 
-def _hourly_avgs(
-    rows, start: datetime | None = None, end: datetime | None = None
-) -> tuple[dict[datetime, float], dict[datetime, float]]:
+def _hourly_avgs(rows) -> tuple[dict[datetime, float], dict[datetime, float]]:
     hourly_temp: dict[datetime, list[float]] = {}
     hourly_hum: dict[datetime, list[float]] = {}
     for row in rows:
         ts = row.timestamp
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        if start and ts < start:
-            continue
-        if end and ts >= end:
-            continue
         h = _round_hour(ts)
         if row.temperature_c is not None:
             hourly_temp.setdefault(h, []).append(float(row.temperature_c))
@@ -104,10 +98,9 @@ def _fit_rf(Xt, yt, Xh, yh):
     )
 
 
-def _fit_models(sensor_mac: str, db, om_by_hour: dict[datetime, OmEntry]) -> dict | None:
+def _fit_models(sensor_mac: str, db, om_by_hour: dict[datetime, OmEntry]) -> list[dict] | None:
     now = datetime.now(timezone.utc)
     train_start = now - timedelta(days=_TRAIN_DAYS)
-    holdout_start = now - timedelta(days=1)
 
     rows = fetch_window_readings(
         db=db,
@@ -118,45 +111,12 @@ def _fit_models(sensor_mac: str, db, om_by_hour: dict[datetime, OmEntry]) -> dic
         sensor=sb.SENSOR,
     )
 
-    avg_temp_train, avg_hum_train = _hourly_avgs(rows, end=holdout_start)
-    avg_temp_holdout, avg_hum_holdout = _hourly_avgs(rows, start=holdout_start)
-
-    Xt, yt, Xh, yh = _build_xy(avg_temp_train, avg_hum_train, om_by_hour)
+    avg_temp, avg_hum = _hourly_avgs(rows)
+    Xt, yt, Xh, yh = _build_xy(avg_temp, avg_hum, om_by_hour)
     if len(Xt) < 24:
         return None
 
-    # backtest: train on days 1-6, predict day 7, compare to actual
-    bt_model_t, bt_model_h = _fit_rf(Xt, yt, Xh, yh)
-    backtest = []
-    bt_errs_t, bt_errs_h = [], []
-    for hour_dt in sorted(avg_temp_holdout.keys() & avg_hum_holdout.keys()):
-        entry = om_by_hour.get(hour_dt)
-        if entry is None:
-            continue
-        feat = [_features(entry, hour_dt, om_by_hour)]
-        pred_t = float(bt_model_t.predict(feat)[0])
-        pred_h = max(0.0, min(100.0, float(bt_model_h.predict(feat)[0])))
-        actual_t = avg_temp_holdout[hour_dt]
-        actual_h = avg_hum_holdout[hour_dt]
-        bt_errs_t.append((pred_t - actual_t) ** 2)
-        bt_errs_h.append((pred_h - actual_h) ** 2)
-        backtest.append({
-            "timestamp": hour_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "temperature_c": round(pred_t, 1),
-            "humidity_pct": round(pred_h, 1),
-            "actual_temperature_c": round(actual_t, 1),
-            "actual_humidity_pct": round(actual_h, 1),
-        })
-
-    backtest_rmse = {
-        "temperature_c": round(math.sqrt(sum(bt_errs_t) / len(bt_errs_t)), 2) if bt_errs_t else None,
-        "humidity_pct": round(math.sqrt(sum(bt_errs_h) / len(bt_errs_h)), 2) if bt_errs_h else None,
-    }
-
-    # full model: retrain on all data for forward predictions
-    avg_temp_all, avg_hum_all = _hourly_avgs(rows)
-    Xt_all, yt_all, Xh_all, yh_all = _build_xy(avg_temp_all, avg_hum_all, om_by_hour)
-    model_t, model_h = _fit_rf(Xt_all, yt_all, Xh_all, yh_all)
+    model_t, model_h = _fit_rf(Xt, yt, Xh, yh)
 
     forecast_start = _round_hour(now)
     predictions = []
@@ -175,7 +135,7 @@ def _fit_models(sensor_mac: str, db, om_by_hour: dict[datetime, OmEntry]) -> dic
             "vpd": round(_calc_vpd(pred_temp, pred_hum), 3),
         })
 
-    return {"predictions": predictions, "backtest": backtest, "backtest_rmse": backtest_rmse}
+    return predictions
 
 
 @router.get("/predict/temperature")
@@ -227,9 +187,7 @@ def get_temperature_predictions(request: Request):
                 result.append({
                     "sensor_id": str(sensor.id),
                     "sensor_name": sensor.name,
-                    "predictions": fit["predictions"],
-                    "backtest": fit["backtest"],
-                    "backtest_rmse": fit["backtest_rmse"],
+                    "predictions": fit,
                 })
         if result:
             _cache[cache_key] = (time.monotonic(), result)
