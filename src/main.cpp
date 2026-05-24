@@ -471,6 +471,9 @@ void logHeapStats(const char* label, const platform::HeapStats& stats) {
 }
 
 void tick(AppContext& app) {
+#ifdef ARDUINO
+    network::platform(app.config.wifi).kickConnect();
+#endif
     const std::time_t now = std::time(nullptr);
 
     std::swap(app.previousState, app.currentState);

@@ -8,6 +8,7 @@
 
 #include "log.h"
 #include "network.h"
+#include "network_connect_budget.h"
 #include "platform.h"
 
 namespace network {
@@ -66,32 +67,43 @@ public:
         return ::millis();
     }
 
+    void kickConnect() override {
+        if (WiFi.status() == WL_CONNECTED) {
+            budget_.clear();
+            return;
+        }
+        if (budget_.started) return;
+
+        WiFi.mode(WIFI_STA);
+        logLine(LogLevel::Debug, "Starting WiFi connection");
+        WiFi.begin(wifiConfig().ssid.c_str(), wifiConfig().password.c_str());
+        budget_.kickStart(::millis());
+    }
+
     bool networkReady(unsigned long timeoutMs = 15000) override {
         if (WiFi.status() == WL_CONNECTED) {
-            wifiConnectStarted_ = false;
+            budget_.clear();
             return true;
         }
 
-        WiFi.mode(WIFI_STA);
-
-        if (!wifiConnectStarted_) {
-            logLine(LogLevel::Debug, "Starting WiFi connection");
-            WiFi.begin(wifiConfig().ssid.c_str(), wifiConfig().password.c_str());
-            wifiConnectStarted_ = true;
+        if (!budget_.started) {
+            kickConnect();
         } else {
             logLine(LogLevel::Debug, "WiFi connection already in progress");
         }
 
-        const uint32_t start = ::millis();
+        const uint32_t remaining = budget_.remainingMs(::millis(), static_cast<uint32_t>(timeoutMs));
+
+        const uint32_t waitStart = ::millis();
         while (WiFi.status() != WL_CONNECTED) {
-            if (::millis() - start >= timeoutMs) {
+            if (::millis() - waitStart >= remaining) {
                 logLine(LogLevel::Warn, "WiFi connection timed out");
                 return false;
             }
             delay(250);
         }
 
-        wifiConnectStarted_ = false;
+        budget_.clear();
         logLine(LogLevel::Info, "WiFi connected");
         return true;
     }
@@ -101,7 +113,7 @@ public:
     }
 
 private:
-    bool wifiConnectStarted_ = false;
+    WifiConnectBudget budget_;
 
     HttpResponse performRequest(const Request& request) {
         HttpResponse resp;

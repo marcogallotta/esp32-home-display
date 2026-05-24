@@ -107,6 +107,7 @@ TEST_SRC := \
 	tests/switchbot_history_protocol.cpp \
 	tests/switchbot_history_service.cpp \
 	tests/switchbot_protocol.cpp \
+	tests/network_connect_budget.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
 	tests/xiaomi_ble.cpp \

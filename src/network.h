@@ -47,6 +47,7 @@ public:
 
     virtual void log(const std::string& msg) = 0;
     virtual uint64_t millis() const = 0;
+    virtual void kickConnect() {}
     virtual bool networkReady(unsigned long timeoutMs = 15000) = 0;
 
     virtual HttpResponse request(const Request& request) = 0;
