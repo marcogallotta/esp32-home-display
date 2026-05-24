@@ -10,3 +10,6 @@
 [submodule "third_party/FormatLog"]
 	path = third_party/FormatLog
 	url = https://github.com/RileyCornelius/FormatLog.git
+[submodule "pqueue"]
+	path = pqueue
+	url = git@github.com:marcogallotta/pqueue.git
