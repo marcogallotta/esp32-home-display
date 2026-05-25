@@ -4,24 +4,37 @@ An ESP32-based home display that shows:
 
 - the current salah phase and time remaining
 - local weather forecast
-- SwitchBot temperature / humidity readings
+- SwitchBot temperature and humidity readings
 
-Xiaomi plant sensor readings (temperature, moisture, light, conductivity) are scanned and synced to the backend but not shown on the display.
+Xiaomi plant sensor readings (temperature, moisture, light, conductivity) are scanned and
+synced to the backend but not shown on the display.
 
-It also supports a desktop build for faster development and testing, a backend server for sensor history, and a browser-based graph view.
+A backend server stores sensor history and serves a browser-based dashboard with graphs
+and ML-based predictions.
 
 ## Features
 
-- Salah schedule calculation with Hanafi Asr support
-- EU DST handling
-- Open-Meteo forecast fetch over HTTPS
-- SwitchBot passive BLE scanning + historical data sync
+**Firmware**
+
+- Salah schedule with Hanafi Asr support and EU DST handling
+- Open-Meteo weather forecast over HTTPS
+- SwitchBot passive BLE scanning with up to 68 days of history sync
 - Xiaomi BLE plant sensor support (temperature, moisture, light, conductivity)
-- Backend server for sensor history storage and gap-filling
-- Browser-based sensor history graphs
-- OLED partial redraws for efficient updates
-- Desktop test/build path
-- JSON config file
+- OLED partial redraws -- only changed regions are redrawn each tick
+- Compact binary sensor records -- ~2.3x smaller than JSON on LittleFS
+- Async WiFi -- connection time is credited against the budget, not wasted
+- Shared HTTPS connections -- reused across forecast and API calls
+- Rotating on-device log -- WARN+ and lifecycle events persisted to LittleFS
+- pqueue doctor mode built into main firmware -- no separate firmware flash needed
+- Desktop build for development and testing without hardware
+
+**Backend**
+
+- Sensor history storage with gap-filling via SwitchBot bulk sync
+- Browser dashboard with live readings, history graphs, and ML-based predictions
+- Levoit humidifier control driven by absolute humidity setpoint
+- Per-device and per-browser rate limiting
+- API key auth for the ESP32, session auth for the browser dashboard
 
 ## Hardware
 
@@ -38,17 +51,17 @@ Current embedded target:
 
 - `g++` with C++20
 - `libcurl`
-- `sdbus-c++`
+- `sdbus-c++` (BlueZ D-Bus bindings, for BLE on Linux)
 - `pkg-config`
 
 ### ESP32
 
 - PlatformIO
-- Submodules use SSH — GitHub SSH access required
+- Submodules use SSH -- GitHub SSH access required
 
 ### Backend
 
-See `server/README.md`.
+Docker is the only runtime dependency. See `server/README.md`.
 
 ## Setup
 
@@ -60,17 +73,20 @@ git clone --recurse-submodules <repo>
 git submodule update --init
 ```
 
-### Desktop / tools dependencies
+Install Python dependencies for the desktop build and tools:
 
 ```bash
 pip install -r tools/requirements.txt
 ```
 
-Copy the config example:
+Copy the config example and fill in your values:
 
 ```bash
 cp data/config.json.example data/config.json
 ```
+
+At minimum, configure location, timezone, salah settings, Wi-Fi credentials, forecast
+settings, and BLE sensors. The example file documents every field.
 
 ## Build
 
@@ -93,7 +109,7 @@ make run-tests
 pio test -e esp32s3
 ```
 
-### ESP32 build + upload
+### ESP32 build and upload
 
 ```bash
 pio run -e esp32s3 -t upload        # firmware
@@ -110,10 +126,11 @@ pio device monitor
 
 See `server/README.md`.
 
-### Levoit AH controller
+### Levoit humidifier controller
 
-The server can drive a Levoit humidifier based on SwitchBot absolute humidity readings.
-Config is in `server/config/env` and `server/config/app.json`.
+The server can drive a Levoit humidifier to maintain a target absolute humidity level,
+using a SwitchBot sensor as the source reading. Config is split between
+`server/config/env` (secrets) and `server/config/app.json` (tuning).
 
 In `server/config/env`:
 
@@ -133,7 +150,7 @@ In `server/config/app.json`:
 ```
 
 `switchbot_mac` is the MAC of the SwitchBot sensor used to drive the controller.
-`target_absolute_humidity` is in g/m³.
+`target_absolute_humidity` is in g/m3.
 
 Optional overrides (defaults shown):
 
@@ -148,67 +165,63 @@ Optional overrides (defaults shown):
 }
 ```
 
-## Configuration
-
-The app reads a `config.json` file.
-
-On desktop:
-- `data/config.json` is read from the project root
-
-On ESP32:
-- `config.json` is packed into LittleFS and flashed separately
-
-A full example lives in `data/config.json.example`.
-
-At minimum, configure:
-
-- location and timezone
-- salah settings
-- Wi-Fi credentials
-- forecast settings
-- BLE sensors
+The controller runs as a separate Docker Compose service (`levoit-controller` in
+`compose.yml`), not as a background task inside the server. It fetches live readings
+from the server API and has no direct database access.
 
 ## Repository layout
 
-- `data/` — LittleFS contents: config and certificate files
-- `src/main.cpp` — app orchestration
-- `src/update.*` — module update logic
-- `src/timing.*` — scheduling / due times
-- `src/ui/state.*` — UI state + dirty-region detection
-- `src/ui/display.*` — OLED rendering
-- `src/salah/*` — prayer schedule/state logic
-- `src/forecast/*` — weather fetch + parse
-- `src/switchbot/*` — BLE scanning + history sync
-- `src/xiaomi/*` — Xiaomi BLE sensor handling
-- `src/ble/*` — shared BLE session management
-- `src/api/*` — backend API client
-- `server/` — Python backend + graph frontend
-- `pqueue/` — persistent queue (being extracted to its own repo)
-- `tests/*` — POSIX desktop tests
-- `test/*` — Arduino (on-device) tests
-- `tools/*` — BLE protocol probing scripts
-- `third_party/` — submodules (ArduinoJson, PrayerTimes, doctest)
+**Firmware**
+
+- `src/main.cpp` -- app orchestration and main loop
+- `src/update.*` -- per-module update logic
+- `src/timing.*` -- sleep scheduling and update timers
+- `src/file_log.*` -- rotating on-device log (LittleFS)
+- `src/log_download_main.cpp` -- serial dump of retained log files
+- `src/network_connect_budget.h` -- WiFi connection timeout tracking
+- `src/salah/` -- prayer time calculation and state
+- `src/forecast/` -- Open-Meteo weather fetch and parse
+- `src/switchbot/` -- BLE scanning, history protocol, history sync
+- `src/xiaomi/` -- BLE scanning and protocol
+- `src/ble/` -- shared BLE session management
+- `src/api/` -- backend API client: payloads, outbox, write policy, dropped-reading log
+- `src/ui/` -- OLED state machine and rendering
+
+**Tests**
+
+- `tests/` -- POSIX desktop unit tests (doctest, run with `make run-tests`)
+- `test/` -- Arduino on-device tests (Unity/PlatformIO, run with `pio test`)
+
+**Backend and tooling**
+
+- `server/` -- Python FastAPI server and browser dashboard
+- `pqueue/` -- persistent queue (git submodule)
+- `data/` -- LittleFS image: config and TLS certificates
+- `tools/` -- BLE probe scripts
+- `third_party/` -- vendored libraries (ArduinoJson, PrayerTimes, doctest)
 
 ## Tools
 
-`tools/` contains Python scripts used to probe and reverse-engineer BLE sensor protocols:
+`tools/` contains Python scripts for probing and reverse-engineering BLE sensor protocols:
 
-- `switchbot_history_probe.py` — probe SwitchBot history bank protocol
-- `switchbot.py` / `switchbot.sh` — SwitchBot BLE inspection
-- `xiaomi.py` / `xiaomi.sh` — Xiaomi BLE inspection
+- `switchbot_history_probe.py` -- probe SwitchBot history bank protocol
+- `switchbot.py` / `switchbot.sh` -- SwitchBot BLE inspection
+- `xiaomi.py` / `xiaomi.sh` -- Xiaomi BLE inspection
 
 ## Notes
 
-- ESP32 UI currently supports up to 4 sensors because of screen space.
-- Forecast retries are rate-limited after failure.
-- Desktop and ESP32 use different platform implementations behind shared interfaces.
-- SwitchBot history sync downloads up to 68 days of data from sensors and syncs gaps with the backend.
+- The display supports up to 4 SwitchBot sensors due to screen space.
+- SwitchBot history sync covers up to 68 days; gaps are detected server-side and filled
+  on the next sync.
+- Desktop and ESP32 share interfaces but use separate platform implementations for BLE,
+  networking, time, and storage.
+- Forecast fetches are rate-limited on retry to avoid hammering Open-Meteo after a failure.
 
 ## Status
 
-This is an active personal embedded project.
-
-The firmware, desktop build, tests, display rendering, forecast fetch, salah calculation, and BLE sensor paths are in active use. SwitchBot history sync, backend gap filling, and the persistent queue are still evolving.
+This is an active personal embedded project. The firmware, desktop build, tests, display,
+forecast, salah, BLE sensors, history sync, backend, and persistent queue are all in
+active use.
 
 ## License
 
