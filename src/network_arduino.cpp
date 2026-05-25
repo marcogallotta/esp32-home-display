@@ -98,6 +98,7 @@ public:
         while (WiFi.status() != WL_CONNECTED) {
             if (::millis() - waitStart >= remaining) {
                 logLine(LogLevel::Warn, "WiFi connection timed out");
+                budget_.clear();
                 return false;
             }
             delay(250);
