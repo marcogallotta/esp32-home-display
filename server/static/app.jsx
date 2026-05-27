@@ -508,6 +508,16 @@ const tempPredictionDatasets = React.useMemo(() =>
             ))}
           </div>
 
+          <button
+            className="ghost-btn"
+            onClick={() => {
+              const now = Date.now();
+              window.chartFactory.zoomAllTo(now, now + 7 * 24 * 60 * 60 * 1000);
+            }}
+          >
+            fcast
+          </button>
+
           <select value={selectedSensorId} onChange={(e) => setSelectedSensorId(e.target.value)}>
             <option value="all">All SwitchBot</option>
             {switchbotSensors.map((sensor) => (

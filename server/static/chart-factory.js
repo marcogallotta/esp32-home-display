@@ -109,6 +109,17 @@ window.chartFactory = {
     clearTimeout(this._zoomDebounceTimer);
   },
 
+  zoomAllTo(min, max) {
+    this._zoomedRange = { min, max };
+    for (const chart of this._charts) {
+      chart.zoomScale("x", { min, max }, "none");
+    }
+    if (this._onZoomChange) {
+      clearTimeout(this._zoomDebounceTimer);
+      this._zoomDebounceTimer = setTimeout(() => this._onZoomChange({ min, max }), 800);
+    }
+  },
+
   resetZoom(chartRefs) {
     this._zoomedRange = null;
     clearTimeout(this._zoomDebounceTimer);
@@ -119,4 +130,5 @@ window.chartFactory = {
       }
     });
   },
+
 };
