@@ -45,6 +45,7 @@ services:
 
   levoit-controller:
     build: .
+    init: true
     env_file: config/env
     volumes:
       - ./certs:/app/certs:ro
