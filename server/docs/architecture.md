@@ -6,10 +6,10 @@
 
 ## First-time setup
 
-1. Copy `config/env.example` to `config/env` and fill in all values. `compose-up` reads this file via `--env-file`; the app hard-fails at startup if any required var is missing.
+1. Copy `config/env.example` to `config/env` and fill in all values. `make up` reads this file via `--env-file`; the app hard-fails at startup if any required var is missing.
 2. Copy `static/config.js.example` to `static/config.js` and set `latestPollMs`, `staleAfterMs`, and `rangeConfig`. If `config.js` is missing the dashboard renders an error card immediately.
 3. Run `tools/gen_certs.sh` to create local TLS certs under `certs/` (gitignored; required by uvicorn).
-4. Run `make compose-up` to build the image and start the app and DB.
+4. Run `make up` to build the image and start the app and DB.
 5. Run migrations: `docker compose --env-file config/env -f compose.yml exec app alembic upgrade head`
 
 ---
@@ -44,7 +44,7 @@ server/
     test_*.py          -- one file per feature area
   compose.yml          -- dev: app + db services
   compose.test.yml     -- test: isolated app + db, ephemeral
-  Makefile             -- compose-up, compose-down, test, test-cov, db-reset-schema
+  Makefile             -- up, down, test, test-cov, db-reset-schema
 ```
 
 ---

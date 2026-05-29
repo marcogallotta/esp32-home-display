@@ -48,6 +48,7 @@ class IngestResponse(BaseModel):
 
 class SensorOut(BaseModel):
     id: UUID
+    mac: str
     name: str
     type: str
 
@@ -238,6 +239,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         return [
             SensorOut(
                 id=sensor.id,
+                mac=sensor.mac,
                 name=sensor.name,
                 type=SENSOR_TYPE_NAMES[sensor.type],
             )

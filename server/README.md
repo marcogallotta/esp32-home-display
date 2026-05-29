@@ -47,11 +47,11 @@ immediately on load.
 All `make` targets wrap `docker compose` with the correct `--env-file` flag:
 
 ```bash
-make compose-up    # build image, start Postgres and server
-make compose-down  # stop
+make up    # build image, start Postgres and server
+make down  # stop
 ```
 
-After the first `compose-up`, apply migrations to create the schema:
+After the first `make up`, apply migrations to create the schema:
 
 ```bash
 docker compose --env-file config/env -f compose.yml exec app alembic upgrade head

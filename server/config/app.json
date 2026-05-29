@@ -19,6 +19,6 @@
   "switchbot_bulk_max_readings": 200,
   "levoit_ah_controller": {
     "switchbot_mac": "EC:2E:84:06:4E:9A",
-    "target_absolute_humidity": 8.0
+    "target_absolute_humidity": 12.0
   }
 }

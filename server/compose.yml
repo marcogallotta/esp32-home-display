@@ -30,6 +30,11 @@ services:
       "--reload", "--reload-dir", "app", "--reload-dir", "static"]
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx,sys; sys.exit(0 if httpx.get('https://laptop.local:8000/health', verify='/app/certs/cert.pem', timeout=3).status_code == 200 else 1)"]
+      interval: 2s
+      retries: 15
+      start_period: 5s
     depends_on:
       db:
         condition: service_healthy
@@ -50,7 +55,7 @@ services:
     command: ["python", "tools/run_levoit_ah_controller.py"]
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

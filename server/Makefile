@@ -5,18 +5,18 @@ APP_IMAGE    := home-display-server
 COMPOSE      := docker compose --env-file config/env -f compose.yml
 TEST_COMPOSE := docker compose -f compose.test.yml
 
-.PHONY: app-image-build compose-up compose-down db-reset-schema test test-cov
+.PHONY: app-image-build up down db-reset-schema test test-cov
 
 app-image-build:
 	docker build -t $(APP_IMAGE) .
 
-compose-up:
+up:
 	$(COMPOSE) up -d
 
-compose-down:
+down:
 	$(COMPOSE) down
 
-db-reset-schema: compose-up
+db-reset-schema: up
 	@if [ "$(ENV)" != "test" ]; then \
 		printf "Reset schema on $(ENV)? [y/N] " && \
 		read ans && [ "$$ans" = "y" ] || exit 0; \
