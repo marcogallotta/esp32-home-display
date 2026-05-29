@@ -7,10 +7,11 @@
 ## First-time setup
 
 1. Copy `config/env.example` to `config/env` and fill in all values. `make up` reads this file via `--env-file`; the app hard-fails at startup if any required var is missing.
-2. Copy `static/config.js.example` to `static/config.js` and set `latestPollMs`, `staleAfterMs`, and `rangeConfig`. If `config.js` is missing the dashboard renders an error card immediately.
-3. Run `tools/gen_certs.sh` to create local TLS certs under `certs/` (gitignored; required by uvicorn).
-4. Run `make up` to build the image and start the app and DB.
-5. Run migrations: `docker compose --env-file config/env -f compose.yml exec app alembic upgrade head`
+2. Copy `config/app.json.example` to `config/app.json` and set `levoit_ah_controller.switchbot_mac` plus any tuning. `app.json` is gitignored (carries your sensor MAC).
+3. Copy `static/config.js.example` to `static/config.js` and set `latestPollMs`, `staleAfterMs`, and `rangeConfig`. If `config.js` is missing the dashboard renders an error card immediately.
+4. Run `tools/gen_certs.sh` to create local TLS certs under `certs/` (gitignored; required by uvicorn).
+5. Run `make up` to build the image and start the app and DB.
+6. Run migrations: `docker compose --env-file config/env -f compose.yml exec app alembic upgrade head`
 
 ---
 
@@ -32,7 +33,8 @@ server/
     switchbot.py       -- ReadingIn/Out, SensorsIn/Out, BulkIn/Out, SENSOR spec
     xiaomi.py          -- ReadingIn/Out, SENSOR spec
   config/
-    app.json           -- non-secret config (rate limits, SwitchBot tuning, session_secure)
+    app.json           -- non-secret config (rate limits, SwitchBot tuning, session_secure); gitignored (carries your sensor MAC)
+    app.json.example   -- template for app.json
     env                -- secrets and DB connection env vars (gitignored)
     env.example        -- template for env
     logging.yaml       -- uvicorn log config

@@ -28,9 +28,12 @@ Copy the generated cert into `data/` and set `api.pem_file` in your firmware
 
 ```bash
 cp config/env.example config/env
+cp config/app.json.example config/app.json
 ```
 
-The app hard-fails at startup if any required variable is missing.
+The app hard-fails at startup if any required variable is missing. `config/app.json`
+holds non-secret app config (rate limits, SwitchBot tuning, Levoit target); it is
+gitignored because it carries your own sensor MAC, so edit your local copy freely.
 
 **3. Create the dashboard config**:
 
