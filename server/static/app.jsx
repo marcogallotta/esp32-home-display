@@ -116,7 +116,7 @@ function App() {
   const xiaomiSensors = sensorGroups.xiaomi;
 
   const selectedSwitchbotSensor = React.useMemo(() => {
-    if (selectedSensorId === "all") return null;
+    if (selectedSensorId === "all" || selectedSensorId === "openmeteo") return null;
     return switchbotSensors.find((sensor) => sensor.id === selectedSensorId) || null;
   }, [selectedSensorId, switchbotSensors]);
 
@@ -239,8 +239,9 @@ function App() {
   }, [xiaomiSensors, historyBySensorId]);
 
   const switchbotSensorsToPlot = React.useMemo(() => {
+    if (selectedSensorId === "openmeteo") return [];
     return selectedSwitchbotSensor ? [selectedSwitchbotSensor] : switchbotSensors;
-  }, [selectedSwitchbotSensor, switchbotSensors]);
+  }, [selectedSensorId, selectedSwitchbotSensor, switchbotSensors]);
 
   const historyFor = React.useCallback((sensorId) => {
     return (zoomedHistoryBySensorId?.[sensorId] ?? historyBySensorId[sensorId]) || [];
@@ -523,6 +524,7 @@ const tempPredictionDatasets = React.useMemo(() =>
             {switchbotSensors.map((sensor) => (
               <option key={sensor.id} value={sensor.id}>{sensor.name}</option>
             ))}
+            <option value="openmeteo">OpenMeteo</option>
           </select>
 
           <button
