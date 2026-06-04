@@ -437,6 +437,16 @@ void enterDoctorMode() {
 }
 #endif
 
+// Poll the serial trigger and enter doctor mode if seen. Called at work-cycle
+// phase boundaries as well as during sleep: without the in-cycle polls the
+// trigger is only seen while sleeping, so a busy device (long history sync,
+// slow network) cannot be entered until it next sleeps. No-op off-device.
+void pollDoctorTrigger() {
+#ifdef ARDUINO
+    if (checkDoctorTrigger()) enterDoctorMode();
+#endif
+}
+
 void sleepUntilNextDue(AppContext& app) {
     const int totalMs = computeSleepMs(std::time(nullptr), app.timing);
     logLine(LogLevel::Debug, "Next update check in " + std::to_string(totalMs / 1000) + " seconds");
@@ -446,7 +456,7 @@ void sleepUntilNextDue(AppContext& app) {
         const int step = std::min(remaining, 100);
         platform::delayMs(step);
         remaining -= step;
-        if (checkDoctorTrigger()) enterDoctorMode();
+        pollDoctorTrigger();
     }
 #else
     platform::delayMs(totalMs);
@@ -471,6 +481,7 @@ void logHeapStats(const char* label, const platform::HeapStats& stats) {
 }
 
 void tick(AppContext& app) {
+    pollDoctorTrigger();
 #ifdef ARDUINO
     network::platform(app.config.wifi).kickConnect();
 #endif
@@ -507,6 +518,7 @@ void tick(AppContext& app) {
 #endif
 
     updateDomainState(app, now, switchbotUpdated, xiaomiUpdated);
+    pollDoctorTrigger();
 #ifdef ARDUINO
     switchbot::history::maybeRunStartupHistorySync(
         app.config,
@@ -515,7 +527,9 @@ void tick(AppContext& app) {
         app.historyServiceState
     );
 #endif
+    pollDoctorTrigger();
     syncOutputs(app, now);
+    pollDoctorTrigger();
     sleepUntilNextDue(app);
 }
 
