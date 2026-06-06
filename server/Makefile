@@ -5,13 +5,19 @@ APP_IMAGE    := home-display-server
 COMPOSE      := docker compose --env-file config/env -f compose.yml
 TEST_COMPOSE := docker compose -f compose.test.yml
 
-.PHONY: app-image-build up down db-reset-schema test test-cov
+.PHONY: app-image-build up down install db-reset-schema test test-cov
+
+install:
+	mkdir -p ~/.config/systemd/user
+	cp etc/systemd/user/esp32-home-display.service ~/.config/systemd/user/
+	systemctl --user daemon-reload
+	systemctl --user enable esp32-home-display
 
 app-image-build:
 	docker build -t $(APP_IMAGE) .
 
 up:
-	$(COMPOSE) up -d
+	$(COMPOSE) up --build -d --wait
 
 down:
 	$(COMPOSE) down

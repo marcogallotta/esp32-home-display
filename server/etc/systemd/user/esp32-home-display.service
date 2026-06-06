@@ -1,0 +1,12 @@
+[Unit]
+Description=esp32-home-display server
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/esp32-home-display/server
+ExecStart=docker compose --env-file config/env -f compose.yml up --build -d --wait
+ExecStop=docker compose --env-file config/env -f compose.yml down
+
+[Install]
+WantedBy=default.target

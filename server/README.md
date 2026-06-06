@@ -47,12 +47,27 @@ immediately on load.
 
 ## Running
 
-All `make` targets wrap `docker compose` with the correct `--env-file` flag:
-
 ```bash
-make up    # build image, start Postgres and server
+make up    # build and start (blocks until healthchecks pass)
 make down  # stop
 ```
+
+## Autostart via systemd
+
+A user systemd unit is included at `etc/systemd/user/esp32-home-display.service`.
+To install it:
+
+```bash
+make install
+```
+
+To start the stack at boot rather than only at login, enable lingering:
+
+```bash
+loginctl enable-linger $USER
+```
+
+Lingering keeps your user's systemd instance alive after logout so the stack starts at boot.
 
 After the first `make up`, apply migrations to create the schema:
 
