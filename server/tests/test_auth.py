@@ -132,3 +132,54 @@ def test_api_key_auth_accepts_correct_key_on_write_endpoint(client, api_key):
     )
 
     assert response.status_code != 401
+
+
+# --- Forecast / prediction read endpoints accept session or API key ---
+
+_WEATHER_PATH = "/openmeteo/weather?start_ts=2026-06-01T00:00:00Z&end_ts=2026-06-02T00:00:00Z"
+_PREDICT_PATH = "/predict/temperature"
+
+
+@pytest.fixture
+def stub_openmeteo(monkeypatch):
+    # Both endpoints call _get_openmeteo_weather; stub it so the auth/routing
+    # path is exercised without hitting the external Open-Meteo API.
+    monkeypatch.setattr("app.openmeteo._get_openmeteo_weather", lambda *a, **k: [])
+    monkeypatch.setattr("app.predict._get_openmeteo_weather", lambda *a, **k: [])
+
+
+@pytest.mark.parametrize("path", [_WEATHER_PATH, _PREDICT_PATH], ids=["weather", "predict"])
+def test_forecast_endpoints_reject_unauthenticated_request(client, path):
+    response = client.get(path)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "unauthorized"}
+
+
+@pytest.mark.parametrize("path", [_WEATHER_PATH, _PREDICT_PATH], ids=["weather", "predict"])
+def test_forecast_endpoints_accept_api_key(client, api_key, stub_openmeteo, path):
+    response = client.get(path, headers={"x-api-key": api_key})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("path", [_WEATHER_PATH, _PREDICT_PATH], ids=["weather", "predict"])
+def test_forecast_endpoints_accept_session(authed_client, stub_openmeteo, path):
+    response = authed_client.get(path)
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("path", [_WEATHER_PATH, _PREDICT_PATH], ids=["weather", "predict"])
+def test_forecast_endpoints_reject_invalid_api_key(client, path):
+    response = client.get(path, headers={"x-api-key": "wrong-key"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "unauthorized"}
+
+
+@pytest.mark.parametrize("path", [_WEATHER_PATH, _PREDICT_PATH], ids=["weather", "predict"])
+def test_forecast_endpoints_invalid_api_key_does_not_fall_back_to_session(authed_client, path):
+    response = authed_client.get(path, headers={"x-api-key": "wrong-key"})
+
+    assert response.status_code == 401

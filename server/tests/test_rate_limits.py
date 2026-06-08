@@ -3,7 +3,7 @@ from contextlib import contextmanager
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import Esp32AppRateLimits, RateLimit, RateLimitsConfig
+from app.config import ApiKeyRateLimits, RateLimit, RateLimitsConfig
 from app.config import load_config
 from app.db import build_engine, build_session_factory
 from app.main import create_app
@@ -21,13 +21,13 @@ def _bulk_reading():
 
 
 @contextmanager
-def _client(*, login=99, frontend=99, esp32_read=99, esp32_live_write=99, esp32_bulk_write=99):
+def _client(*, login=99, frontend=99, api_key_read=99, api_key_live_write=99, api_key_bulk_write=99):
     config = load_config()
     config.rate_limits = RateLimitsConfig(
-        esp32_app=Esp32AppRateLimits(
-            read=RateLimit(limit=esp32_read, period=60),
-            live_write=RateLimit(limit=esp32_live_write, period=60),
-            bulk_write=RateLimit(limit=esp32_bulk_write, period=60),
+        api_key=ApiKeyRateLimits(
+            read=RateLimit(limit=api_key_read, period=60),
+            live_write=RateLimit(limit=api_key_live_write, period=60),
+            bulk_write=RateLimit(limit=api_key_bulk_write, period=60),
             burst=True,
         ),
         frontend=RateLimit(limit=frontend, period=60),
@@ -65,8 +65,8 @@ def test_frontend_limit_applies():
         assert r.status_code == 429
 
 
-def test_esp32_read_and_live_write_buckets_are_independent():
-    with _client(esp32_read=3, esp32_live_write=1) as (client, api_key):
+def test_read_and_live_write_buckets_are_independent():
+    with _client(api_key_read=3, api_key_live_write=1) as (client, api_key):
         headers = auth_headers(api_key)
         reading = {
             "mac": "AA:BB:CC:DD:EE:FF",
@@ -88,7 +88,7 @@ def test_esp32_read_and_live_write_buckets_are_independent():
 
 
 def test_switchbot_and_xiaomi_live_writes_share_live_write_bucket():
-    with _client(esp32_read=5, esp32_live_write=2) as (client, api_key):
+    with _client(api_key_read=5, api_key_live_write=2) as (client, api_key):
         headers = auth_headers(api_key)
         reading = {
             "mac": "AA:BB:CC:DD:EE:FF",
@@ -108,7 +108,7 @@ def test_switchbot_and_xiaomi_live_writes_share_live_write_bucket():
 
 
 def test_bulk_write_bucket_enforces_its_own_limit():
-    with _client(esp32_read=5, esp32_bulk_write=1) as (client, api_key):
+    with _client(api_key_read=5, api_key_bulk_write=1) as (client, api_key):
         sensor_id = resolve_switchbot_sensor_id(client, api_key)
 
         r = post_switchbot_bulk(client, api_key, sensor_id, [_bulk_reading()])
@@ -118,7 +118,7 @@ def test_bulk_write_bucket_enforces_its_own_limit():
 
 
 def test_bulk_write_bucket_is_independent_of_live_write_bucket():
-    with _client(esp32_read=5, esp32_live_write=1, esp32_bulk_write=2) as (client, api_key):
+    with _client(api_key_read=5, api_key_live_write=1, api_key_bulk_write=2) as (client, api_key):
         sensor_id = resolve_switchbot_sensor_id(client, api_key)
         headers = auth_headers(api_key)
         reading = {
@@ -149,8 +149,8 @@ def test_retry_after_header_present():
         assert int(r.headers["retry-after"]) > 0
 
 
-def test_sensor_get_with_api_key_uses_esp32_read_bucket():
-    with _client(esp32_read=2, frontend=99) as (client, api_key):
+def test_sensor_get_with_api_key_uses_api_key_read_bucket():
+    with _client(api_key_read=2, frontend=99) as (client, api_key):
         headers = auth_headers(api_key)
         for _ in range(2):
             r = client.get("/sensors", headers=headers)
@@ -160,7 +160,7 @@ def test_sensor_get_with_api_key_uses_esp32_read_bucket():
 
 
 def test_sensor_get_with_session_uses_frontend_bucket():
-    with _client(esp32_read=99, frontend=2) as (client, _):
+    with _client(api_key_read=99, frontend=2) as (client, _):
         config = load_config()
         client.post("/login", data={"password": config.dashboard_password}, follow_redirects=False)
         for _ in range(2):
@@ -171,7 +171,7 @@ def test_sensor_get_with_session_uses_frontend_bucket():
 
 
 def test_sensor_get_api_key_does_not_consume_frontend_bucket():
-    with _client(esp32_read=99, frontend=1) as (client, api_key):
+    with _client(api_key_read=99, frontend=1) as (client, api_key):
         headers = auth_headers(api_key)
         for _ in range(5):
             r = client.get("/sensors", headers=headers)

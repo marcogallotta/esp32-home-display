@@ -39,7 +39,7 @@ class RateLimit:
 
 
 @dataclass
-class Esp32AppRateLimits:
+class ApiKeyRateLimits:
     read: RateLimit
     live_write: RateLimit
     bulk_write: RateLimit
@@ -48,14 +48,14 @@ class Esp32AppRateLimits:
 
 @dataclass
 class RateLimitsConfig:
-    esp32_app: Esp32AppRateLimits
+    api_key: ApiKeyRateLimits
     frontend: RateLimit
     login: RateLimit
 
 
 def _default_rate_limits() -> RateLimitsConfig:
     return RateLimitsConfig(
-        esp32_app=Esp32AppRateLimits(
+        api_key=ApiKeyRateLimits(
             read=RateLimit(limit=60, period=60),
             live_write=RateLimit(limit=10, period=60),
             bulk_write=RateLimit(limit=120, period=60),
@@ -190,11 +190,11 @@ def validate_config(config: Config, env: str) -> None:
             errors.append(f"switchbot_sync_max_intervals_total: must be in [{lo}, {hi}]")
 
     rl = config.rate_limits
-    _validate_rate_limit(errors, "rate_limits.esp32_app.read", rl.esp32_app.read)
-    _validate_rate_limit(errors, "rate_limits.esp32_app.live_write", rl.esp32_app.live_write)
-    _validate_rate_limit(errors, "rate_limits.esp32_app.bulk_write", rl.esp32_app.bulk_write)
-    if not isinstance(rl.esp32_app.burst, bool):
-        errors.append("rate_limits.esp32_app.burst: must be a boolean")
+    _validate_rate_limit(errors, "rate_limits.api_key.read", rl.api_key.read)
+    _validate_rate_limit(errors, "rate_limits.api_key.live_write", rl.api_key.live_write)
+    _validate_rate_limit(errors, "rate_limits.api_key.bulk_write", rl.api_key.bulk_write)
+    if not isinstance(rl.api_key.burst, bool):
+        errors.append("rate_limits.api_key.burst: must be a boolean")
     _validate_rate_limit(errors, "rate_limits.frontend", rl.frontend)
     _validate_rate_limit(errors, "rate_limits.login", rl.login)
 
@@ -341,15 +341,15 @@ def _parse_rate_limits(raw: dict) -> RateLimitsConfig:
     def _rl(d: dict) -> RateLimit:
         return RateLimit(**d)
 
-    esp = raw["esp32_app"]
+    ak = raw["api_key"]
     fe = raw["frontend"]
     login = raw["login"]
     return RateLimitsConfig(
-        esp32_app=Esp32AppRateLimits(
-            read=_rl(esp["read"]),
-            live_write=_rl(esp["live_write"]),
-            bulk_write=_rl(esp["bulk_write"]),
-            burst=esp.get("burst", True),
+        api_key=ApiKeyRateLimits(
+            read=_rl(ak["read"]),
+            live_write=_rl(ak["live_write"]),
+            bulk_write=_rl(ak["bulk_write"]),
+            burst=ak.get("burst", True),
         ),
         frontend=_rl(fe),
         login=_rl(login),

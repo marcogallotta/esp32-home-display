@@ -4,7 +4,7 @@
     "driver": "postgresql+psycopg"
   },
   "rate_limits": {
-    "esp32_app": {
+    "api_key": {
       "read":       {"limit": 60,  "period": 60},
       "live_write": {"limit": 10,  "period": 60},
       "bulk_write": {"limit": 120, "period": 60},

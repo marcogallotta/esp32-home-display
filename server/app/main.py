@@ -113,25 +113,25 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
 
     rl = config.rate_limits
     limiter = TokenBucketLimiter(MemoryMapStore())
-    esp32_read_limit = make_rate_limiter(
-        "esp32_app:read",
-        limit=rl.esp32_app.read.limit,
-        period=rl.esp32_app.read.period,
-        burst=rl.esp32_app.burst,
+    api_key_read_limit = make_rate_limiter(
+        "api_key:read",
+        limit=rl.api_key.read.limit,
+        period=rl.api_key.read.period,
+        burst=rl.api_key.burst,
         limiter=limiter,
     )
-    esp32_live_write_limit = make_rate_limiter(
-        "esp32_app:live_write",
-        limit=rl.esp32_app.live_write.limit,
-        period=rl.esp32_app.live_write.period,
-        burst=rl.esp32_app.burst,
+    api_key_live_write_limit = make_rate_limiter(
+        "api_key:live_write",
+        limit=rl.api_key.live_write.limit,
+        period=rl.api_key.live_write.period,
+        burst=rl.api_key.burst,
         limiter=limiter,
     )
-    esp32_bulk_write_limit = make_rate_limiter(
-        "esp32_app:bulk_write",
-        limit=rl.esp32_app.bulk_write.limit,
-        period=rl.esp32_app.bulk_write.period,
-        burst=rl.esp32_app.burst,
+    api_key_bulk_write_limit = make_rate_limiter(
+        "api_key:bulk_write",
+        limit=rl.api_key.bulk_write.limit,
+        period=rl.api_key.bulk_write.period,
+        burst=rl.api_key.burst,
         limiter=limiter,
     )
     frontend_limit = make_rate_limiter(
@@ -156,7 +156,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         auth_mode: str = Depends(require_session_or_api_key),
     ) -> None:
         if auth_mode == "api_key":
-            await esp32_read_limit(request)
+            await api_key_read_limit(request)
         else:
             await frontend_limit(request)
 
@@ -283,7 +283,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             expected_type=sensor_row.type,
         )
 
-    @device.post("/switchbot/sensors", response_model=sb.SensorsOut, dependencies=[Depends(esp32_read_limit)])
+    @device.post("/switchbot/sensors", response_model=sb.SensorsOut, dependencies=[Depends(api_key_read_limit)])
     def create_switchbot_sensors(
         payload: sb.SensorsIn,
         request: Request,
@@ -298,7 +298,7 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             max_intervals_total=request.app.state.config.switchbot_sync_max_intervals_total,
         )
 
-    @device.post("/switchbot/bulk", response_model=sb.BulkOut, dependencies=[Depends(esp32_bulk_write_limit)])
+    @device.post("/switchbot/bulk", response_model=sb.BulkOut, dependencies=[Depends(api_key_bulk_write_limit)])
     def create_switchbot_bulk(
         payload: sb.BulkIn,
         request: Request,
@@ -350,17 +350,17 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             error_limit=BULK_ERROR_DETAIL_LIMIT,
         )
 
-    @device.post("/switchbot/reading", response_model=IngestResponse, dependencies=[Depends(esp32_live_write_limit)])
+    @device.post("/switchbot/reading", response_model=IngestResponse, dependencies=[Depends(api_key_live_write_limit)])
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=sb.SENSOR)
 
-    @device.post("/xiaomi/reading", response_model=IngestResponse, dependencies=[Depends(esp32_live_write_limit)])
+    @device.post("/xiaomi/reading", response_model=IngestResponse, dependencies=[Depends(api_key_live_write_limit)])
     def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 
     app.include_router(device)
     app.include_router(dashboard)
     app.include_router(sensor_router)
-    app.include_router(openmeteo.router, dependencies=[Depends(require_session), Depends(frontend_limit)])
-    app.include_router(predict.router, dependencies=[Depends(require_session), Depends(frontend_limit)])
+    app.include_router(openmeteo.router, dependencies=[Depends(sensor_read_limit)])
+    app.include_router(predict.router, dependencies=[Depends(sensor_read_limit)])
     return app
