@@ -134,7 +134,9 @@ def run_once(
         maximum_humidity=cfg.maximum_humidity,
         humidity_change_threshold=cfg.humidity_change_threshold,
         current_device_target_humidity=(
-            device_state.current_target_humidity if device_state is not None else None
+            device_state.current_target_humidity
+            if device_state is not None and device_state.is_in_auto_mode
+            else None
         ),
     )
 

@@ -20,6 +20,7 @@ class HumidifierState:
     name: str
     device_type: str
     current_target_humidity: int | None
+    is_in_auto_mode: bool
 
 
 class LevoitVeSyncClient:
@@ -73,11 +74,13 @@ class LevoitVeSyncClient:
         manager, device = await self._connect()
         try:
             target = device.state.auto_target_humidity
+            auto_mode = next(iter(device.mist_modes), None)
             return HumidifierState(
                 cid=device.cid,
                 name=device.device_name,
                 device_type=device.device_type,
                 current_target_humidity=int(target) if target is not None else None,
+                is_in_auto_mode=device.state.mode == auto_mode if auto_mode is not None else False,
             )
         finally:
             await manager.__aexit__(None, None, None)

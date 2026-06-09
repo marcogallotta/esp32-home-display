@@ -68,6 +68,7 @@ def _mock_vesync(target_humidity=45, error=None):
             name="Bedroom Humidifier",
             device_type="LUH-A602S",
             current_target_humidity=target_humidity,
+            is_in_auto_mode=True,
         )
         client.set_humidity.return_value = None
     return client
@@ -190,6 +191,22 @@ def test_skip_decision_does_not_call_set_humidity():
     assert code == 0
     assert "no command" in msg
     vesync.set_humidity.assert_not_called()
+
+
+def test_device_not_in_auto_mode_always_sends_command():
+    # device target matches commanded but device is in manual mode — must send
+    client = MagicMock()
+    client.fetch_state.return_value = HumidifierState(
+        cid="test-cid",
+        name="Bedroom Humidifier",
+        device_type="LUH-A602S",
+        current_target_humidity=46,
+        is_in_auto_mode=False,
+    )
+    client.set_humidity.return_value = None
+    code, msg = run_once(_config(), api_client=_mock_client(), vesync_client=client)
+    assert code == 0
+    client.set_humidity.assert_called_once()
 
 
 def test_dry_run_does_not_call_set_humidity():
