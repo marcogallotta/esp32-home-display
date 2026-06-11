@@ -104,6 +104,8 @@ class Config:
     vesync_username: str | None = None
     vesync_password: str | None = None
     vesync_device_cid: str | None = None
+    plant_monitor_url: str | None = None
+    plant_monitor_api_token: str | None = None
 
 
 def _check_str(errors: list[str], name: str, value: object) -> bool:
@@ -331,6 +333,8 @@ def load_config(config_dir: Path | None = None) -> Config:
         vesync_username=os.environ.get("VESYNC_USERNAME"),
         vesync_password=os.environ.get("VESYNC_PASSWORD"),
         vesync_device_cid=os.environ.get("VESYNC_DEVICE_CID"),
+        plant_monitor_url=os.environ.get("PLANT_MONITOR_URL"),
+        plant_monitor_api_token=os.environ.get("PLANT_MONITOR_API_KEY"),
         **data,
     )
     validate_config(config, env)

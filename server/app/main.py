@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import openmeteo, predict
+from . import openmeteo, plant_proxy, predict
 from . import switchbot as sb
 from . import xiaomi as xm
 from .common import (
@@ -31,6 +31,7 @@ from .service import (
     fetch_readings,
     get_or_create_sensors_with_sync_state,
     get_sensor_by_id,
+    get_sensor_by_mac,
     ingest_reading,
     list_sensors,
     verify_api_key,
@@ -248,15 +249,23 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
 
     @sensor_router.get("/sensors/latest", response_model=LatestSensorsOut)
     def get_sensors_latest(
+        request: Request,
         sensor_id: Annotated[UUID | None, Query()] = None,
         db: Session = Depends(get_db),
     ):
+        config = request.app.state.config
         sensor_ids = [sensor_id] if sensor_id is not None else None
-        readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
+        if config.plant_monitor_url:
+            db_specs = {t: s for t, s in SENSOR_SPECS.items() if t != XIAOMI_TYPE}
+            readings = fetch_latest_readings(db, db_specs, sensor_ids=sensor_ids)
+            readings += plant_proxy.plant_latest_entries(db, config, sensor_ids)
+        else:
+            readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         return LatestSensorsOut(sensors=readings)
 
     @sensor_router.get("/sensors/{sensor_id}/readings")
     def get_sensor_readings(
+        request: Request,
         sensor_id: UUID,
         limit: Annotated[int, Query(ge=0, le=READINGS_MAX_LIMIT)] = READINGS_DEFAULT_LIMIT,
         before: datetime | None = None,
@@ -269,6 +278,16 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         sensor_row = get_sensor_by_id(db, sensor_id)
         if sensor_row is None:
             return []
+
+        config = request.app.state.config
+        if sensor_row.type == XIAOMI_TYPE and config.plant_monitor_url:
+            return plant_proxy.fetch_plant_readings(
+                config=config,
+                mac=sensor_row.mac,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                max_points=max_points,
+            )
 
         return fetch_readings(
             db=db,
