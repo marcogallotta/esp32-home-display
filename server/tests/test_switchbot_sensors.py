@@ -4,13 +4,11 @@ from uuid import UUID
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.models import SWITCHBOT_TYPE, Sensor, SwitchbotReading
+from app.models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor, SwitchbotReading
 from tests.helpers import (
     make_switchbot_payload,
-    make_xiaomi_payload,
     post_switchbot,
     post_switchbot_sensors,
-    post_xiaomi,
 )
 
 
@@ -280,8 +278,9 @@ def test_switchbot_sensors_rejects_invalid_mac(client, api_key):
     assert response.json() == {"detail": "invalid mac format"}
 
 
-def test_switchbot_sensors_rejects_cross_type_mac(client, api_key):
-    post_xiaomi(client, api_key, make_xiaomi_payload())
+def test_switchbot_sensors_rejects_cross_type_mac(client, api_key, db_session):
+    db_session.add(Sensor(mac="AA:BB:CC:DD:EE:FF", name="Cilantro", type=XIAOMI_TYPE))
+    db_session.commit()
 
     response = post_switchbot_sensors(
         client,

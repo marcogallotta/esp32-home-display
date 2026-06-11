@@ -15,7 +15,6 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import openmeteo, plant_proxy, predict
 from . import switchbot as sb
-from . import xiaomi as xm
 from .common import (
     BULK_ERROR_DETAIL_LIMIT,
     READINGS_DEFAULT_LIMIT,
@@ -65,9 +64,12 @@ class LatestSensorsOut(BaseModel):
     sensors: list[LatestReadingOut]
 
 
+# SwitchBot is the only DB-backed device. The Xiaomi (Flower Care) sensor is
+# served from the external plant monitor via plant_proxy, so it has no SensorSpec
+# (no local storage), but it keeps a SENSOR_TYPE_NAMES entry so the dashboard
+# renders its sensor row as a plant.
 SENSOR_SPECS = {
     SWITCHBOT_TYPE: sb.SENSOR,
-    XIAOMI_TYPE: xm.SENSOR,
 }
 
 SENSOR_TYPE_NAMES = {
@@ -255,12 +257,9 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
     ):
         config = request.app.state.config
         sensor_ids = [sensor_id] if sensor_id is not None else None
+        readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         if config.plant_monitor_url:
-            db_specs = {t: s for t, s in SENSOR_SPECS.items() if t != XIAOMI_TYPE}
-            readings = fetch_latest_readings(db, db_specs, sensor_ids=sensor_ids)
             readings += plant_proxy.plant_latest_entries(db, config, sensor_ids)
-        else:
-            readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         return LatestSensorsOut(sensors=readings)
 
     @sensor_router.get("/sensors/{sensor_id}/readings")
@@ -280,7 +279,13 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             return []
 
         config = request.app.state.config
-        if sensor_row.type == XIAOMI_TYPE and config.plant_monitor_url:
+        if sensor_row.type == XIAOMI_TYPE:
+            # Plant (Flower Care) data lives on the external monitor, not the DB.
+            # If the proxy is not configured there is nothing local to serve --
+            # return empty rather than falling through to SENSOR_SPECS (which has
+            # no XIAOMI_TYPE entry and would KeyError).
+            if not config.plant_monitor_url:
+                return []
             return plant_proxy.fetch_plant_readings(
                 config=config,
                 mac=sensor_row.mac,
@@ -372,10 +377,6 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
     @device.post("/switchbot/reading", response_model=IngestResponse, dependencies=[Depends(api_key_live_write_limit)])
     def create_switchbot_reading(reading: sb.ReadingIn, db: Session = Depends(get_db)):
         return ingest_reading(db=db, reading=reading, sensor=sb.SENSOR)
-
-    @device.post("/xiaomi/reading", response_model=IngestResponse, dependencies=[Depends(api_key_live_write_limit)])
-    def create_xiaomi_reading(reading: xm.ReadingIn, db: Session = Depends(get_db)):
-        return ingest_reading(db=db, reading=reading, sensor=xm.SENSOR)
 
     app.include_router(device)
     app.include_router(dashboard)

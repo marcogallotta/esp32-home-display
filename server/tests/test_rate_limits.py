@@ -10,7 +10,6 @@ from app.main import create_app
 from app.models import Base
 from tests.helpers import (
     auth_headers,
-    make_xiaomi_payload,
     post_switchbot_bulk,
     resolve_switchbot_sensor_id,
 )
@@ -87,23 +86,24 @@ def test_read_and_live_write_buckets_are_independent():
         assert r.status_code == 200
 
 
-def test_switchbot_and_xiaomi_live_writes_share_live_write_bucket():
+def test_switchbot_live_writes_enforce_live_write_bucket():
     with _client(api_key_read=5, api_key_live_write=2) as (client, api_key):
         headers = auth_headers(api_key)
-        reading = {
-            "mac": "AA:BB:CC:DD:EE:FF",
-            "name": "loc",
-            "timestamp": "2026-04-21T18:00:00Z",
-            "temperature_c": 21.5,
-            "humidity_pct": 48.0,
-        }
-        xiaomi_payload = make_xiaomi_payload(mac="BB:BB:CC:DD:EE:FF")
 
-        r1 = client.post("/switchbot/reading", headers=headers, json=reading)
+        def reading(timestamp):
+            return {
+                "mac": "AA:BB:CC:DD:EE:FF",
+                "name": "loc",
+                "timestamp": timestamp,
+                "temperature_c": 21.5,
+                "humidity_pct": 48.0,
+            }
+
+        r1 = client.post("/switchbot/reading", headers=headers, json=reading("2026-04-21T18:00:00Z"))
         assert r1.status_code == 200
-        r2 = client.post("/xiaomi/reading", headers=headers, json=xiaomi_payload)
+        r2 = client.post("/switchbot/reading", headers=headers, json=reading("2026-04-21T18:01:00Z"))
         assert r2.status_code == 200
-        r3 = client.post("/xiaomi/reading", headers=headers, json=xiaomi_payload)
+        r3 = client.post("/switchbot/reading", headers=headers, json=reading("2026-04-21T18:02:00Z"))
         assert r3.status_code == 429
 
 

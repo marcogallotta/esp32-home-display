@@ -1,14 +1,12 @@
 from uuid import uuid4
 
-from app.models import SwitchbotReading
+from app.models import XIAOMI_TYPE, Sensor, SwitchbotReading
 from tests.helpers import (
+    get_sensor_id,
     make_switchbot_payload,
-    make_xiaomi_payload,
     post_switchbot,
     post_switchbot_bulk,
-    post_xiaomi,
     resolve_switchbot_sensor_id,
-    get_sensor_id,
 )
 
 
@@ -159,11 +157,12 @@ def test_switchbot_bulk_rejects_unknown_sensor_id(client, api_key):
     assert response.json() == {"detail": "unknown sensor_id"}
 
 
-def test_switchbot_bulk_rejects_non_switchbot_sensor_id(authed_client, api_key):
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload())
-    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
+def test_switchbot_bulk_rejects_non_switchbot_sensor_id(client, api_key, db_session):
+    sensor = Sensor(mac="11:22:33:44:55:66", name="Cilantro", type=XIAOMI_TYPE)
+    db_session.add(sensor)
+    db_session.commit()
 
-    response = post_switchbot_bulk(authed_client, api_key, sensor_id, [bulk_reading()])
+    response = post_switchbot_bulk(client, api_key, str(sensor.id), [bulk_reading()])
 
     assert response.status_code == 422
     assert response.json() == {"detail": "sensor_id is not a SwitchBot sensor"}

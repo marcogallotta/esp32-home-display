@@ -1,8 +1,6 @@
 from tests.helpers import (
     make_switchbot_payload,
-    make_xiaomi_payload,
     post_switchbot,
-    post_xiaomi,
 )
 
 
@@ -35,40 +33,12 @@ def test_latest_switchbot_returns_most_recent(authed_client, api_key):
     assert s["reading"]["temperature_c"] == 21.5
 
 
-def test_latest_xiaomi_returns_most_recent(authed_client, api_key):
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload(
-        mac="11:22:33:44:55:66",
-        name="Plant A",
-        timestamp="2026-04-21T10:00:00Z",
-        moisture_pct=30,
-        light_lux=200,
-    ))
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload(
-        mac="11:22:33:44:55:66",
-        name="Plant A",
-        timestamp="2026-04-21T12:00:00Z",
-        moisture_pct=35,
-        light_lux=250,
-    ))
-
-    response = authed_client.get("/sensors/latest")
-
-    assert response.status_code == 200
-    sensors = response.json()["sensors"]
-    assert len(sensors) == 1
-    s = sensors[0]
-    assert s["mac"] == "11:22:33:44:55:66"
-    assert s["latest_timestamp"] == "2026-04-21T12:00:00Z"
-    assert s["reading"]["moisture_pct"] == 35
-    assert s["reading"]["light_lux"] == 250
-
-
-def test_latest_returns_both_sensor_types(authed_client, api_key):
+def test_latest_returns_multiple_sensors(authed_client, api_key):
     post_switchbot(authed_client, api_key, make_switchbot_payload(
         mac="AA:BB:CC:DD:EE:FF", name="Bedroom", timestamp="2026-04-21T10:00:00Z",
     ))
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload(
-        mac="11:22:33:44:55:66", name="Plant A", timestamp="2026-04-21T10:00:00Z",
+    post_switchbot(authed_client, api_key, make_switchbot_payload(
+        mac="11:22:33:44:55:66", name="Kitchen", timestamp="2026-04-21T10:00:00Z",
     ))
 
     response = authed_client.get("/sensors/latest")
@@ -112,25 +82,6 @@ def test_latest_response_shape(authed_client, api_key):
     s = response.json()["sensors"][0]
     assert set(s.keys()) == {"mac", "sensor_id", "latest_timestamp", "reading"}
     assert set(s["reading"].keys()) == {"temperature_c", "humidity_pct"}
-
-
-def test_latest_xiaomi_nullable_fields(authed_client, api_key):
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload(
-        mac="11:22:33:44:55:66",
-        name="Plant",
-        timestamp="2026-04-21T10:00:00Z",
-        temperature_c=None,
-        moisture_pct=40,
-    ))
-
-    response = authed_client.get("/sensors/latest")
-
-    assert response.status_code == 200
-    reading = response.json()["sensors"][0]["reading"]
-    assert reading["moisture_pct"] == 40
-    assert reading["temperature_c"] is None
-    assert reading["light_lux"] is None
-    assert reading["conductivity_us_cm"] is None
 
 
 # --- sensor_id filter ---

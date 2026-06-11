@@ -1,8 +1,6 @@
 import pytest
-from sqlalchemy import select
 
 from app import switchbot as sb
-from app import xiaomi as xm
 from app.errors import BadRequestError
 from app.models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
 from app.service import fetch_readings
@@ -10,9 +8,7 @@ from tests.helpers import (
     get_sensor_id,
     get_sensor_readings,
     make_switchbot_payload,
-    make_xiaomi_payload,
     post_switchbot,
-    post_xiaomi,
 )
 
 
@@ -163,36 +159,6 @@ def test_switchbot_get_normalizes_timestamp_to_utc(authed_client, api_key):
     ]
 
 
-def test_xiaomi_get_returns_basic_fetch(authed_client, api_key):
-    payload = make_xiaomi_payload(temperature_c=None, moisture_pct=35)
-    post_xiaomi(authed_client, api_key, payload)
-    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
-
-    response = get_sensor_readings(authed_client, sensor_id)
-
-    assert response.status_code == 200
-    assert response.json() == [
-        {
-            "timestamp": payload["timestamp"],
-            "temperature_c": payload["temperature_c"],
-            "moisture_pct": payload["moisture_pct"],
-            "light_lux": payload.get("light_lux"),
-            "conductivity_us_cm": payload.get("conductivity_us_cm"),
-        }
-    ]
-
-
-def test_xiaomi_get_normalizes_timestamp_to_utc(authed_client, api_key):
-    payload = make_xiaomi_payload(timestamp="2026-04-21T20:00:00+02:00")
-    post_xiaomi(authed_client, api_key, payload)
-    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
-
-    response = get_sensor_readings(authed_client, sensor_id)
-
-    assert response.status_code == 200
-    assert response.json()[0]["timestamp"] == "2026-04-21T18:00:00Z"
-
-
 @pytest.mark.parametrize(
     ("param", "value"),
     [
@@ -279,43 +245,34 @@ def _call_fetch_readings(db, mac, expected_type, sensor):
     )
 
 
-def test_fetch_readings_rejects_xiaomi_sensor_when_switchbot_expected(
+def test_fetch_readings_rejects_sensor_when_type_mismatches(
     authed_client, api_key, db_session
 ):
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload())
-    sensor = db_session.execute(
-        select(Sensor).where(Sensor.type == XIAOMI_TYPE)
-    ).scalar_one()
+    # A non-SwitchBot sensor row (the plant sensor is type 2) must be rejected
+    # when SwitchBot readings are requested for it.
+    db_session.add(Sensor(mac="11:22:33:44:55:66", name="Cilantro", type=XIAOMI_TYPE))
+    db_session.commit()
 
     with pytest.raises(BadRequestError):
-        _call_fetch_readings(db_session, sensor.mac, SWITCHBOT_TYPE, sb.SENSOR)
+        _call_fetch_readings(db_session, "11:22:33:44:55:66", SWITCHBOT_TYPE, sb.SENSOR)
 
 
-def test_fetch_readings_rejects_switchbot_sensor_when_xiaomi_expected(
-    authed_client, api_key, db_session
-):
-    post_switchbot(authed_client, api_key, make_switchbot_payload())
-    sensor = db_session.execute(
-        select(Sensor).where(Sensor.type == SWITCHBOT_TYPE)
-    ).scalar_one()
+def test_plant_sensor_readings_empty_when_proxy_unconfigured(authed_client, api_key, db_session):
+    # plant_monitor_url is unset in the test config, so a plant (type-2) sensor's
+    # readings request must return [] rather than 500 (no SENSOR_SPECS entry).
+    sensor = Sensor(mac="5C:85:7E:14:43:45", name="Cilantro", type=XIAOMI_TYPE)
+    db_session.add(sensor)
+    db_session.commit()
 
-    with pytest.raises(BadRequestError):
-        _call_fetch_readings(db_session, sensor.mac, XIAOMI_TYPE, xm.SENSOR)
+    response = get_sensor_readings(authed_client, str(sensor.id))
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_fetch_readings_accepts_matching_switchbot_type(authed_client, api_key):
     post_switchbot(authed_client, api_key, make_switchbot_payload())
     sensor_id = get_sensor_id(authed_client, sensor_type="switchbot")
-
-    response = get_sensor_readings(authed_client, sensor_id)
-
-    assert response.status_code == 200
-    assert len(response.json()) == 1
-
-
-def test_fetch_readings_accepts_matching_xiaomi_type(authed_client, api_key):
-    post_xiaomi(authed_client, api_key, make_xiaomi_payload())
-    sensor_id = get_sensor_id(authed_client, sensor_type="xiaomi")
 
     response = get_sensor_readings(authed_client, sensor_id)
 

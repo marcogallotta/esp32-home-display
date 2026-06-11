@@ -1,6 +1,7 @@
 import logging
 
-from tests.helpers import make_switchbot_payload, make_xiaomi_payload, post_switchbot, post_xiaomi
+from app.models import XIAOMI_TYPE, Sensor
+from tests.helpers import make_switchbot_payload, post_switchbot
 
 
 def test_name_change_succeeds_and_updates_sensor(authed_client, api_key, caplog):
@@ -30,21 +31,11 @@ def test_name_change_succeeds_and_updates_sensor(authed_client, api_key, caplog)
     assert "location B" in warnings[0].message
 
 
-def test_cross_sensor_type_mismatch_is_rejected(client, api_key):
-    first = post_switchbot(
-        client,
-        api_key,
-        make_switchbot_payload(),
-    )
+def test_cross_sensor_type_mismatch_is_rejected(client, api_key, db_session):
+    db_session.add(Sensor(mac="AA:BB:CC:DD:EE:FF", name="Cilantro", type=XIAOMI_TYPE))
+    db_session.commit()
 
-    second = post_xiaomi(
-        client,
-        api_key,
-        make_xiaomi_payload(),
-    )
+    response = post_switchbot(client, api_key, make_switchbot_payload())
 
-    assert first.status_code == 200
-    assert first.json() == {"result": "created", "warnings": []}
-
-    assert second.status_code == 400
-    assert second.json() == {"detail": "sensor type does not match existing sensor"}
+    assert response.status_code == 400
+    assert response.json() == {"detail": "sensor type does not match existing sensor"}

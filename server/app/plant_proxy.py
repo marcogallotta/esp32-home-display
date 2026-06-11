@@ -19,15 +19,29 @@ from datetime import datetime
 from typing import Any
 
 import httpx
+from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import xiaomi as xm
 from .config import Config
+from .models import XIAOMI_TYPE, Sensor
 from .service import get_sensor_by_mac
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 10
+
+
+class PlantReadingOut(BaseModel):
+    """Dashboard-facing shape for a Flower Care reading. Field names match the
+    rest of the sensor read API (timestamp/light_lux), not the Pi's wire format
+    (recorded_at/lux); the mapping happens in _map_reading()."""
+
+    timestamp: datetime
+    temperature_c: float | None
+    moisture_pct: int | None
+    light_lux: int | None
+    conductivity_us_cm: int | None
 
 
 def _get(config: Config, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -39,8 +53,8 @@ def _get(config: Config, path: str, params: dict[str, Any] | None = None) -> Any
         return resp.json()
 
 
-def _map_reading(row: dict[str, Any]) -> xm.ReadingOut:
-    return xm.ReadingOut(
+def _map_reading(row: dict[str, Any]) -> PlantReadingOut:
+    return PlantReadingOut(
         timestamp=row["recorded_at"],
         temperature_c=row.get("temperature_c"),
         moisture_pct=row.get("moisture_pct"),
@@ -55,7 +69,7 @@ def fetch_plant_readings(
     start_ts: datetime | None,
     end_ts: datetime | None,
     max_points: int | None,
-) -> list[xm.ReadingOut]:
+) -> list[PlantReadingOut]:
     """Window-mode readings for one Flower Care sensor, mapped to the dashboard
     contract (DESC). The dashboard only ever requests window mode; raw
     before/after paging is not proxied (returns empty)."""
@@ -75,6 +89,26 @@ def fetch_plant_readings(
     return readings
 
 
+def _ensure_plant_sensor(db: Session, mac: str, name: str) -> Sensor:
+    """Resolve the plant sensor row, creating it from the Pi's identity if it
+    does not exist yet. The Pi is the source of truth for plant sensors now, so
+    this is the production path that provisions (and back-fills, e.g. after a DB
+    reset) the sensors-table row -- the old Xiaomi ingest used to do this."""
+    sensor_row = get_sensor_by_mac(db, mac)
+    if sensor_row is not None:
+        return sensor_row
+
+    sensor_row = Sensor(mac=mac, name=name, type=XIAOMI_TYPE)
+    db.add(sensor_row)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent request created it first; re-fetch the winner.
+        db.rollback()
+        sensor_row = get_sensor_by_mac(db, mac)
+    return sensor_row
+
+
 def plant_latest_entries(
     db: Session,
     config: Config,
@@ -82,9 +116,9 @@ def plant_latest_entries(
 ) -> list[dict[str, Any]]:
     """Latest Flower Care readings in the dashboard's LatestReadingOut shape.
 
-    Resolves each Pi MAC to this server's sensor row (still present in the
-    sensors table) for its stable UUID. Degrades gracefully: if the Pi is
-    unreachable the dashboard still renders the other sensors."""
+    Resolves each Pi MAC to this server's sensor row (provisioning it from the
+    Pi's identity if missing) for its stable UUID. Degrades gracefully: if the
+    Pi is unreachable the dashboard still renders the other sensors."""
     try:
         rows = _get(config, "/sensors/flower-care/latest")
     except httpx.HTTPError as exc:
@@ -93,7 +127,7 @@ def plant_latest_entries(
 
     out: list[dict[str, Any]] = []
     for row in rows:
-        sensor_row = get_sensor_by_mac(db, row["mac"])
+        sensor_row = _ensure_plant_sensor(db, row["mac"], row["name"])
         if sensor_row is None:
             continue
         if sensor_ids is not None and sensor_row.id not in sensor_ids:

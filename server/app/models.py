@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -62,23 +61,7 @@ class SwitchbotReading(Base):
     humidity_pct: Mapped[float] = mapped_column(Float, nullable=False)
 
 
-class XiaomiReading(Base):
-    __tablename__ = "xiaomi_readings"
-    __table_args__ = (
-        UniqueConstraint("mac", "timestamp", name="xiaomi_readings_mac_timestamp_uniq"),
-        Index("xiaomi_readings_mac_timestamp_idx", "mac", "timestamp"),
-        Index("xiaomi_readings_sensor_id_timestamp_idx", "sensor_id", "timestamp"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    sensor_id: Mapped[UUID] = mapped_column(
-        PostgresUUID(as_uuid=True),
-        ForeignKey("sensors.id"),
-        nullable=False,
-    )
-    mac: Mapped[str] = mapped_column(String, ForeignKey("sensors.mac"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    temperature_c: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    moisture_pct: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    light_lux: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    conductivity_us_cm: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+# XIAOMI_TYPE (2) is retained as a sensor-type marker so the Flower Care (plant)
+# sensor still appears in the sensors table and renders on the dashboard. Its
+# readings are no longer stored here -- they are served from the external plant
+# monitor (see app/plant_proxy.py) -- so there is no XiaomiReading model/table.

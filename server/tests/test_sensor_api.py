@@ -1,17 +1,15 @@
 from tests.helpers import (
     make_switchbot_payload,
-    make_xiaomi_payload,
     post_switchbot,
-    post_xiaomi,
 )
 
 
 def test_get_sensors_lists_created_sensors(authed_client, api_key):
     post_switchbot(authed_client, api_key, make_switchbot_payload(name="Bedroom"))
-    post_xiaomi(
+    post_switchbot(
         authed_client,
         api_key,
-        make_xiaomi_payload(name="Cilantro", mac="11:22:33:44:55:66"),
+        make_switchbot_payload(name="Kitchen", mac="11:22:33:44:55:66"),
     )
 
     response = authed_client.get("/sensors")
@@ -19,7 +17,7 @@ def test_get_sensors_lists_created_sensors(authed_client, api_key):
     assert response.status_code == 200
     assert sorted((s["name"], s["type"]) for s in response.json()) == [
         ("Bedroom", "switchbot"),
-        ("Cilantro", "xiaomi"),
+        ("Kitchen", "switchbot"),
     ]
 
 
