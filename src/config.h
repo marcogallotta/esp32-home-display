@@ -18,11 +18,6 @@ struct SensorWritePolicyConfig {
     int heartbeatMinutes = 60;
     float temperatureDeltaC = 0.3f;
     int humidityDeltaPct = 2;
-    int moistureDeltaPct = 2;
-    std::uint32_t conductivityDeltaUsCm = 10;
-    // Lux threshold is min(luxDeltaCap, baseline lux * luxDeltaFraction).
-    std::uint32_t luxDeltaCap = 2000;
-    float luxDeltaFraction = 0.10f;
 };
 
 struct ApiConfig {
@@ -83,17 +78,6 @@ struct WifiConfig {
     std::string password;
 };
 
-struct XiaomiSensorConfig {
-    std::string mac;
-    std::string name;
-    std::string shortName;
-};
-
-struct XiaomiConfig {
-    int updateIntervalMinutes = 60;
-    std::vector<XiaomiSensorConfig> sensors;
-};
-
 struct Config {
     ForecastConfig forecast;
     ApiConfig api;
@@ -101,7 +85,6 @@ struct Config {
     SalahConfig salah;
     SwitchbotConfig switchbot;
     WifiConfig wifi;
-    XiaomiConfig xiaomi;
 };
 
 bool loadConfig(Config& config);

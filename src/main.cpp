@@ -32,7 +32,6 @@
 #include "ui/display.h"
 #include "ui/state.h"
 #include "update.h"
-#include "xiaomi/ble.h"
 
 namespace {
 
@@ -44,18 +43,6 @@ constexpr std::uint64_t kInvalidTimeApiSyncErrorRepeatMs = 5ULL * 60ULL * 1000UL
 #ifdef ARDUINO
 constexpr int kMaxVisibleSensorRows = 4;
 #endif
-
-bool allXiaomiRowsComplete(const State& state) {
-    for (const auto& row : state.xiaomiSensors) {
-        if (!row.reading.temperatureC.has_value() ||
-            !row.reading.lux.has_value() ||
-            !row.reading.moisturePct.has_value() ||
-            !row.reading.conductivityUsCm.has_value()) {
-            return false;
-        }
-    }
-    return true;
-}
 
 struct AppContext {
     Config config;
@@ -85,7 +72,6 @@ struct AppContext {
     bool hasPreviousState = false;
 
     switchbot::Scanner switchbotScanner;
-    xiaomi::Scanner xiaomiScanner;
     ble::EventQueue bleEventQueue;
     ble::Scanner bleScanner;
 
@@ -93,7 +79,6 @@ struct AppContext {
         : config(cfg),
           apiOutboxClient(config),
           switchbotScanner(config.switchbot),
-          xiaomiScanner(config.xiaomi),
           bleScanner(bleEventQueue) {
     }
 };
@@ -110,12 +95,9 @@ bool validateConfig([[maybe_unused]] const Config& config) {
 
 void initStateStorage(AppContext& app) {
     const std::size_t switchbotSensorCount = app.config.switchbot.sensors.size();
-    const std::size_t xiaomiSensorCount = app.config.xiaomi.sensors.size();
 
     app.currentState.switchbotSensors.resize(switchbotSensorCount);
     app.previousState.switchbotSensors.resize(switchbotSensorCount);
-    app.currentState.xiaomiSensors.resize(xiaomiSensorCount);
-    app.previousState.xiaomiSensors.resize(xiaomiSensorCount);
 
     api::initState(app.currentState, app.apiState);
 
@@ -154,14 +136,6 @@ void prepareCurrentState(State& current, const State& previous) {
     for (std::size_t i = 0; i < previous.switchbotSensors.size(); ++i) {
         current.switchbotSensors[i].identity = previous.switchbotSensors[i].identity;
         current.switchbotSensors[i].reading = previous.switchbotSensors[i].reading;
-    }
-
-    if (current.xiaomiSensors.size() != previous.xiaomiSensors.size()) {
-        current.xiaomiSensors.resize(previous.xiaomiSensors.size());
-    }
-    for (std::size_t i = 0; i < previous.xiaomiSensors.size(); ++i) {
-        current.xiaomiSensors[i].identity = previous.xiaomiSensors[i].identity;
-        current.xiaomiSensors[i].reading = previous.xiaomiSensors[i].reading;
     }
 }
 
@@ -203,21 +177,6 @@ void updateSwitchbotIfDue(AppContext& app, std::time_t now, bool newData) {
     markSensorsUpdated(now, app.timing);
 }
 
-void updateXiaomiIfDue(AppContext& app, std::time_t now, bool newData) {
-    if (!newData && !areXiaomiDue(now, app.timing)) {
-        return;
-    }
-
-    updateXiaomiState(app.config, now, app.xiaomiScanner, app.currentState);
-
-    if (allXiaomiRowsComplete(app.currentState)) {
-        markXiaomiUpdated(now, app.config, app.timing);
-    } else {
-        app.timing.nextXiaomiDueEpochS = now + 60;
-        logLine(LogLevel::Debug, "Xiaomi reading incomplete; retrying in 60 seconds");
-    }
-}
-
 void updateForecastIfDue(AppContext& app, std::time_t now) {
     if (isForecastDue(now, app.timing)) {
         if (updateForecastState(app.config, app.currentState)) {
@@ -241,10 +200,9 @@ void updateForecastIfDue(AppContext& app, std::time_t now) {
     }
 }
 
-void updateDomainState(AppContext& app, std::time_t now, bool switchbotUpdated, bool xiaomiUpdated) {
+void updateDomainState(AppContext& app, std::time_t now, bool switchbotUpdated) {
     updateSalahIfDue(app, now);
     updateSwitchbotIfDue(app, now, switchbotUpdated);
-    updateXiaomiIfDue(app, now, xiaomiUpdated);
     updateForecastIfDue(app, now);
 }
 
@@ -494,12 +452,10 @@ void tick(AppContext& app) {
     app.bleScanner.poll();
 
     bool switchbotUpdated = false;
-    bool xiaomiUpdated = false;
     int bleEventsProcessed = 0;
     ble::AdvertisementEvent event;
     while (app.bleEventQueue.pop(event)) {
         if (app.switchbotScanner.handleAdvertisement(event)) switchbotUpdated = true;
-        if (app.xiaomiScanner.handleAdvertisement(event)) xiaomiUpdated = true;
         ++bleEventsProcessed;
     }
 
@@ -517,7 +473,7 @@ void tick(AppContext& app) {
     }
 #endif
 
-    updateDomainState(app, now, switchbotUpdated, xiaomiUpdated);
+    updateDomainState(app, now, switchbotUpdated);
     pollDoctorTrigger();
 #ifdef ARDUINO
     switchbot::history::maybeRunStartupHistorySync(

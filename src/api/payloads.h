@@ -19,59 +19,15 @@ struct SwitchbotPayload {
     std::uint8_t humidityPct = 0;
 };
 
-struct XiaomiPayload {
-    std::string mac;
-    std::string name;
-    std::string type = "xiaomi";
-    std::string timestamp;
-    std::int64_t epochS = 0;
-
-    std::optional<float> temperatureC;
-    std::optional<std::uint8_t> moisturePct;
-    std::optional<int> lightLux;
-    std::optional<int> conductivityUsCm;
-};
-
 std::optional<SwitchbotPayload> makeSwitchbotPayload(
     const SensorIdentity& identity,
     const SwitchbotReading& reading
 );
 
-std::optional<XiaomiPayload> makeXiaomiPayload(
-    const SensorIdentity& identity,
-    const XiaomiReading& reading
-);
-
-std::optional<XiaomiPayload> makeXiaomiTemperaturePayload(
-    const SensorIdentity& identity,
-    const XiaomiReading& reading
-);
-
-std::optional<XiaomiPayload> makeXiaomiMoisturePayload(
-    const SensorIdentity& identity,
-    const XiaomiReading& reading
-);
-
-std::optional<XiaomiPayload> makeXiaomiLuxPayload(
-    const SensorIdentity& identity,
-    const XiaomiReading& reading
-);
-
-std::optional<XiaomiPayload> makeXiaomiConductivityPayload(
-    const SensorIdentity& identity,
-    const XiaomiReading& reading
-);
-
 std::string toJson(const SwitchbotPayload& payload);
-std::string toJson(const XiaomiPayload& payload);
-
-// Returns true if exactly one measurement field is set (the condition required for compact encoding).
-bool isSingleFieldXiaomiPayload(const XiaomiPayload& payload);
 
 // Compact binary encoding. Returns an empty vector on failure.
-// For XiaomiPayload, call isSingleFieldXiaomiPayload() first; multi-field payloads must use JSON.
 std::vector<std::uint8_t> encodeCompact(const SwitchbotPayload& payload);
-std::vector<std::uint8_t> encodeCompact(const XiaomiPayload& payload);
 
 // Reconstructs JSON from a compact binary record. Matches ExpandBodyCallback.
 // Returns true and populates out on success; false on any decode error.

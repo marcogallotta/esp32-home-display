@@ -32,23 +32,6 @@ bool optionalDeltaAtLeast(
            deltaAtLeast(*current, *lastSent, threshold);
 }
 
-template <typename T, typename ThresholdT>
-bool shouldSendOptional(
-    const std::optional<T>& current,
-    const std::optional<T>& lastSent,
-    ThresholdT threshold
-) {
-    if (!current.has_value()) {
-        return false;
-    }
-
-    if (!lastSent.has_value()) {
-        return true;
-    }
-
-    return optionalDeltaAtLeast(current, lastSent, threshold);
-}
-
 bool heartbeatDue(
     const std::optional<std::int64_t>& current,
     const std::optional<std::int64_t>& lastSent,
@@ -66,14 +49,6 @@ void initState(const ::State& appState, State& apiState) {
     apiState.switchbot.lastSent.assign(
         appState.switchbotSensors.size(),
         SwitchbotReading{}
-    );
-    apiState.xiaomi.lastSent.assign(
-        appState.xiaomiSensors.size(),
-        XiaomiReading{}
-    );
-    apiState.xiaomi.pending.assign(
-        appState.xiaomiSensors.size(),
-        PendingXiaomiState{}
     );
 }
 
@@ -101,68 +76,6 @@ bool shouldSendSwitchbot(
     const SwitchbotReading& lastSent
 ) {
     return shouldSendSwitchbot(config.api.sensorWritePolicy, current, lastSent);
-}
-
-bool shouldSendXiaomi(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-) {
-    return shouldSendXiaomiTemperature(policy, current, lastSent) ||
-           shouldSendXiaomiMoisture(policy, current, lastSent) ||
-           shouldSendXiaomiLux(policy, current, lastSent) ||
-           shouldSendXiaomiConductivity(policy, current, lastSent) ||
-           heartbeatDue(current.lastSeenEpochS, lastSent.lastSeenEpochS, policy.heartbeatMinutes);
-}
-
-bool shouldSendXiaomi(
-    const ::Config& config,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-) {
-    return shouldSendXiaomi(config.api.sensorWritePolicy, current, lastSent);
-}
-
-bool shouldSendXiaomiTemperature(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-) {
-    return shouldSendOptional(current.temperatureC, lastSent.temperatureC, policy.temperatureDeltaC);
-}
-
-bool shouldSendXiaomiMoisture(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-) {
-    return shouldSendOptional(current.moisturePct, lastSent.moisturePct, policy.moistureDeltaPct);
-}
-
-bool shouldSendXiaomiLux(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-) {
-    if (!current.lux.has_value()) {
-        return false;
-    }
-
-    if (!lastSent.lux.has_value()) {
-        return true;
-    }
-
-    const auto fractionThreshold = static_cast<std::uint32_t>(*lastSent.lux * policy.luxDeltaFraction);
-    const auto threshold = std::max(1u, std::min(policy.luxDeltaCap, fractionThreshold));
-    return optionalDeltaAtLeast(current.lux, lastSent.lux, threshold);
-}
-
-bool shouldSendXiaomiConductivity(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-) {
-    return shouldSendOptional(current.conductivityUsCm, lastSent.conductivityUsCm, policy.conductivityDeltaUsCm);
 }
 
 } // namespace api

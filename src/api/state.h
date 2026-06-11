@@ -13,20 +13,8 @@ struct SwitchbotApiState {
     std::vector<SwitchbotReading> lastSent;
 };
 
-struct PendingXiaomiState {
-    bool active = false;
-    XiaomiReading reading;
-    std::int64_t openedAtEpochS = 0;
-};
-
-struct XiaomiApiState {
-    std::vector<XiaomiReading> lastSent;
-    std::vector<PendingXiaomiState> pending;
-};
-
 struct State {
     SwitchbotApiState switchbot;
-    XiaomiApiState xiaomi;
 };
 
 void initState(const ::State& appState, State& apiState);
@@ -41,42 +29,6 @@ bool shouldSendSwitchbot(
     const ::Config& config,
     const SwitchbotReading& current,
     const SwitchbotReading& lastSent
-);
-
-bool shouldSendXiaomi(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-);
-
-bool shouldSendXiaomi(
-    const ::Config& config,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-);
-
-bool shouldSendXiaomiTemperature(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-);
-
-bool shouldSendXiaomiMoisture(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-);
-
-bool shouldSendXiaomiLux(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
-);
-
-bool shouldSendXiaomiConductivity(
-    const SensorWritePolicyConfig& policy,
-    const XiaomiReading& current,
-    const XiaomiReading& lastSent
 );
 
 } // namespace api

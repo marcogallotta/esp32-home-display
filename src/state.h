@@ -11,17 +11,11 @@ struct SwitchbotSensorState {
     SwitchbotReading reading;
 };
 
-struct XiaomiSensorState {
-    SensorIdentity identity;
-    XiaomiReading reading;
-};
-
 struct State {
     bool hasSalah = false;
     salah::State salah;
 
     std::vector<SwitchbotSensorState> switchbotSensors;
-    std::vector<XiaomiSensorState> xiaomiSensors;
 
     bool hasForecast = false;
     forecast::ForecastData forecast;

@@ -39,26 +39,3 @@ bool SwitchbotReading::equalsForApi(const SwitchbotReading& other) const {
     return temperatureC == other.temperatureC &&
            humidityPct == other.humidityPct;
 }
-
-bool XiaomiReading::hasAnyValue() const {
-    return temperatureC.has_value() ||
-           moisturePct.has_value() ||
-           lux.has_value() ||
-           conductivityUsCm.has_value() ||
-           lastSeenEpochS.has_value();
-}
-
-bool XiaomiReading::equalsForDisplay(const XiaomiReading& other) const {
-    return roundedTemp(temperatureC) == roundedTemp(other.temperatureC) &&
-           moisturePct == other.moisturePct &&
-           lux == other.lux &&
-           conductivityUsCm == other.conductivityUsCm;
-}
-
-bool XiaomiReading::equalsForApi(const XiaomiReading& other) const {
-    return temperatureC == other.temperatureC &&
-           moisturePct == other.moisturePct &&
-           lux == other.lux &&
-           conductivityUsCm == other.conductivityUsCm &&
-           lastSeenEpochS == other.lastSeenEpochS;
-}

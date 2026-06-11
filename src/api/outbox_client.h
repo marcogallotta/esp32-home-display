@@ -62,11 +62,6 @@ public:
         const SensorIdentity& identity,
         const SwitchbotReading& reading
     ) = 0;
-
-    virtual WriteResult postXiaomiReading(
-        const SensorIdentity& identity,
-        const XiaomiReading& reading
-    ) = 0;
 };
 
 class OutboxClient : public ApiWriter {
@@ -87,11 +82,6 @@ public:
     WriteResult postSwitchbotReading(
         const SensorIdentity& identity,
         const SwitchbotReading& reading
-    ) override;
-
-    WriteResult postXiaomiReading(
-        const SensorIdentity& identity,
-        const XiaomiReading& reading
     ) override;
 
     WriteResult send(ApiRequest request);

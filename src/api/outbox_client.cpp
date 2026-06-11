@@ -74,21 +74,6 @@ std::string invalidSwitchbotPayloadReason(const SwitchbotReading& reading) {
     return "unknown invalid payload";
 }
 
-std::string invalidXiaomiPayloadReason(const XiaomiReading& reading) {
-    if (!reading.lastSeenEpochS.has_value() || *reading.lastSeenEpochS <= 0) {
-        return invalidTimestampReason(reading.lastSeenEpochS);
-    }
-
-    if (!reading.temperatureC.has_value() &&
-        !reading.moisturePct.has_value() &&
-        !reading.lux.has_value() &&
-        !reading.conductivityUsCm.has_value()) {
-        return "missing all sensor values";
-    }
-
-    return "unknown invalid payload";
-}
-
 WriteResult makeWriteResult(
     WriteStatus status,
     BackendWriteResult backendResult = BackendWriteResult::Failed,
@@ -581,30 +566,6 @@ WriteResult OutboxClient::postSwitchbotReading(
         return makeWriteResult(WriteStatus::DroppedPermanent);
     }
     return sendCompact("/switchbot/reading", compact);
-}
-
-WriteResult OutboxClient::postXiaomiReading(
-    const SensorIdentity& identity,
-    const XiaomiReading& reading
-) {
-    const auto payload = makeXiaomiPayload(identity, reading);
-    if (!payload.has_value()) {
-        logLine(
-            LogLevel::Warn,
-            "Dropping Xiaomi reading: invalid payload for " + identity.mac +
-            ": " + invalidXiaomiPayloadReason(reading)
-        );
-        return makeWriteResult(WriteStatus::DroppedPermanent);
-    }
-
-    if (!isSingleFieldXiaomiPayload(*payload)) {
-        return send(ApiRequest{"/xiaomi/reading", toJson(*payload)});
-    }
-    const auto compact = encodeCompact(*payload);
-    if (compact.empty()) {
-        return makeWriteResult(WriteStatus::DroppedPermanent);
-    }
-    return sendCompact("/xiaomi/reading", compact);
 }
 
 WriteResult OutboxClient::sendCompact(const std::string& path, const std::vector<std::uint8_t>& compact) {

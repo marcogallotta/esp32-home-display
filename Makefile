@@ -71,9 +71,7 @@ COMMON_SRC := \
 	src/timing.cpp \
 	src/update.cpp \
 	src/ui/display.cpp \
-	src/ui/state.cpp \
-	src/xiaomi/protocol.cpp \
-	src/xiaomi/ble.cpp
+	src/ui/state.cpp
 
 MAIN_SRC := \
 	src/main.cpp \
@@ -88,7 +86,6 @@ TEST_SRC := \
 	tests/api_payloads.cpp \
 	tests/forecast_openmeteo.cpp \
 	tests/switchbot_api_integration.cpp \
-	tests/xiaomi_api_integration.cpp \
 	tests/api_sensor_write_policy.cpp \
 	tests/api_sync.cpp \
 	tests/config.cpp \
@@ -110,8 +107,6 @@ TEST_SRC := \
 	tests/network_connect_budget.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
-	tests/xiaomi_ble.cpp \
-	tests/xiaomi_protocol.cpp \
 	$(COMMON_SRC)
 
 PQUEUE_PROFILING_SRC := \

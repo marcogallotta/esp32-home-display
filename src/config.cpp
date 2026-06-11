@@ -212,11 +212,7 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     if (!sensorWritePolicy.isNull() &&
         (!readOptionalInt(sensorWritePolicy, "heartbeat_minutes", sensorWritePolicyConfig.heartbeatMinutes, "api.sensor_write_policy.heartbeat_minutes") ||
          !readOptionalFloat(sensorWritePolicy, "temperature_delta_c", sensorWritePolicyConfig.temperatureDeltaC, "api.sensor_write_policy.temperature_delta_c") ||
-         !readOptionalInt(sensorWritePolicy, "humidity_delta_pct", sensorWritePolicyConfig.humidityDeltaPct, "api.sensor_write_policy.humidity_delta_pct") ||
-         !readOptionalInt(sensorWritePolicy, "moisture_delta_pct", sensorWritePolicyConfig.moistureDeltaPct, "api.sensor_write_policy.moisture_delta_pct") ||
-         !readOptionalUint32(sensorWritePolicy, "conductivity_delta_us_cm", sensorWritePolicyConfig.conductivityDeltaUsCm, "api.sensor_write_policy.conductivity_delta_us_cm") ||
-         !readOptionalUint32(sensorWritePolicy, "lux_delta_cap", sensorWritePolicyConfig.luxDeltaCap, "api.sensor_write_policy.lux_delta_cap") ||
-         !readOptionalFloat(sensorWritePolicy, "lux_delta_fraction", sensorWritePolicyConfig.luxDeltaFraction, "api.sensor_write_policy.lux_delta_fraction"))) {
+         !readOptionalInt(sensorWritePolicy, "humidity_delta_pct", sensorWritePolicyConfig.humidityDeltaPct, "api.sensor_write_policy.humidity_delta_pct"))) {
         return false;
     }
 
@@ -250,18 +246,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     }
     if (sensorWritePolicyConfig.humidityDeltaPct <= 0) {
         return fail("api.sensor_write_policy.humidity_delta_pct must be > 0");
-    }
-    if (sensorWritePolicyConfig.moistureDeltaPct <= 0) {
-        return fail("api.sensor_write_policy.moisture_delta_pct must be > 0");
-    }
-    if (sensorWritePolicyConfig.conductivityDeltaUsCm == 0) {
-        return fail("api.sensor_write_policy.conductivity_delta_us_cm must be > 0");
-    }
-    if (sensorWritePolicyConfig.luxDeltaCap == 0) {
-        return fail("api.sensor_write_policy.lux_delta_cap must be > 0");
-    }
-    if (sensorWritePolicyConfig.luxDeltaFraction <= 0.0f) {
-        return fail("api.sensor_write_policy.lux_delta_fraction must be > 0");
     }
 
     const JsonObject location = json["location"];
@@ -397,55 +381,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         }
     }
 
-    const JsonObject xiaomi = json["xiaomi"];
-    if (xiaomi.isNull()) {
-        return fail("xiaomi is not an object");
-    }
-    if (!xiaomi["update_interval_minutes"].isNull() && !xiaomi["update_interval_minutes"].is<int>()) {
-        return fail("xiaomi.update_interval_minutes is not an int");
-    }
-
-    const int xiaomiUpdateIntervalMinutes = xiaomi["update_interval_minutes"] | config.xiaomi.updateIntervalMinutes;
-    if (xiaomiUpdateIntervalMinutes <= 0) {
-        return fail("xiaomi.update_interval_minutes must be > 0");
-    }
-
-    const JsonArray xiaomiSensors = xiaomi["sensors"];
-    if (!xiaomi["sensors"].isNull() && xiaomiSensors.isNull()) {
-        return fail("xiaomi.sensors is not an array");
-    }
-
-    config.xiaomi.sensors.clear();
-
-    {
-        std::set<std::string> seenMacs;
-        for (JsonObject s : xiaomiSensors) {
-            if (!s["mac"].is<const char*>()) {
-                return fail("xiaomi.sensors[].mac is not a string");
-            }
-            if (!s["name"].is<const char*>()) {
-                return fail("xiaomi.sensors[].name is not a string");
-            }
-            if (!s["short_name"].is<const char*>()) {
-                return fail("xiaomi.sensors[].short_name is not a string");
-            }
-
-            const std::string normalized = normalizeMac(s["mac"].as<const char*>());
-            if (normalized.empty()) {
-                return fail("xiaomi.sensors[].mac is invalid");
-            }
-            if (!seenMacs.insert(normalized).second) {
-                return fail("xiaomi.sensors[].mac is a duplicate");
-            }
-
-            XiaomiSensorConfig sensor;
-            sensor.mac = normalized;
-            sensor.name = s["name"].as<const char*>();
-            sensor.shortName = s["short_name"].as<const char*>();
-            config.xiaomi.sensors.push_back(sensor);
-        }
-    }
-
     const JsonObject wifi = json["wifi"];
     if (wifi.isNull()) {
         return fail("wifi is not an object");
@@ -481,8 +416,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.salah.hanafiAsr = hanafiAsr;
 
     config.switchbot.history = switchbotHistoryConfig;
-
-    config.xiaomi.updateIntervalMinutes = xiaomiUpdateIntervalMinutes;
 
     config.wifi.ssid = ssid;
     config.wifi.password = password;

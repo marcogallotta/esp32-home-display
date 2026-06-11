@@ -94,14 +94,6 @@ SwitchbotReading validSwitchbotReading() {
     return reading;
 }
 
-XiaomiReading validXiaomiReading() {
-    XiaomiReading reading;
-    reading.temperatureC = 18.25f;
-    reading.moisturePct = static_cast<std::uint8_t>(42);
-    reading.lastSeenEpochS = 1710000000;
-    return reading;
-}
-
 api::OutboxClient makeClient(const Config& config, FakeTransport& transport, FakeClock& clock) {
     return api::OutboxClient(config, transport, kApiOutboxSpoolDir.string(), fakeClockNow, &clock);
 }
@@ -182,7 +174,7 @@ TEST_CASE("api outbox client queues retryable failure and skips direct send whil
     CHECK(first.queueReason == api::WriteQueueReason::RetryableFailure);
     REQUIRE_EQ(transport.posts.size(), 1U);
 
-    const auto second = client.postXiaomiReading(identity(), validXiaomiReading());
+    const auto second = client.postSwitchbotReading(identity(), validSwitchbotReading());
     CHECK(second.status == api::WriteStatus::Queued);
     CHECK(second.queueReason == api::WriteQueueReason::BacklogPresent);
     CHECK_EQ(transport.posts.size(), 1U);
@@ -215,7 +207,7 @@ TEST_CASE("api outbox client drains queued backlog after retry delay") {
     auto client = makeClient(config, transport, clock);
 
     REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
-    REQUIRE(client.postXiaomiReading(identity(), validXiaomiReading()).status == api::WriteStatus::Queued);
+    REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
     REQUIRE_EQ(transport.posts.size(), 1U);
 
     clock.nowMs += 1000;
@@ -226,7 +218,7 @@ TEST_CASE("api outbox client drains queued backlog after retry delay") {
     CHECK_EQ(drained.dropped, 0);
     REQUIRE_EQ(transport.posts.size(), 3U);
     CHECK_EQ(transport.posts[1].url, "https://example.test/api/switchbot/reading");
-    CHECK_EQ(transport.posts[2].url, "https://example.test/api/xiaomi/reading");
+    CHECK_EQ(transport.posts[2].url, "https://example.test/api/switchbot/reading");
 }
 
 TEST_CASE("api outbox client drainPending respects drainRateCap per second") {
@@ -241,7 +233,7 @@ TEST_CASE("api outbox client drainPending respects drainRateCap per second") {
     auto client = makeClient(config, transport, clock);
 
     REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
-    REQUIRE(client.postXiaomiReading(identity(), validXiaomiReading()).status == api::WriteStatus::Queued);
+    REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
     REQUIRE(client.postSwitchbotReading(identity(), validSwitchbotReading()).status == api::WriteStatus::Queued);
     REQUIRE_EQ(transport.posts.size(), 1U);
 
@@ -341,71 +333,6 @@ TEST_CASE("api outbox client rejects SwitchBot reading with zero timestamp") {
     reading.lastSeenEpochS = 0;
 
     const auto result = client.postSwitchbotReading(identity(), reading);
-
-    CHECK(result.status == api::WriteStatus::DroppedPermanent);
-    CHECK_EQ(transport.posts.size(), 0U);
-}
-
-TEST_CASE("api outbox client sends valid Xiaomi reading directly") {
-    cleanTestFiles();
-    const auto config = testConfig();
-    FakeTransport transport;
-    FakeClock clock;
-    auto client = makeClient(config, transport, clock);
-
-    const auto result = client.postXiaomiReading(identity(), validXiaomiReading());
-
-    CHECK(result.status == api::WriteStatus::Sent);
-    REQUIRE_EQ(transport.posts.size(), 1U);
-    CHECK_EQ(transport.posts[0].url, "https://example.test/api/xiaomi/reading");
-
-    const auto doc = parseBody(transport.posts[0]);
-    CHECK_EQ(doc["mac"].as<std::string>(), "AA:BB:CC:DD:EE:FF");
-}
-
-TEST_CASE("api outbox client rejects Xiaomi reading with missing timestamp") {
-    cleanTestFiles();
-    const auto config = testConfig();
-    FakeTransport transport;
-    FakeClock clock;
-    auto client = makeClient(config, transport, clock);
-
-    auto reading = validXiaomiReading();
-    reading.lastSeenEpochS = std::nullopt;
-
-    const auto result = client.postXiaomiReading(identity(), reading);
-
-    CHECK(result.status == api::WriteStatus::DroppedPermanent);
-    CHECK_EQ(transport.posts.size(), 0U);
-}
-
-TEST_CASE("api outbox client rejects Xiaomi reading with zero timestamp") {
-    cleanTestFiles();
-    const auto config = testConfig();
-    FakeTransport transport;
-    FakeClock clock;
-    auto client = makeClient(config, transport, clock);
-
-    auto reading = validXiaomiReading();
-    reading.lastSeenEpochS = 0;
-
-    const auto result = client.postXiaomiReading(identity(), reading);
-
-    CHECK(result.status == api::WriteStatus::DroppedPermanent);
-    CHECK_EQ(transport.posts.size(), 0U);
-}
-
-TEST_CASE("api outbox client rejects Xiaomi reading with no sensor values") {
-    cleanTestFiles();
-    const auto config = testConfig();
-    FakeTransport transport;
-    FakeClock clock;
-    auto client = makeClient(config, transport, clock);
-
-    XiaomiReading reading;
-    reading.lastSeenEpochS = 1710000000;
-
-    const auto result = client.postXiaomiReading(identity(), reading);
 
     CHECK(result.status == api::WriteStatus::DroppedPermanent);
     CHECK_EQ(transport.posts.size(), 0U);

@@ -70,8 +70,6 @@ DynamicJsonDocument exampleWithoutOptionalFields() {
     removePath(doc, "salah", "asr_makruh_minutes");
     removePath(doc, "salah", "hanafi_asr");
     removePath(doc, "switchbot", "sensors");
-    removePath(doc, "xiaomi", "update_interval_minutes");
-    removePath(doc, "xiaomi", "sensors");
 
     return doc;
 }
@@ -91,21 +89,6 @@ JsonObject addSwitchbotSensor(DynamicJsonDocument& doc) {
     return appendSwitchbotSensor(doc);
 }
 
-JsonObject appendXiaomiSensor(DynamicJsonDocument& doc) {
-    JsonArray sensors = doc["xiaomi"]["sensors"].as<JsonArray>();
-    JsonObject sensor = sensors.createNestedObject();
-    sensor["mac"] = "11:22:33:44:55:66";
-    sensor["name"] = "Plant 1";
-    sensor["short_name"] = "P1";
-    return sensor;
-}
-
-JsonObject addXiaomiSensor(DynamicJsonDocument& doc) {
-    doc["xiaomi"].remove("sensors");
-    doc["xiaomi"].createNestedArray("sensors");
-    return appendXiaomiSensor(doc);
-}
-
 void checkDefaults(const Config& config) {
     const Config defaults{};
 
@@ -123,9 +106,7 @@ void checkDefaults(const Config& config) {
     CHECK_EQ(config.switchbot.history.newSensorWindowSeconds, defaults.switchbot.history.newSensorWindowSeconds);
     CHECK_EQ(config.switchbot.history.historyLimitSeconds, defaults.switchbot.history.historyLimitSeconds);
     CHECK_EQ(config.switchbot.history.bulkBatchLimit, defaults.switchbot.history.bulkBatchLimit);
-    CHECK_EQ(config.xiaomi.updateIntervalMinutes, defaults.xiaomi.updateIntervalMinutes);
     CHECK(config.switchbot.sensors.empty());
-    CHECK(config.xiaomi.sensors.empty());
 }
 
 TEST_CASE("config example is valid") {
@@ -451,42 +432,6 @@ TEST_CASE("config validates switchbot sensors") {
     }
  }
 
-TEST_CASE("config validates xiaomi values") {
-    SUBCASE("interval must be an int") {
-        auto doc = exampleConfig();
-        doc["xiaomi"]["update_interval_minutes"] = "60";
-        expectInvalid(doc);
-    }
-
-    SUBCASE("interval must be positive") {
-        auto doc = exampleConfig();
-        doc["xiaomi"]["update_interval_minutes"] = 0;
-        expectInvalid(doc);
-    }
-
-    SUBCASE("sensors must be an array when present") {
-        auto doc = exampleConfig();
-        doc["xiaomi"]["sensors"] = 123;
-        expectInvalid(doc);
-    }
-
-    SUBCASE("sensor fields must be strings") {
-        for (const char* key : {"mac", "name", "short_name"}) {
-            CAPTURE(key);
-            auto doc = exampleConfig();
-            JsonObject sensor = addXiaomiSensor(doc);
-            sensor[key] = 123;
-            expectInvalid(doc);
-        }
-    }
-
-    SUBCASE("no sensors is valid") {
-        auto doc = exampleConfig();
-        removePath(doc, "xiaomi", "sensors");
-        expectValid(doc);
-    }
-}
-
 TEST_CASE("config validates wifi values") {
     for (const char* key : {"ssid", "password"}) {
         CAPTURE(key);
@@ -554,61 +499,6 @@ TEST_CASE("config normalizes switchbot sensor MACs") {
         s1["mac"] = "aa:bb:cc:dd:ee:ff";
         JsonObject s2 = appendSwitchbotSensor(doc);
         s2["mac"] = "AA-BB-CC-DD-EE-FF";
-        expectInvalid(doc);
-    }
-}
-
-TEST_CASE("config normalizes xiaomi sensor MACs") {
-    SUBCASE("lowercase colon-separated is accepted and uppercased") {
-        auto doc = exampleConfig();
-        JsonObject sensor = addXiaomiSensor(doc);
-        sensor["mac"] = "aa:bb:cc:dd:ee:ff";
-        Config config;
-        REQUIRE(parses(doc, config));
-        REQUIRE(config.xiaomi.sensors.size() == 1);
-        CHECK_EQ(config.xiaomi.sensors[0].mac, "AA:BB:CC:DD:EE:FF");
-    }
-
-    SUBCASE("dash-separated is accepted and normalized") {
-        auto doc = exampleConfig();
-        JsonObject sensor = addXiaomiSensor(doc);
-        sensor["mac"] = "11-22-33-44-55-66";
-        Config config;
-        REQUIRE(parses(doc, config));
-        REQUIRE(config.xiaomi.sensors.size() == 1);
-        CHECK_EQ(config.xiaomi.sensors[0].mac, "11:22:33:44:55:66");
-    }
-
-    SUBCASE("unseparated is accepted and normalized") {
-        auto doc = exampleConfig();
-        JsonObject sensor = addXiaomiSensor(doc);
-        sensor["mac"] = "112233445566";
-        Config config;
-        REQUIRE(parses(doc, config));
-        REQUIRE(config.xiaomi.sensors.size() == 1);
-        CHECK_EQ(config.xiaomi.sensors[0].mac, "11:22:33:44:55:66");
-    }
-
-    SUBCASE("invalid MAC is rejected") {
-        auto doc = exampleConfig();
-        JsonObject sensor = addXiaomiSensor(doc);
-        sensor["mac"] = "zz:zz:zz:zz:zz:zz";
-        expectInvalid(doc);
-    }
-
-    SUBCASE("duplicate MACs are rejected") {
-        auto doc = exampleConfig();
-        addXiaomiSensor(doc);
-        appendXiaomiSensor(doc);
-        expectInvalid(doc);
-    }
-
-    SUBCASE("duplicate MACs in different forms are rejected") {
-        auto doc = exampleConfig();
-        JsonObject s1 = addXiaomiSensor(doc);
-        s1["mac"] = "11:22:33:44:55:66";
-        JsonObject s2 = appendXiaomiSensor(doc);
-        s2["mac"] = "112233445566";
         expectInvalid(doc);
     }
 }

@@ -7,7 +7,6 @@
 #include "log.h"
 
 namespace {
-constexpr std::int64_t kXiaomiPendingWindowSeconds = 60;
 
 bool isAccepted(api::BackendWriteResult result) {
     return result == api::BackendWriteResult::Created ||
@@ -121,24 +120,6 @@ void logConflict(
     );
 }
 
-bool hasCompleteXiaomiReading(const XiaomiReading& reading) {
-    return reading.temperatureC.has_value() &&
-           reading.moisturePct.has_value() &&
-           reading.lux.has_value() &&
-           reading.conductivityUsCm.has_value();
-}
-
-bool samePendingData(const XiaomiReading& a, const XiaomiReading& b) {
-    return a.temperatureC == b.temperatureC &&
-           a.moisturePct == b.moisturePct &&
-           a.lux == b.lux &&
-           a.conductivityUsCm == b.conductivityUsCm;
-}
-
-void resetPending(api::PendingXiaomiState& pending) {
-    pending = api::PendingXiaomiState{};
-}
-
 } // namespace
 
 void syncApiState(
@@ -161,7 +142,7 @@ void syncApiState(
     const State& appState,
     api::State& apiState,
     api::ApiWriter& client,
-    std::int64_t nowEpochS
+    [[maybe_unused]] std::int64_t nowEpochS
 ) {
     for (std::size_t i = 0; i < appState.switchbotSensors.size(); ++i) {
         const auto& sensor = appState.switchbotSensors[i];
@@ -196,72 +177,6 @@ void syncApiState(
         } else if (response.backendResult == api::BackendWriteResult::Conflict) {
             logConflict("SwitchBot", sensor.identity, response);
             lastSent = SwitchbotReading{};
-        }
-    }
-
-    for (std::size_t i = 0; i < appState.xiaomiSensors.size(); ++i) {
-        const auto& sensor = appState.xiaomiSensors[i];
-        const auto& current = sensor.reading;
-        auto& lastSent = apiState.xiaomi.lastSent[i];
-        auto& pending = apiState.xiaomi.pending[i];
-
-        if (current.hasAnyValue() && !hasValidApiTimestamp(current.lastSeenEpochS)) {
-            logSkippedInvalidTimestamp("Xiaomi", sensor.identity);
-            resetPending(pending);
-            continue;
-        }
-
-        if (current.hasAnyValue() && api::shouldSendXiaomi(config, current, lastSent)) {
-            if (!pending.active) {
-                pending.active = true;
-                pending.openedAtEpochS = *current.lastSeenEpochS;
-            }
-
-            if (!samePendingData(current, pending.reading)) {
-                pending.reading = current;
-            }
-        }
-
-        if (!pending.active) {
-            continue;
-        }
-
-        const bool flushDueToComplete = hasCompleteXiaomiReading(pending.reading);
-        const bool flushDueToTimeout =
-            nowEpochS >= pending.openedAtEpochS + kXiaomiPendingWindowSeconds;
-
-        if (!flushDueToComplete && !flushDueToTimeout) {
-            continue;
-        }
-
-        if (!hasValidApiTimestamp(pending.reading.lastSeenEpochS)) {
-            logSkippedInvalidTimestamp("Xiaomi", sensor.identity);
-            resetPending(pending);
-            continue;
-        }
-
-        const api::WriteResult response =
-            client.postXiaomiReading(sensor.identity, pending.reading);
-
-        logApiWriteResult("Xiaomi", sensor.identity, response);
-
-        if (response.status == api::WriteStatus::Queued) {
-            lastSent = pending.reading;
-            resetPending(pending);
-            continue;
-        }
-
-        if (response.status != api::WriteStatus::Sent) {
-            continue;
-        }
-
-        if (isAccepted(response.backendResult)) {
-            lastSent = pending.reading;
-            resetPending(pending);
-        } else if (response.backendResult == api::BackendWriteResult::Conflict) {
-            logConflict("Xiaomi", sensor.identity, response);
-            lastSent = XiaomiReading{};
-            resetPending(pending);
         }
     }
 }

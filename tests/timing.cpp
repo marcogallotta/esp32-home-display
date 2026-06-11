@@ -7,10 +7,9 @@
 
 namespace {
 
-Config makeConfig(int forecastUpdateIntervalMinutes, int xiaomiUpdateIntervalMinutes = 60) {
+Config makeConfig(int forecastUpdateIntervalMinutes) {
     Config config;
     config.forecast.updateIntervalMinutes = forecastUpdateIntervalMinutes;
-    config.xiaomi.updateIntervalMinutes = xiaomiUpdateIntervalMinutes;
     return config;
 }
 
@@ -21,7 +20,6 @@ TEST_CASE("all timing tasks are due before they have been scheduled") {
 
     CHECK(isSalahDue(1000, timing));
     CHECK(areSensorsDue(1000, timing));
-    CHECK(areXiaomiDue(1000, timing));
     CHECK(isForecastDue(1000, timing));
 }
 
@@ -48,15 +46,6 @@ TEST_CASE("sensor scan updates are scheduled one minute later") {
     CHECK_EQ(timing.nextSensorsDueEpochS, static_cast<std::time_t>(1060));
 }
 
-TEST_CASE("xiaomi updates use the configured interval") {
-    TimingState timing;
-    const Config config = makeConfig(17, 45);
-
-    markXiaomiUpdated(1000, config, timing);
-
-    CHECK_EQ(timing.nextXiaomiDueEpochS, static_cast<std::time_t>(1000 + 45 * 60));
-}
-
 TEST_CASE("forecast success uses the configured interval") {
     TimingState timing;
     const Config config = makeConfig(17);
@@ -77,7 +66,6 @@ TEST_CASE("tasks become due exactly at their scheduled time") {
     TimingState timing;
     timing.nextSalahDueEpochS = 100;
     timing.nextSensorsDueEpochS = 200;
-    timing.nextXiaomiDueEpochS = 250;
     timing.nextForecastDueEpochS = 300;
 
     SUBCASE("salah") {
@@ -90,11 +78,6 @@ TEST_CASE("tasks become due exactly at their scheduled time") {
         CHECK(areSensorsDue(200, timing));
     }
 
-    SUBCASE("xiaomi") {
-        CHECK_FALSE(areXiaomiDue(249, timing));
-        CHECK(areXiaomiDue(250, timing));
-    }
-
     SUBCASE("forecast") {
         CHECK_FALSE(isForecastDue(299, timing));
         CHECK(isForecastDue(300, timing));
@@ -105,7 +88,6 @@ TEST_CASE("earliest due time is the minimum scheduled task time") {
     TimingState timing;
     timing.nextSalahDueEpochS = 500;
     timing.nextSensorsDueEpochS = 200;
-    timing.nextXiaomiDueEpochS = 700;
     timing.nextForecastDueEpochS = 800;
 
     CHECK_EQ(earliestDueEpochS(timing), static_cast<std::time_t>(200));
@@ -115,7 +97,6 @@ TEST_CASE("sleep duration runs until the earliest due task") {
     TimingState timing;
     timing.nextSalahDueEpochS = 500;
     timing.nextSensorsDueEpochS = 200;
-    timing.nextXiaomiDueEpochS = 700;
     timing.nextForecastDueEpochS = 800;
 
     CHECK_EQ(computeSleepMs(150, timing), 50000);
@@ -125,7 +106,6 @@ TEST_CASE("sleep duration is zero when any task is overdue") {
     TimingState timing;
     timing.nextSalahDueEpochS = 100;
     timing.nextSensorsDueEpochS = 200;
-    timing.nextXiaomiDueEpochS = 250;
     timing.nextForecastDueEpochS = 300;
 
     CHECK_EQ(computeSleepMs(150, timing), 0);

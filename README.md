@@ -6,11 +6,12 @@ An ESP32-based home display that shows:
 - local weather forecast
 - SwitchBot temperature and humidity readings
 
-Xiaomi plant sensor readings (temperature, moisture, light, conductivity) are scanned and
-synced to the backend but not shown on the display.
-
 A backend server stores sensor history and serves a browser-based dashboard with graphs
-and ML-based predictions.
+and ML-based predictions. Xiaomi Flower Care (plant) sensors are no longer read by this
+firmware; they are handled by an external Raspberry Pi service over an active BLE GATT
+connection, and the dashboard proxies that data through the backend. The removed firmware
+Xiaomi scanner/protocol/payload code remains in git history (before the removal commit) if
+it is ever needed as a reference.
 
 ## Features
 
@@ -19,7 +20,6 @@ and ML-based predictions.
 - Salah schedule with Hanafi Asr support and EU DST handling
 - Open-Meteo weather forecast over HTTPS
 - SwitchBot passive BLE scanning with up to 68 days of history sync
-- Xiaomi BLE plant sensor support (temperature, moisture, light, conductivity)
 - OLED partial redraws -- only changed regions are redrawn each tick
 - Compact binary sensor records -- ~2.3x smaller than JSON on LittleFS
 - Async WiFi -- connection time is credited against the budget, not wasted
@@ -43,7 +43,6 @@ Current embedded target:
 - ESP32-S3
 - SSD1309 128x64 OLED over SPI
 - SwitchBot Meter / Meter Plus sensors
-- Xiaomi BLE plant sensors
 
 ## Dependencies
 
@@ -182,7 +181,6 @@ from the server API and has no direct database access.
 - `src/salah/` -- prayer time calculation and state
 - `src/forecast/` -- Open-Meteo weather fetch and parse
 - `src/switchbot/` -- BLE scanning, history protocol, history sync
-- `src/xiaomi/` -- BLE scanning and protocol
 - `src/ble/` -- shared BLE session management
 - `src/api/` -- backend API client: payloads, outbox, write policy, dropped-reading log
 - `src/ui/` -- OLED state machine and rendering

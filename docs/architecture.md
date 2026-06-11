@@ -2,7 +2,9 @@
 
 **Editing rules:** ASCII only -- no Unicode symbols. This file is a living reference; delete completed items, rewrite state sections, never mark things done inline.
 
-This document covers the data flow from BLE advertisement to server storage, using SwitchBot and Xiaomi as the reference implementations, so a new device type can be wired in without re-reading every source file.
+This document covers the data flow from BLE advertisement to server storage, using SwitchBot as the reference implementation, so a new device type can be wired in without re-reading every source file.
+
+Note: SwitchBot is currently the only BLE device read by this firmware. Xiaomi Flower Care support was removed -- those sensors are now read by an external Raspberry Pi service over an active GATT connection. Some patterns below (partial readings, multi-frame aggregation, multi-field JSON payloads) are described as guidance for a future device but are not implemented by any current device.
 
 **Before editing any code, read these files in order:**
 1. `src/main.cpp`
@@ -10,7 +12,7 @@ This document covers the data flow from BLE advertisement to server storage, usi
 3. `src/state.h` and `src/sensor_readings.h`
 4. `src/update.cpp`
 5. `src/api/state.cpp`, `src/api_sync.cpp`, `src/api/payloads.cpp`, `src/api/outbox_client.cpp`
-6. An existing device pair: `src/switchbot/` or `src/xiaomi/`
+6. The existing device implementation: `src/switchbot/`
 7. Root `Makefile` -- desktop sources are explicitly listed and must be updated
 
 **Server files are in the backend repo, not this firmware repo.** The `server/` section below describes the server-side contract for reference only; do not look for `server/app/*.py` in this tree. Backend behavior is documented here only to keep firmware payloads aligned; the source of truth is `server/docs/architecture.md`.
@@ -31,8 +33,8 @@ BLE radio
   -> syncApiState()                             [api_sync.cpp]
   -> api::OutboxClient::postFooReading()        [outbox_client.cpp]
   -> encodeCompact() / toJson()                 [payloads.cpp]
-  -> pqueue::http::Outbox::submitCompactPost()  (compact path, SwitchBot + single-field Xiaomi)
-  -> pqueue::http::Outbox::submitPost()         (JSON path, multi-field Xiaomi fallback)
+  -> pqueue::http::Outbox::submitCompactPost()  (compact path, SwitchBot)
+  -> pqueue::http::Outbox::submitPost()         (JSON path, available for a future multi-field device)
   -> [at drain time] expandCompact() -> JSON    [payloads.cpp, via ExpandBodyCallback]
   -> POST /foo/reading  (server)
   -> ingest_reading()   (server/app/service.py)
@@ -68,7 +70,7 @@ SensorMap snapshot() const;
 
 `handleAdvertisement` returns true if the event matched this device type and updated internal state. `snapshot()` returns a copy of the current `SensorMap` (a `std::map<string, SensorReading>` keyed by MAC address).
 
-The scanner identifies its advertisements by a known key in `manufacturerData` or `serviceData`. SwitchBot uses `manufacturerData[2409]`; Xiaomi uses service data. Both decode via a `protocol.cpp` helper.
+The scanner identifies its advertisements by a known key in `manufacturerData` or `serviceData`. SwitchBot uses `manufacturerData[2409]` (a new device might instead match on `serviceData`). It decodes via a `protocol.cpp` helper.
 
 Each scanner maintains an internal `sensors` map that persists across ticks. `snapshot()` returns a copy of all known sensors, not just ones seen this tick. When `updateFooState()` finds a MAC absent from the snapshot it means "never seen by the scanner" or "scanner lost it," not "no advert arrived this tick."
 
@@ -76,7 +78,7 @@ The scanner stores `lastSeenEpochS = 0` when `platform::hasValidTime()` is false
 
 ### Config (config.h)
 
-Each device type gets a config struct. SwitchBot has `SwitchbotConfig` (with a `sensors` vector of `SwitchbotSensorConfig { mac, name, shortName, addressType }`). Xiaomi has `XiaomiConfig` (with `updateIntervalMinutes` and a `sensors` vector). C++ struct fields use camelCase (`shortName`); the corresponding JSON keys use snake_case (`short_name`).
+Each device type gets a config struct. SwitchBot has `SwitchbotConfig` (with a `sensors` vector of `SwitchbotSensorConfig { mac, name, shortName, addressType }`). A device that needs its own update interval would also carry an `updateIntervalMinutes` field. C++ struct fields use camelCase (`shortName`); the corresponding JSON keys use snake_case (`short_name`).
 
 The top-level `Config` struct holds one instance of each device config. `config.json` is the source; `parseConfigText()` (in `config.cpp`) deserializes it.
 
@@ -99,12 +101,12 @@ struct FooSensorState {
 
 This function is called from `tick()` when the timer fires (`areFooDue()`). There are two timing models in use; choose one for a new device:
 
-- **Continuous with fallback (SwitchBot):** Update every tick when new BLE data has arrived; `nextSensorsDueEpochS` is a fallback to force a refresh even when no new adverts arrive.
-- **Interval with early flush (Xiaomi):** Update on `nextXiaomiDueEpochS` expiry, but also flush early once a complete reading set has been buffered. Use this when a device sends partial measurements across separate advertisements and you want to aggregate them before sending.
+- **Continuous with fallback (SwitchBot):** Update every tick when new BLE data has arrived; `nextSensorsDueEpochS` is a fallback to force a refresh even when no new adverts arrive. This is the only model currently in use.
+- **Interval with early flush (not currently used):** Update on a device-specific `nextFooDueEpochS` expiry, but also flush early once a complete reading set has been buffered. Use this when a device sends partial measurements across separate advertisements and you want to aggregate them before sending.
 
 ### Timing (timing.h)
 
-`TimingState` holds the timers used by each update model (e.g. `nextSensorsDueEpochS` shared by SwitchBot, `nextXiaomiDueEpochS` for Xiaomi). A new device that needs its own interval adds a `nextFooDueEpochS` field. `markFooUpdated()` resets it to `now + intervalSeconds`. `computeSleepMs()` returns the minimum time until any timer fires, which is how long `tick()` sleeps before the next iteration.
+`TimingState` holds the timers used by each update model (e.g. `nextSensorsDueEpochS` used by SwitchBot). A new device that needs its own interval adds a `nextFooDueEpochS` field. `markFooUpdated()` resets it to `now + intervalSeconds`. `computeSleepMs()` returns the minimum time until any timer fires, which is how long `tick()` sleeps before the next iteration.
 
 ---
 
@@ -114,7 +116,7 @@ This function is called from `tick()` when the timer fires (`areFooDue()`). Ther
 
 `api::State` holds `lastSent` (a `vector<FooReading>`) parallel to `state.fooSensors`. `initState()` initializes these vectors to the same length as the sensor lists.
 
-`shouldSendFoo()` is implemented manually per device type (e.g. `shouldSendSwitchbot()`, `shouldSendXiaomi()`) in `api/state.cpp`. It compares `current` against `lastSent` using two conditions:
+`shouldSendFoo()` is implemented manually per device type (e.g. `shouldSendSwitchbot()`) in `api/state.cpp`. It compares `current` against `lastSent` using two conditions:
 
 1. **Heartbeat:** if `current.lastSeenEpochS - lastSent.lastSeenEpochS >= heartbeatMinutes * 60`, send regardless of value change.
 2. **Delta threshold:** if any measured field changed by at least its configured delta (e.g. `temperatureDeltaC = 0.3`, `humidityDeltaPct = 2`), send.
@@ -124,9 +126,9 @@ Both conditions are OR'd. The thresholds come from `SensorWritePolicyConfig` in 
 Note: `equalsForApi()` on the reading struct exists and is tested, but it does not drive `shouldSendFoo()`. The send policy does its own per-field delta comparisons directly.
 
 New devices must choose a payload completeness model:
-- **Complete-only (SwitchBot):** `makeFooPayload()` returns `nullopt` if any required field is missing. Nothing is sent until a full reading is available.
-- **Partial allowed (Xiaomi):** Any non-null subset of fields is a valid payload.
-- **Pending aggregation window (Xiaomi):** Because Xiaomi advertises each measurement (temperature, moisture, lux, conductivity) in separate BLE frames, the application buffers for up to `kXiaomiPendingWindowSeconds` (60 s) waiting for a complete set before flushing. A flush is triggered earlier if all fields arrive before the timeout. A device that delivers complete readings in a single advertisement does not need this.
+- **Complete-only (SwitchBot):** `makeFooPayload()` returns `nullopt` if any required field is missing. Nothing is sent until a full reading is available. This is the only model currently implemented.
+- **Partial allowed (not currently used):** Any non-null subset of fields is a valid payload.
+- **Pending aggregation window (not currently used):** If a device advertises each measurement in separate BLE frames, buffer until a complete set arrives (or a timeout) before flushing. The previous Xiaomi implementation did this; that code was removed and would need to be reintroduced (a pending-state struct in `api/state.h` plus the buffering loop in `api_sync.cpp`) for a future multi-frame device.
 
 ### syncApiState (api_sync.cpp)
 
@@ -164,28 +166,24 @@ Sensor records are stored on disk as compact binary rather than full JSON to red
 **Current encoding policy:**
 
 - SwitchBot: always compact (`encodeCompact(SwitchbotPayload)`).
-- Xiaomi single-field (timeout flush with partial data): compact (`encodeCompact(XiaomiPayload)` requires exactly one measurement field). Use `isSingleFieldXiaomiPayload()` before calling `encodeCompact` -- an empty return means encode error, not multi-field.
-- Xiaomi multi-field (normal flush with complete data): JSON fallback via `send()`.
+- A future multi-field device with partial readings could fall back to JSON via `send()`; that path (`submitPost`) still exists but no current device uses it.
 
 **Binary format** (all multi-byte integers little-endian):
 
 ```
 [1]  version = 1
-[1]  type: 0x01=switchbot  0x02=xiaomi_temp  0x03=xiaomi_moisture
-          0x04=xiaomi_lux  0x05=xiaomi_conductivity
+[1]  type: 0x01=switchbot
 [6]  mac: raw 6 bytes
 [4]  epoch_s: uint32
 [1]  name_len: uint8
 [N]  name: UTF-8, no null terminator
 [fields per type:]
   switchbot (0x01):     [2] temp_x10 int16  [1] humidity_pct uint8
-  xiaomi_temp (0x02):   [2] temp_x10 int16
-  xiaomi_moisture(0x03):[1] moisture_pct uint8
-  xiaomi_lux (0x04):    [4] lux uint32
-  xiaomi_conductivity(0x05): [2] conductivity uint16
 ```
 
-Encode returns an empty vector on any error (bad MAC, name > 255, out-of-range value, non-finite temperature). Range checks: `epochS` in `[0, UINT32_MAX]`, `temp_x10` in `[INT16_MIN, INT16_MAX]`, `lightLux >= 0`, `conductivityUsCm` in `[0, UINT16_MAX]`.
+A new device type claims the next free type byte (`0x02`, ...) and adds its own field layout. The decode side (`expandCompact`) switches on the type byte; unknown types return false, so a record whose type was removed in a firmware update is dropped at drain time rather than crashing.
+
+Encode returns an empty vector on any error (bad MAC, name > 255, out-of-range value, non-finite temperature). Range checks: `epochS` in `[0, UINT32_MAX]`, `temp_x10` in `[INT16_MIN, INT16_MAX]`.
 
 `expandCompact` matches the `ExpandBodyCallback` signature and reconstructs JSON using the same `toJson()` path. It is registered on `pqueue::http::Config::expandBody` in `OutboxClientImpl::makeHttpConfig()`.
 
@@ -197,7 +195,7 @@ Encode returns an empty vector on any error (bad MAC, name > 255, out-of-range v
 
 ## Config JSON parsing (src/config.cpp)
 
-`parseConfigText()` uses ArduinoJson (`StaticJsonDocument<4096>`) to deserialize `config.json`. Preferred new-code pattern: read and validate into locals, then assign to `config.*` only after all validation passes. Existing SwitchBot/Xiaomi parsing still partially mutates sensor vectors during parsing; do not copy that pattern for new device code.
+`parseConfigText()` uses ArduinoJson (`StaticJsonDocument<4096>`) to deserialize `config.json`. Preferred new-code pattern: read and validate into locals, then assign to `config.*` only after all validation passes. The existing SwitchBot parsing still partially mutates sensor vectors during parsing; do not copy that pattern for new device code.
 
 The pattern for a new device section:
 
@@ -244,7 +242,7 @@ config.foo.sensors = std::move(parsedFooSensors);
 
 The write-at-end pattern is important: all fields are read into local variables first, then assigned to `config.*` together after all validation succeeds. Do not write to `config` before returning false.
 
-Note: the existing SwitchBot and Xiaomi parsers still use the older pattern of calling `config.foo.sensors.clear()` and `push_back()` directly inside the loop. That means a parse failure leaves `config.foo.sensors` partially mutated. It is safe in practice because the function returns `false` on failure and the caller discards the config, but new device parsers should follow the local-vector pattern shown above.
+Note: the existing SwitchBot parser still uses the older pattern of calling `config.switchbot.sensors.clear()` and `push_back()` directly inside the loop. That means a parse failure leaves `config.switchbot.sensors` partially mutated. It is safe in practice because the function returns `false` on failure and the caller discards the config, but new device parsers should follow the local-vector pattern shown above.
 
 `normalizeMac()` is a file-scope helper that strips separators, uppercases, and checks for exactly 12 hex digits. Always run MAC strings through it.
 
@@ -289,13 +287,13 @@ def create_foo_reading(reading: foo.ReadingIn, db: Session = Depends(get_db)):
 
 Each device module defines a `SENSOR = SensorSpec(...)` instance with:
 
-- `db_sensor_type`: integer constant from `models.py` (e.g. `SWITCHBOT_TYPE = 1`, `XIAOMI_TYPE = 2`).
+- `db_sensor_type`: integer constant from `models.py` (e.g. `SWITCHBOT_TYPE = 1`).
 - `reading_model`: SQLAlchemy model class.
 - `reading_out`: Pydantic response model.
 - `unique_constraint_name`: name of the `(mac, timestamp)` unique constraint on the readings table.
 - `data_fields`: tuple of `DataField` (column, getter, optional hard/soft ranges). Hard-range violations are rejected with 422; soft-range violations produce warnings in the response.
 
-`ReadingIn` (Pydantic, also in the device module) is the inbound wire format. SwitchBot requires temperature and humidity. Xiaomi has all fields optional but requires at least one to be non-null. Hard-range validation runs in the `@model_validator`.
+`ReadingIn` (Pydantic, also in the device module) is the inbound wire format. SwitchBot requires temperature and humidity. A partial-reading device would make all fields optional but require at least one to be non-null. Hard-range validation runs in the `@model_validator`.
 
 ### Database models (server/app/models.py)
 
@@ -335,7 +333,7 @@ The `type` column uses a `CheckConstraint` listing all valid type integers. A ne
 4. `tests/api_payloads.cpp` -- extend with `makeFooPayload` cases.
 5. `tests/api_sensor_write_policy.cpp` -- extend with `shouldSendFoo` cases.
 6. `tests/api_sync.cpp` -- extend with the Foo sensor loop behavior.
-7. `tests/foo_api_integration.cpp` -- end-to-end path with mock transport (model on `xiaomi_api_integration.cpp`).
+7. `tests/foo_api_integration.cpp` -- end-to-end path with mock transport (model on `switchbot_api_integration.cpp`).
 8. Root `Makefile` -- add `tests/foo_*.cpp` to `TEST_SRC` (same reason as `COMMON_SRC` above).
 9. `test/test_foo_*/` -- device firmware test (Unity/PlatformIO) only if the device has hardware-specific behavior not exercisable on the POSIX backend (e.g. a GATT connection sequence). Pure advertisement parsing does not need one.
 
@@ -378,7 +376,7 @@ For a new device, add at minimum:
 - `tests/api_sensor_write_policy.cpp` -- extend with `shouldSendFoo` cases: first send, heartbeat, delta thresholds.
 - `tests/api_sync.cpp` -- extend with the Foo sensor loop: skips invalid timestamp, updates lastSent on Queued, resets lastSent on Conflict.
 
-Integration test file `tests/foo_api_integration.cpp` (modelled on `xiaomi_api_integration.cpp` / `switchbot_api_integration.cpp`) exercises the full firmware-side path end-to-end using an injected mock transport: BLE data in, HTTP POST out, response handled.
+Integration test file `tests/foo_api_integration.cpp` (modelled on `switchbot_api_integration.cpp`) exercises the full firmware-side path end-to-end using an injected mock transport: BLE data in, HTTP POST out, response handled.
 
 ### Device firmware tests (test/)
 
@@ -388,7 +386,7 @@ Integration test file `tests/foo_api_integration.cpp` (modelled on `xiaomi_api_i
 
 ## Key invariants
 
-- Sensor arrays in `State`, `api::State` (lastSent, pending), and `Config.foo.sensors` are always parallel -- same length, same index meaning the same physical sensor. Resizing any one requires resizing all.
+- Sensor arrays in `State`, `api::State` (lastSent), and `Config.foo.sensors` are always parallel -- same length, same index meaning the same physical sensor. Resizing any one requires resizing all.
 - `lastSeenEpochS = 0` means "not seen since boot" or "seen before time was valid". The API layer treats it as an invalid timestamp and skips sending. Never send a reading with epoch 0 to the server.
 - `lastSent` is updated on `Queued` (not just `Sent`) because a queued reading is durably stored in pqueue and will be delivered. Updating on Queued prevents duplicate sends when the queue drains.
 - Conflict response from the server is HTTP 200 with `result: "conflict"` -- the server already has a reading at that timestamp with different values. The correct firmware response is to reset `lastSent` to empty so the next tick re-evaluates whether to send.

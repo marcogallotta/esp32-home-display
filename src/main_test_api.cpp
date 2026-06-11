@@ -19,8 +19,6 @@ struct Options {
     int count = 0;              // 0 = forever
     int intervalMs = 1000;
     bool drainOnly = false;
-    bool switchbotOnly = false;
-    bool xiaomiOnly = false;
     std::string baseUrl;
     std::string apiKey;
 };
@@ -33,8 +31,7 @@ void printUsage(const char* argv0) {
         << "  --count N          Send N simulated requests, then exit. Default: forever\n"
         << "  --interval-ms N    Delay between cycles. Default: 1000\n"
         << "  --drain-only       Do not create new requests; only drain existing queue\n"
-        << "  --switchbot-only   Send only SwitchBot payloads\n"
-        << "  --xiaomi-only      Send only Xiaomi payloads\n"
+        << "  --switchbot-only   No-op; SwitchBot is the only device type (kept for compatibility)\n"
         << "  --base-url URL     Override config.api.baseUrl\n"
         << "  --api-key KEY      Override config.api.apiKey\n";
 }
@@ -69,9 +66,7 @@ bool parseArgs(int argc, char** argv, Options& options) {
         } else if (arg == "--drain-only") {
             options.drainOnly = true;
         } else if (arg == "--switchbot-only") {
-            options.switchbotOnly = true;
-        } else if (arg == "--xiaomi-only") {
-            options.xiaomiOnly = true;
+            // No-op: SwitchBot is the only device type. Kept so existing scripts don't break.
         } else if (arg == "--base-url" && i + 1 < argc) {
             options.baseUrl = argv[++i];
         } else if (arg == "--api-key" && i + 1 < argc) {
@@ -81,7 +76,7 @@ bool parseArgs(int argc, char** argv, Options& options) {
         }
     }
 
-    return !(options.switchbotOnly && options.xiaomiOnly) && options.intervalMs > 0;
+    return options.intervalMs > 0;
 }
 
 SensorIdentity switchbotIdentity(const Config& config) {
@@ -92,28 +87,10 @@ SensorIdentity switchbotIdentity(const Config& config) {
     return SensorIdentity{"AA:BB:CC:DD:EE:01", "API Harness SwitchBot", "harness-sb"};
 }
 
-SensorIdentity xiaomiIdentity(const Config& config) {
-    if (!config.xiaomi.sensors.empty()) {
-        const auto& s = config.xiaomi.sensors.front();
-        return SensorIdentity{s.mac, s.name, s.shortName};
-    }
-    return SensorIdentity{"AA:BB:CC:DD:EE:02", "API Harness Xiaomi", "harness-xm"};
-}
-
 SwitchbotReading makeSwitchbotReading(std::int64_t epochS, std::uint64_t seq) {
     SwitchbotReading reading;
     reading.temperatureC = 20.0f + static_cast<float>(seq % 10) * 0.1f;
     reading.humidityPct = static_cast<std::uint8_t>(40 + (seq % 10));
-    reading.lastSeenEpochS = epochS;
-    return reading;
-}
-
-XiaomiReading makeXiaomiReading(std::int64_t epochS, std::uint64_t seq) {
-    XiaomiReading reading;
-    reading.temperatureC = 19.0f + static_cast<float>(seq % 10) * 0.1f;
-    reading.moisturePct = static_cast<std::uint8_t>(10 + (seq % 5));
-    reading.lux = 1000 + static_cast<int>((seq % 20) * 100);
-    reading.conductivityUsCm = 80 + static_cast<int>(seq % 10);
     reading.lastSeenEpochS = epochS;
     return reading;
 }
@@ -138,28 +115,6 @@ auto postSwitchbotCompat(
     long
 ) -> decltype(client.postSwitchbotReading(identity, reading)) {
     return client.postSwitchbotReading(identity, reading);
-}
-
-template <typename ClientT>
-auto postXiaomiCompat(
-    ClientT& client,
-    const SensorIdentity& identity,
-    const XiaomiReading& reading,
-    std::uint64_t nowMs,
-    int
-) -> decltype(client.postXiaomiReading(identity, reading, nowMs)) {
-    return client.postXiaomiReading(identity, reading, nowMs);
-}
-
-template <typename ClientT>
-auto postXiaomiCompat(
-    ClientT& client,
-    const SensorIdentity& identity,
-    const XiaomiReading& reading,
-    std::uint64_t,
-    long
-) -> decltype(client.postXiaomiReading(identity, reading)) {
-    return client.postXiaomiReading(identity, reading);
 }
 
 const char* writeStatusName(api::WriteStatus status) {
@@ -212,16 +167,6 @@ void logDrain(const api::OutboxDrainResult& result) {
 }
 
 
-bool shouldSendXiaomi(const Options& options, std::uint64_t seq) {
-    if (options.switchbotOnly) {
-        return false;
-    }
-    if (options.xiaomiOnly) {
-        return true;
-    }
-    return seq % 5 == 4;
-}
-
 void logTimeInvalid(std::uint64_t nowMs) {
     logLine(
         LogLevel::Error,
@@ -257,7 +202,6 @@ int main(int argc, char** argv) {
     api::OutboxClient outboxClient(config);
 
     const SensorIdentity sb = switchbotIdentity(config);
-    const SensorIdentity xm = xiaomiIdentity(config);
 
     bool hasValidTime = platform::hasValidTime();
 
@@ -287,25 +231,14 @@ int main(int argc, char** argv) {
             } else {
                 const std::time_t epoch = std::time(nullptr);
 
-                if (shouldSendXiaomi(options, seq)) {
-                    const auto result = postXiaomiCompat(
-                        outboxClient,
-                        xm,
-                        makeXiaomiReading(static_cast<std::int64_t>(epoch), seq),
-                        nowMs,
-                        0
-                    );
-                    logWrite("Xiaomi", result);
-                } else {
-                    const auto result = postSwitchbotCompat(
-                        outboxClient,
-                        sb,
-                        makeSwitchbotReading(static_cast<std::int64_t>(epoch), seq),
-                        nowMs,
-                        0
-                    );
-                    logWrite("SwitchBot", result);
-                }
+                const auto result = postSwitchbotCompat(
+                    outboxClient,
+                    sb,
+                    makeSwitchbotReading(static_cast<std::int64_t>(epoch), seq),
+                    nowMs,
+                    0
+                );
+                logWrite("SwitchBot", result);
             }
         }
 

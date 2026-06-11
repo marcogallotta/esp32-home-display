@@ -40,10 +40,6 @@ std::string switchbotLabel(const SwitchbotSensorState& row) {
     return row.identity.name;
 }
 
-std::string xiaomiLabel(const XiaomiSensorState& row) {
-    return row.identity.name;
-}
-
 void logSwitchbotSummary(const State& state, std::time_t now) {
     int missing = 0;
     std::string msg = "SwitchBot readings:";
@@ -66,55 +62,6 @@ void logSwitchbotSummary(const State& state, std::time_t now) {
             msg += "/?m";
         }
 
-
-        msg += ";";
-    }
-
-    if (missing > 0) {
-        msg += " missing " + std::to_string(missing);
-    }
-
-    logLine(LogLevel::Info, msg);
-}
-
-void logXiaomiSummary(const State& state, std::time_t now) {
-    int missing = 0;
-    std::string msg = "Xiaomi readings:";
-
-    for (const auto& row : state.xiaomiSensors) {
-        const std::string label = xiaomiLabel(row);
-
-        if (!row.reading.hasAnyValue()) {
-            missing += 1;
-            continue;
-        }
-
-        msg += " " + label + "=";
-
-        bool first = true;
-        auto appendPart = [&](const std::string& part) {
-            if (!first) {
-                msg += "/";
-            }
-            msg += part;
-            first = false;
-        };
-
-        if (row.reading.temperatureC.has_value()) {
-            appendPart(formatFloat1(*row.reading.temperatureC) + "C");
-        }
-        if (row.reading.moisturePct.has_value()) {
-            appendPart("moisture " + std::to_string(static_cast<int>(*row.reading.moisturePct)) + "%");
-        }
-        if (row.reading.lux.has_value()) {
-            appendPart("lux " + std::to_string(*row.reading.lux));
-        }
-        if (row.reading.conductivityUsCm.has_value()) {
-            appendPart("cond " + std::to_string(*row.reading.conductivityUsCm));
-        }
-        if (row.reading.lastSeenEpochS.has_value()) {
-            appendPart(std::to_string((now - *row.reading.lastSeenEpochS) / 60) + "m");
-        }
 
         msg += ";";
     }
@@ -184,44 +131,6 @@ void updateSwitchbotState(
     }
 
     logSwitchbotSummary(state, now);
-}
-
-void updateXiaomiState(
-    const Config& config,
-    const std::time_t now,
-    xiaomi::Scanner& scanner,
-    State& state
-) {
-    const auto sensors = scanner.snapshot();
-
-    for (std::size_t i = 0; i < state.xiaomiSensors.size(); ++i) {
-        const auto& sensorConfig = config.xiaomi.sensors[i];
-        auto& row = state.xiaomiSensors[i];
-
-        row.identity.mac = sensorConfig.mac;
-        row.identity.name = sensorConfig.name;
-        row.identity.shortName = sensorConfig.shortName;
-
-        const auto it = sensors.find(sensorConfig.mac);
-        if (it == sensors.end()) {
-            row.reading = XiaomiReading{};
-            continue;
-        }
-
-        const auto& reading = it->second;
-
-        row.reading.temperatureC =
-            reading.hasTemperature ? std::optional<float>(reading.temperatureC) : std::nullopt;
-        row.reading.moisturePct =
-            reading.hasMoisture ? std::optional<std::uint8_t>(reading.moisturePct) : std::nullopt;
-        row.reading.lux =
-            reading.hasLux ? std::optional<int>(reading.lux) : std::nullopt;
-        row.reading.conductivityUsCm =
-            reading.hasConductivity ? std::optional<int>(reading.conductivityUsCm) : std::nullopt;
-        row.reading.lastSeenEpochS = validEpochOrNull(reading.lastSeenEpochS);
-    }
-
-    logXiaomiSummary(state, now);
 }
 
 bool updateForecastState(const Config& config, State& state) {

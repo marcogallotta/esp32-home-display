@@ -22,17 +22,3 @@ public:
     bool equalsForDisplay(const SwitchbotReading& other) const;
     bool equalsForApi(const SwitchbotReading& other) const;
 };
-
-class XiaomiReading {
-public:
-    std::optional<float> temperatureC;
-    std::optional<std::uint8_t> moisturePct;
-    std::optional<int> lux;
-    std::optional<int> conductivityUsCm;
-    std::optional<std::int64_t> lastSeenEpochS;
-
-    bool hasAnyValue() const;
-
-    bool equalsForDisplay(const XiaomiReading& other) const;
-    bool equalsForApi(const XiaomiReading& other) const;
-};

@@ -26,16 +26,6 @@ SwitchbotReading completeSwitchbotReading() {
     return reading;
 }
 
-XiaomiReading completeXiaomiReading() {
-    XiaomiReading reading;
-    reading.temperatureC = 18.25f;
-    reading.moisturePct = static_cast<std::uint8_t>(42);
-    reading.lux = 1234;
-    reading.conductivityUsCm = 567;
-    reading.lastSeenEpochS = 1710000000;
-    return reading;
-}
-
 StaticJsonDocument<512> parseJson(const std::string& text) {
     StaticJsonDocument<512> doc;
     const DeserializationError err = deserializeJson(doc, text);
@@ -93,104 +83,6 @@ TEST_CASE("switchbot payload is rejected unless temperature humidity and timesta
     }
 }
 
-TEST_CASE("xiaomi combined payload includes only present reading fields") {
-    XiaomiReading reading;
-    reading.temperatureC = 18.25f;
-    reading.lux = 1234;
-    reading.lastSeenEpochS = 1710000000;
-
-    const auto payload = api::makeXiaomiPayload(identity(), reading);
-    REQUIRE(payload.has_value());
-
-    const auto doc = parseJson(api::toJson(*payload));
-
-    checkCommonPayloadFields(doc, "xiaomi");
-    CHECK_EQ(doc["temperature_c"].as<float>(), doctest::Approx(18.25f));
-    CHECK_EQ(doc["light_lux"].as<int>(), 1234);
-    CHECK_FALSE(hasKey(doc, "moisture_pct"));
-    CHECK_FALSE(hasKey(doc, "conductivity_us_cm"));
-}
-
-TEST_CASE("xiaomi combined payload is rejected without timestamp or reading fields") {
-    SUBCASE("missing timestamp") {
-        auto reading = completeXiaomiReading();
-        reading.lastSeenEpochS = std::nullopt;
-        CHECK_FALSE(api::makeXiaomiPayload(identity(), reading).has_value());
-    }
-
-    SUBCASE("non-positive timestamp") {
-        auto reading = completeXiaomiReading();
-        reading.lastSeenEpochS = 0;
-        CHECK_FALSE(api::makeXiaomiPayload(identity(), reading).has_value());
-    }
-
-    SUBCASE("no reading fields") {
-        XiaomiReading reading;
-        reading.lastSeenEpochS = 1710000000;
-        CHECK_FALSE(api::makeXiaomiPayload(identity(), reading).has_value());
-    }
-}
-
-TEST_CASE("xiaomi single-field payload helpers include exactly the requested reading field") {
-    SUBCASE("temperature") {
-        const auto payload = api::makeXiaomiTemperaturePayload(identity(), completeXiaomiReading());
-        REQUIRE(payload.has_value());
-        const auto doc = parseJson(api::toJson(*payload));
-
-        checkCommonPayloadFields(doc, "xiaomi");
-        CHECK_EQ(doc["temperature_c"].as<float>(), doctest::Approx(18.25f));
-        CHECK_FALSE(hasKey(doc, "moisture_pct"));
-        CHECK_FALSE(hasKey(doc, "light_lux"));
-        CHECK_FALSE(hasKey(doc, "conductivity_us_cm"));
-    }
-
-    SUBCASE("moisture") {
-        const auto payload = api::makeXiaomiMoisturePayload(identity(), completeXiaomiReading());
-        REQUIRE(payload.has_value());
-        const auto doc = parseJson(api::toJson(*payload));
-
-        checkCommonPayloadFields(doc, "xiaomi");
-        CHECK_EQ(doc["moisture_pct"].as<int>(), 42);
-        CHECK_FALSE(hasKey(doc, "temperature_c"));
-        CHECK_FALSE(hasKey(doc, "light_lux"));
-        CHECK_FALSE(hasKey(doc, "conductivity_us_cm"));
-    }
-
-    SUBCASE("lux") {
-        const auto payload = api::makeXiaomiLuxPayload(identity(), completeXiaomiReading());
-        REQUIRE(payload.has_value());
-        const auto doc = parseJson(api::toJson(*payload));
-
-        checkCommonPayloadFields(doc, "xiaomi");
-        CHECK_EQ(doc["light_lux"].as<int>(), 1234);
-        CHECK_FALSE(hasKey(doc, "temperature_c"));
-        CHECK_FALSE(hasKey(doc, "moisture_pct"));
-        CHECK_FALSE(hasKey(doc, "conductivity_us_cm"));
-    }
-
-    SUBCASE("conductivity") {
-        const auto payload = api::makeXiaomiConductivityPayload(identity(), completeXiaomiReading());
-        REQUIRE(payload.has_value());
-        const auto doc = parseJson(api::toJson(*payload));
-
-        checkCommonPayloadFields(doc, "xiaomi");
-        CHECK_EQ(doc["conductivity_us_cm"].as<int>(), 567);
-        CHECK_FALSE(hasKey(doc, "temperature_c"));
-        CHECK_FALSE(hasKey(doc, "moisture_pct"));
-        CHECK_FALSE(hasKey(doc, "light_lux"));
-    }
-}
-
-TEST_CASE("xiaomi single-field payload helpers reject missing requested field") {
-    XiaomiReading reading;
-    reading.lastSeenEpochS = 1710000000;
-
-    CHECK_FALSE(api::makeXiaomiTemperaturePayload(identity(), reading).has_value());
-    CHECK_FALSE(api::makeXiaomiMoisturePayload(identity(), reading).has_value());
-    CHECK_FALSE(api::makeXiaomiLuxPayload(identity(), reading).has_value());
-    CHECK_FALSE(api::makeXiaomiConductivityPayload(identity(), reading).has_value());
-}
-
 namespace {
 
 std::string expandBytes(const std::vector<std::uint8_t>& bytes) {
@@ -214,67 +106,6 @@ TEST_CASE("compact encode/expand round-trip: switchbot") {
     checkCommonPayloadFields(doc, "switchbot");
     CHECK_EQ(doc["temperature_c"].as<float>(), doctest::Approx(21.5f));
     CHECK_EQ(doc["humidity_pct"].as<int>(), 56);
-}
-
-TEST_CASE("compact encode/expand round-trip: xiaomi temperature") {
-    XiaomiReading reading;
-    reading.temperatureC = 23.4f;
-    reading.lastSeenEpochS = 1710000000;
-    const auto payload = api::makeXiaomiTemperaturePayload(identity(), reading);
-    REQUIRE(payload.has_value());
-
-    const auto compact = api::encodeCompact(*payload);
-    REQUIRE_FALSE(compact.empty());
-
-    const auto doc = parseJson(expandBytes(compact));
-    checkCommonPayloadFields(doc, "xiaomi");
-    CHECK_EQ(doc["temperature_c"].as<float>(), doctest::Approx(23.4f).epsilon(0.01));
-    CHECK_FALSE(hasKey(doc, "moisture_pct"));
-    CHECK_FALSE(hasKey(doc, "light_lux"));
-    CHECK_FALSE(hasKey(doc, "conductivity_us_cm"));
-}
-
-TEST_CASE("compact encode/expand round-trip: xiaomi moisture") {
-    const auto payload = api::makeXiaomiMoisturePayload(identity(), completeXiaomiReading());
-    REQUIRE(payload.has_value());
-
-    const auto compact = api::encodeCompact(*payload);
-    REQUIRE_FALSE(compact.empty());
-
-    const auto doc = parseJson(expandBytes(compact));
-    checkCommonPayloadFields(doc, "xiaomi");
-    CHECK_EQ(doc["moisture_pct"].as<int>(), 42);
-}
-
-TEST_CASE("compact encode/expand round-trip: xiaomi lux") {
-    const auto payload = api::makeXiaomiLuxPayload(identity(), completeXiaomiReading());
-    REQUIRE(payload.has_value());
-
-    const auto compact = api::encodeCompact(*payload);
-    REQUIRE_FALSE(compact.empty());
-
-    const auto doc = parseJson(expandBytes(compact));
-    checkCommonPayloadFields(doc, "xiaomi");
-    CHECK_EQ(doc["light_lux"].as<int>(), 1234);
-}
-
-TEST_CASE("compact encode/expand round-trip: xiaomi conductivity") {
-    const auto payload = api::makeXiaomiConductivityPayload(identity(), completeXiaomiReading());
-    REQUIRE(payload.has_value());
-
-    const auto compact = api::encodeCompact(*payload);
-    REQUIRE_FALSE(compact.empty());
-
-    const auto doc = parseJson(expandBytes(compact));
-    checkCommonPayloadFields(doc, "xiaomi");
-    CHECK_EQ(doc["conductivity_us_cm"].as<int>(), 567);
-}
-
-TEST_CASE("compact encode returns empty for multi-field xiaomi payload") {
-    const auto payload = api::makeXiaomiPayload(identity(), completeXiaomiReading());
-    REQUIRE(payload.has_value());
-    CHECK_FALSE(api::isSingleFieldXiaomiPayload(*payload));
-    CHECK(api::encodeCompact(*payload).empty());
 }
 
 TEST_CASE("compact encode returns empty on invalid inputs") {
@@ -325,24 +156,6 @@ TEST_CASE("compact encode returns empty on invalid inputs") {
         payload.epochS = 1710000000;
         payload.temperatureC = 4000.0f;
         payload.humidityPct = 50;
-        CHECK(api::encodeCompact(payload).empty());
-    }
-
-    SUBCASE("lux negative") {
-        api::XiaomiPayload payload;
-        payload.mac = "AA:BB:CC:DD:EE:FF";
-        payload.name = "X";
-        payload.epochS = 1710000000;
-        payload.lightLux = -1;
-        CHECK(api::encodeCompact(payload).empty());
-    }
-
-    SUBCASE("conductivity out of range") {
-        api::XiaomiPayload payload;
-        payload.mac = "AA:BB:CC:DD:EE:FF";
-        payload.name = "X";
-        payload.epochS = 1710000000;
-        payload.conductivityUsCm = 70000;
         CHECK(api::encodeCompact(payload).empty());
     }
 }
