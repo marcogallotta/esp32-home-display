@@ -145,6 +145,15 @@ def test_plant_latest_provisions_missing_sensor(db_session, monkeypatch):
     assert out[0]["sensor_id"] == row.id
 
 
+def test_plant_latest_skips_existing_non_plant_sensor(db_session, monkeypatch):
+    sensor = Sensor(mac=MAC, name="Wrong type", type=SWITCHBOT_TYPE)
+    db_session.add(sensor)
+    db_session.commit()
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
+
+    assert plant_proxy.plant_latest_entries(db_session, _cfg(), None) == []
+
+
 def test_plant_latest_graceful_when_pi_unreachable(db_session, monkeypatch):
     def boom(*args, **kwargs):
         raise httpx.ConnectError("pi down")
@@ -232,6 +241,15 @@ def test_meter_latest_provisions_missing_sensor(db_session, monkeypatch):
     assert row.type == SWITCHBOT_TYPE
     assert row.name == "South"
     assert out[0]["sensor_id"] == row.id
+
+
+def test_meter_latest_skips_existing_non_meter_sensor(db_session, monkeypatch):
+    sensor = Sensor(mac=METER_MAC, name="Wrong type", type=XIAOMI_TYPE)
+    db_session.add(sensor)
+    db_session.commit()
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
+
+    assert plant_proxy.meter_latest_entries(db_session, _cfg(), None) == []
 
 
 def test_meter_latest_graceful_when_pi_unreachable(db_session, monkeypatch):

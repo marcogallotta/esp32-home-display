@@ -105,13 +105,20 @@ def fetch_plant_readings(
     return readings
 
 
-def _ensure_plant_sensor(db: Session, mac: str, name: str) -> Sensor:
+def _ensure_plant_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     """Resolve the plant sensor row, creating it from the Pi's identity if it
     does not exist yet. The Pi is the source of truth for plant sensors now, so
     this is the production path that provisions (and back-fills, e.g. after a DB
     reset) the sensors-table row -- the old Xiaomi ingest used to do this."""
     sensor_row = get_sensor_by_mac(db, mac)
     if sensor_row is not None:
+        if sensor_row.type != XIAOMI_TYPE:
+            logger.warning(
+                "plant monitor returned plant MAC %s but local sensor type is %s",
+                mac,
+                sensor_row.type,
+            )
+            return None
         return sensor_row
 
     sensor_row = Sensor(mac=mac, name=name, type=XIAOMI_TYPE)
@@ -168,6 +175,13 @@ def plant_latest_entries(
 def _ensure_meter_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     sensor_row = get_sensor_by_mac(db, mac)
     if sensor_row is not None:
+        if sensor_row.type != SWITCHBOT_TYPE:
+            logger.warning(
+                "plant monitor returned meter MAC %s but local sensor type is %s",
+                mac,
+                sensor_row.type,
+            )
+            return None
         return sensor_row
     sensor_row = Sensor(mac=mac, name=name, type=SWITCHBOT_TYPE)
     db.add(sensor_row)
