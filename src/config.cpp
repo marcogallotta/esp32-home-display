@@ -56,74 +56,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return false;
     };
 
-    auto readOptionalInt = [&](JsonObject obj, const char* key, int& value, const char* path) {
-        const JsonVariant field = obj[key];
-        if (field.isNull()) {
-            return true;
-        }
-        if (!field.is<int>()) {
-            return fail(std::string(path) + " is not an int");
-        }
-        value = field.as<int>();
-        return true;
-    };
-
-    auto readOptionalFloat = [&](JsonObject obj, const char* key, float& value, const char* path) {
-        const JsonVariant field = obj[key];
-        if (field.isNull()) {
-            return true;
-        }
-        if (!field.is<float>()) {
-            return fail(std::string(path) + " is not a number");
-        }
-        value = field.as<float>();
-        return true;
-    };
-
-    auto readOptionalUint32 = [&](JsonObject obj, const char* key, std::uint32_t& value, const char* path) {
-        const JsonVariant field = obj[key];
-        if (field.isNull()) {
-            return true;
-        }
-        if (!field.is<unsigned int>()) {
-            return fail(std::string(path) + " is not an unsigned int");
-        }
-        value = field.as<std::uint32_t>();
-        return true;
-    };
-
-    auto readOptionalPqueueLogLevel = [&](JsonObject obj, const char* key, api::PqueueLogLevel& value, const char* path) {
-        const JsonVariant field = obj[key];
-        if (field.isNull()) {
-            return true;
-        }
-        if (!field.is<const char*>()) {
-            return fail(std::string(path) + " is not a string");
-        }
-        const std::string raw = field.as<const char*>();
-        if (raw == "debug") {
-            value = api::PqueueLogLevel::Debug;
-            return true;
-        }
-        if (raw == "info") {
-            value = api::PqueueLogLevel::Info;
-            return true;
-        }
-        if (raw == "warning" || raw == "warn") {
-            value = api::PqueueLogLevel::Warning;
-            return true;
-        }
-        if (raw == "error") {
-            value = api::PqueueLogLevel::Error;
-            return true;
-        }
-        if (raw == "none" || raw == "off") {
-            value = api::PqueueLogLevel::None;
-            return true;
-        }
-        return fail(std::string(path) + " must be one of debug, info, warning, error, none");
-    };
-
     const JsonObject forecast = json["forecast"];
     if (forecast.isNull()) {
         return fail("forecast is not an object");
@@ -155,62 +87,9 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
         return fail("api.pem_file is not a string");
     }
 
-    ApiOutboxConfig apiOutboxConfig = config.api.outbox;
-    const JsonObject apiOutbox = api["outbox"].isNull()
-        ? api["buffer"].as<JsonObject>()
-        : api["outbox"].as<JsonObject>();
-    if (!apiOutbox.isNull() &&
-        (!readOptionalInt(apiOutbox, "in_memory", apiOutboxConfig.inMemory, "api.outbox.in_memory") ||
-         !readOptionalUint32(apiOutbox, "disk_reserve_bytes", apiOutboxConfig.diskReserveBytes, "api.outbox.disk_reserve_bytes") ||
-         !readOptionalInt(apiOutbox, "drain_rate_cap", apiOutboxConfig.drainRateCap, "api.outbox.drain_rate_cap") ||
-         !readOptionalInt(apiOutbox, "drain_rate_tick_s", apiOutboxConfig.drainRateTickS, "api.outbox.drain_rate_tick_s") ||
-         !readOptionalUint32(apiOutbox, "retry_delay_ms", apiOutboxConfig.retryDelayMs, "api.outbox.retry_delay_ms") ||
-         !readOptionalPqueueLogLevel(apiOutbox, "pqueue_log_level", apiOutboxConfig.logLevel, "api.outbox.pqueue_log_level") ||
-         !readOptionalInt(apiOutbox, "idle_compact_steps", apiOutboxConfig.idleCompactSteps, "api.outbox.idle_compact_steps") ||
-         !readOptionalUint32(apiOutbox, "compact_bytes_per_step", apiOutboxConfig.compactBytesPerStep, "api.outbox.compact_bytes_per_step"))) {
-        return false;
-    }
-
-    SensorWritePolicyConfig sensorWritePolicyConfig = config.api.sensorWritePolicy;
-    const JsonObject sensorWritePolicy = api["sensor_write_policy"];
-    if (!sensorWritePolicy.isNull() &&
-        (!readOptionalInt(sensorWritePolicy, "heartbeat_minutes", sensorWritePolicyConfig.heartbeatMinutes, "api.sensor_write_policy.heartbeat_minutes") ||
-         !readOptionalFloat(sensorWritePolicy, "temperature_delta_c", sensorWritePolicyConfig.temperatureDeltaC, "api.sensor_write_policy.temperature_delta_c") ||
-         !readOptionalInt(sensorWritePolicy, "humidity_delta_pct", sensorWritePolicyConfig.humidityDeltaPct, "api.sensor_write_policy.humidity_delta_pct"))) {
-        return false;
-    }
-
     const char* apiBaseUrl = api["base_url"].as<const char*>();
     const char* apiKey = api["api_key"].as<const char*>();
     const char* apiPemFile = api["pem_file"].as<const char*>();
-
-    if (apiOutboxConfig.inMemory <= 0) {
-        return fail("api.outbox.in_memory must be > 0");
-    }
-    if (apiOutboxConfig.drainRateCap <= 0) {
-        return fail("api.outbox.drain_rate_cap must be > 0");
-    }
-    if (apiOutboxConfig.drainRateTickS <= 0) {
-        return fail("api.outbox.drain_rate_tick_s must be > 0");
-    }
-    if (apiOutboxConfig.retryDelayMs == 0) {
-        return fail("api.outbox.retry_delay_ms must be > 0");
-    }
-    if (apiOutboxConfig.idleCompactSteps < 0) {
-        return fail("api.outbox.idle_compact_steps must be >= 0");
-    }
-    if (apiOutboxConfig.compactBytesPerStep == 0) {
-        return fail("api.outbox.compact_bytes_per_step must be > 0");
-    }
-    if (sensorWritePolicyConfig.heartbeatMinutes <= 0) {
-        return fail("api.sensor_write_policy.heartbeat_minutes must be > 0");
-    }
-    if (sensorWritePolicyConfig.temperatureDeltaC <= 0.0f) {
-        return fail("api.sensor_write_policy.temperature_delta_c must be > 0");
-    }
-    if (sensorWritePolicyConfig.humidityDeltaPct <= 0) {
-        return fail("api.sensor_write_policy.humidity_delta_pct must be > 0");
-    }
 
     const JsonObject location = json["location"];
     if (location.isNull()) {
@@ -337,8 +216,6 @@ bool parseConfigText(const std::string& text, Config& config, bool logErrors) {
     config.api.baseUrl = apiBaseUrl;
     config.api.apiKey = apiKey;
     config.api.pemFile = apiPemFile;
-    config.api.outbox = apiOutboxConfig;
-    config.api.sensorWritePolicy = sensorWritePolicyConfig;
 
     config.location.latitude = latitude;
     config.location.longitude = longitude;

@@ -1,10 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <vector>
-
-#include "api/types.h"
 
 struct ForecastConfig {
     std::string openmeteoPemFile;
@@ -12,21 +9,11 @@ struct ForecastConfig {
     int updateIntervalMinutes = 30;
 };
 
-using ApiOutboxConfig = api::OutboxConfig;
-
-struct SensorWritePolicyConfig {
-    int heartbeatMinutes = 60;
-    float temperatureDeltaC = 0.3f;
-    int humidityDeltaPct = 2;
-};
-
 struct ApiConfig {
     std::string baseUrl;
     std::string apiKey;
     std::string pemFile;
     std::string pem;
-    ApiOutboxConfig outbox;
-    SensorWritePolicyConfig sensorWritePolicy;
 };
 
 struct LocationConfig {

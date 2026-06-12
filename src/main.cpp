@@ -1,17 +1,12 @@
 #ifdef ARDUINO
 #include <Arduino.h>
-#include "pqueue/doctor/session.h"
 #endif
 
-#include <algorithm>
 #include <ctime>
 #include <cstdint>
 #include <string>
 #include <utility>
 
-#include "api/outbox_client.h"
-#include "api/state.h"
-#include "api_sync.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
 #include "log.h"
@@ -28,11 +23,6 @@
 #include "update.h"
 
 namespace {
-
-constexpr std::uint64_t kInvalidTimeApiSyncWarnAfterMs = 30ULL * 1000ULL;
-constexpr std::uint64_t kInvalidTimeApiSyncErrorAfterMs = 120ULL * 1000ULL;
-constexpr std::uint64_t kInvalidTimeApiSyncWarnRepeatMs = 60ULL * 1000ULL;
-constexpr std::uint64_t kInvalidTimeApiSyncErrorRepeatMs = 5ULL * 60ULL * 1000ULL;
 
 #ifdef ARDUINO
 constexpr int kMaxVisibleSensorRows = 4;
@@ -54,17 +44,10 @@ struct AppContext {
     State currentState;
     State previousState;
 
-    api::State apiState;
-    api::OutboxClient apiOutboxClient;
-    bool pqueueMoreCompactionLikely = false;
-
     UiState currentUiState;
     bool hasPreviousState = false;
 
-    explicit AppContext(const Config& cfg)
-        : config(cfg),
-          apiOutboxClient(config) {
-    }
+    explicit AppContext(const Config& cfg) : config(cfg) {}
 };
 
 bool validateConfig([[maybe_unused]] const Config& config) {
@@ -82,10 +65,6 @@ void initStateStorage(AppContext& app) {
 
     app.currentState.switchbotSensors.resize(switchbotSensorCount);
     app.previousState.switchbotSensors.resize(switchbotSensorCount);
-
-    api::initState(app.currentState, app.apiState);
-
-    logLine(LogLevel::Info, "API uses pqueue HTTP outbox");
 }
 
 void initPlatform(AppContext& app) {
@@ -265,149 +244,20 @@ void logDirtyRegions(const AppContext& app) {
 }
 
 
-void logInvalidTimeApiSyncSkipped(std::uint64_t nowMs) {
-    if (nowMs >= kInvalidTimeApiSyncErrorAfterMs) {
-        rateLimitedLog(
-            LogLevel::Error,
-            "api_time_not_initialized",
-            "API sync disabled: time still not initialized after 120 seconds",
-            kInvalidTimeApiSyncErrorRepeatMs
-        );
-        return;
-    }
-
-    if (nowMs >= kInvalidTimeApiSyncWarnAfterMs) {
-        rateLimitedLog(
-            LogLevel::Warn,
-            "api_time_not_initialized",
-            "API sync skipped: time not initialized yet",
-            kInvalidTimeApiSyncWarnRepeatMs
-        );
-    }
-}
-
-void syncOutputs(AppContext& app, std::time_t now) {
-    (void)now;
-
-    const std::uint64_t nowMs = platform::millis();
-
-    if (!app.hasValidTime && platform::hasValidTime()) {
-        app.hasValidTime = true;
-    }
-
-    const auto drain = app.apiOutboxClient.drainPending(nowMs);
-
-    const bool followup = app.pqueueMoreCompactionLikely;
-    const bool drained = drain.removedQueuedBytes > 0;
-
-    if (app.config.api.outbox.idleCompactSteps > 0 && (drained || followup)) {
-        const size_t maxSteps = static_cast<size_t>(app.config.api.outbox.idleCompactSteps);
-
-        size_t steps = maxSteps;
-        if (!followup) {
-            const size_t bytes = static_cast<size_t>(drain.removedQueuedBytes);
-            const size_t perStep = static_cast<size_t>(app.config.api.outbox.compactBytesPerStep);
-            steps = std::max<size_t>(1, (bytes + perStep - 1) / perStep);
-            steps = std::min(maxSteps, steps);
-        }
-
-        const auto cr = app.apiOutboxClient.compactIdle(steps);
-        app.pqueueMoreCompactionLikely = cr.status.ok() && cr.moreWorkLikely;
-
-        if (cr.compactions > 0 || !cr.status.ok()) {
-            std::string msg = "pqueue idle compaction:"
-                " budgetSteps=" + std::to_string(steps) +
-                " steps=" + std::to_string(cr.stepsRun) +
-                " compactions=" + std::to_string(cr.compactions) +
-                " noOps=" + std::to_string(cr.noOps) +
-                " removedBytes=" + std::to_string(drain.removedQueuedBytes) +
-                " reclaimed=" + std::to_string(cr.bytesReclaimed) +
-                " deadBefore=" + std::to_string(cr.deadBytesBefore) +
-                " deadRemaining=" + std::to_string(cr.remainingDeadBytes) +
-                " inSegs=" + std::to_string(cr.inputSegments) +
-                " outSegs=" + std::to_string(cr.outputSegments);
-            if (!cr.status.ok()) {
-                msg += " error=";
-                msg += pqueue::statusCodeName(cr.status.code);
-                if (cr.status.backendCode != 0) {
-                    msg += " backend=";
-                    msg += std::to_string(cr.status.backendCode);
-                }
-            }
-            if (cr.moreWorkLikely) {
-                msg += " moreWork=1";
-            }
-            logLine(LogLevel::Info, msg);
-        }
-    }
-
-    if (app.hasValidTime) {
-        syncApiState(app.config, app.currentState, app.apiState, app.apiOutboxClient);
-    } else {
-        logInvalidTimeApiSyncSkipped(nowMs);
-    }
-
+void syncOutputs(AppContext& app) {
     bool doFullDraw = false;
     updateUiDirtyState(app, doFullDraw);
     logDirtyRegions(app);
     renderUi(app.currentState, app.currentUiState, doFullDraw);
 }
 
-#ifdef ARDUINO
-// Accumulates Serial bytes and returns true when "PQUEUE_DOCTOR\n" is seen.
-bool checkDoctorTrigger() {
-    static std::string sBuf;
-    while (Serial.available()) {
-        const char c = static_cast<char>(Serial.read());
-        if (c == '\r') continue;
-        if (c == '\n') {
-            const bool hit = (sBuf == "PQUEUE_DOCTOR");
-            sBuf.clear();
-            if (hit) return true;
-        } else {
-            sBuf += c;
-            if (sBuf.size() > 32) sBuf.clear();
-        }
-    }
-    return false;
-}
-
-void enterDoctorMode() {
-    platform::setDoctorMode(true);
-    pqueue::doctor::runSession();
-    delay(100);
-    ESP.restart();
-}
-#endif
-
-// Poll the serial trigger and enter doctor mode if seen. Called at work-cycle
-// phase boundaries as well as during sleep: without the in-cycle polls the
-// trigger is only seen while sleeping, so a busy device (long history sync,
-// slow network) cannot be entered until it next sleeps. No-op off-device.
-void pollDoctorTrigger() {
-#ifdef ARDUINO
-    if (checkDoctorTrigger()) enterDoctorMode();
-#endif
-}
-
 void sleepUntilNextDue(AppContext& app) {
     const int totalMs = computeSleepMs(std::time(nullptr), app.timing);
     logLine(LogLevel::Debug, "Next update check in " + std::to_string(totalMs / 1000) + " seconds");
-#ifdef ARDUINO
-    int remaining = totalMs;
-    while (remaining > 0) {
-        const int step = std::min(remaining, 100);
-        platform::delayMs(step);
-        remaining -= step;
-        pollDoctorTrigger();
-    }
-#else
     platform::delayMs(totalMs);
-#endif
 }
 
 void tick(AppContext& app) {
-    pollDoctorTrigger();
 #ifdef ARDUINO
     network::platform(app.config.wifi).kickConnect();
 #endif
@@ -417,9 +267,7 @@ void tick(AppContext& app) {
     prepareCurrentState(app.currentState, app.previousState);
 
     updateDomainState(app, now);
-    pollDoctorTrigger();
-    syncOutputs(app, now);
-    pollDoctorTrigger();
+    syncOutputs(app);
     sleepUntilNextDue(app);
 }
 
