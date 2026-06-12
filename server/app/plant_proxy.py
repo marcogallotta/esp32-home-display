@@ -67,6 +67,13 @@ def _map_reading(row: dict[str, Any]) -> PlantReadingOut:
     )
 
 
+def _slug_for_mac(config: Config, mac: str) -> str | None:
+    for s in config.plant_monitor_sensors:
+        if s.mac == mac.upper():
+            return s.slug
+    return None
+
+
 def fetch_plant_readings(
     config: Config,
     mac: str,
@@ -80,6 +87,11 @@ def fetch_plant_readings(
     if start_ts is None or end_ts is None:
         return []
 
+    slug = _slug_for_mac(config, mac)
+    if slug is None:
+        logger.warning("fetch_plant_readings: no slug configured for mac %s; skipping", mac)
+        return []
+
     params: dict[str, Any] = {
         "start_ts": start_ts.isoformat(),
         "end_ts": end_ts.isoformat(),
@@ -87,7 +99,7 @@ def fetch_plant_readings(
     if max_points is not None:
         params["max_points"] = max_points
 
-    rows = _get(config, f"/sensors/flower-care/{mac}/readings", params)
+    rows = _get(config, f"/v2/sensors/{slug}/readings", params)
     readings = [_map_reading(r) for r in rows]
     readings.sort(key=lambda r: r.timestamp, reverse=True)
     return readings
@@ -124,7 +136,8 @@ def plant_latest_entries(
     Pi's identity if missing) for its stable UUID. Degrades gracefully: if the
     Pi is unreachable the dashboard still renders the other sensors."""
     try:
-        rows = _get(config, "/sensors/flower-care/latest")
+        body = _get(config, "/v2/sensors/flower-care/latest")
+        rows = body.get("sensors", []) if isinstance(body, dict) else []
     except httpx.HTTPError as exc:
         logger.warning("plant monitor latest fetch failed: %s", exc)
         return []
@@ -184,7 +197,12 @@ def fetch_meter_readings(
     if max_points is not None:
         params["max_points"] = max_points
 
-    rows = _get(config, f"/sensors/meter/{mac}/readings", params)
+    slug = _slug_for_mac(config, mac)
+    if slug is None:
+        logger.warning("fetch_meter_readings: no slug configured for mac %s; skipping", mac)
+        return []
+
+    rows = _get(config, f"/v2/sensors/{slug}/readings", params)
     readings = [
         sb.ReadingOut(
             timestamp=r["recorded_at"],
@@ -372,11 +390,12 @@ def meter_latest_entries(
     Degrades gracefully: if the Pi is unreachable the dashboard still renders
     the other sensors."""
     try:
-        rows = _get(config, "/sensors/meter/latest")
+        body = _get(config, "/v2/sensors/meter/latest")
     except httpx.HTTPError as exc:
         logger.warning("plant monitor meter latest fetch failed: %s", exc)
         return []
 
+    rows = body.get("sensors", []) if isinstance(body, dict) else []
     out: list[dict[str, Any]] = []
     for row in rows:
         sensor_row = _ensure_meter_sensor(db, row["mac"], row["name"])
