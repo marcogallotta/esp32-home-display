@@ -153,8 +153,10 @@ Bulk result counter semantics (non-obvious):
 
 ## Fetch / query path
 
-`GET /sensors/latest` accepts one optional filter:
-- `sensor_id=<uuid>` -- return only the sensor with that UUID. Unknown UUID returns 200 with `{"sensors": []}`.
+`GET /sensors/latest` proxies the plant-monitoring backend and returns the combined v2 shape:
+`{sensors: [{sensor_id, mac, name, type, recorded_at, reading: {...}, stale}], retry_after_secs}`.
+Accepts one optional filter:
+- `sensor_id=<uuid>` -- return only the sensor with that UUID (repeatable). Unknown UUID returns 200 with `{"sensors": [], "retry_after_secs": N}`.
 
 Filtering is applied inside `fetch_latest_readings` at the DB layer.
 
@@ -319,7 +321,7 @@ If `config.js` is missing, `app.jsx` renders an error card immediately.
 
 1. On mount: `GET /sensors` -> populates sensor list.
 2. On range change or sensor load: `GET /sensors/{id}/readings?start_ts=...&end_ts=...&max_points=N` for each sensor -> `historyBySensorId`.
-3. Every `latestPollMs`: `GET /sensors/latest` -> `sensorModel.mergeLatestIntoRows()` patches `historyBySensorId` in place so charts stay live without a full reload.
+3. Every `latestPollMs`: `GET /sensors/latest` -> `sensorModel.mergeLatestIntoRows()` patches `historyBySensorId` in place so charts stay live without a full reload. Response shape: `{sensors: [{sensor_id, mac, name, type, recorded_at, reading, stale}], retry_after_secs}`.
 4. On chart zoom: re-fetches the zoomed window with adjusted `maxPoints`; result is cached in `zoomCacheRef` so panning within the same zoom window avoids redundant fetches.
 
 `sensorModel.normalizeReadings()` reverses server responses (server returns DESC, charts want ASC).
@@ -380,7 +382,7 @@ If the new type should appear in the dashboard, update the frontend static files
 
 An external process (`tools/run_levoit_ah_controller.py`) runs a control loop that:
 
-1. Fetches the latest SwitchBot sensor reading from `GET /sensors/latest`.
+1. Fetches the latest SwitchBot sensor reading from `GET /sensors/meter/latest`.
 2. Computes the target relative humidity needed to hit a configured absolute humidity setpoint
    (Magnus formula).
 3. Compares against the current device target (fetched via pyvesync) and sends a new target only
@@ -401,7 +403,7 @@ service. No database access; all state is live-fetched each iteration.
 ```
 
 - `switchbot_mac`: MAC of the SwitchBot sensor. Matched against response body of
-  `GET /sensors/latest`; never used as a query parameter.
+  `GET /sensors/meter/latest`; never used as a query parameter.
 - `target_absolute_humidity`: target in g/m³.
 
 App-level defaults (overrideable in `app.json`):

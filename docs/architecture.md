@@ -26,7 +26,7 @@ here only to keep firmware requests aligned; the source of truth is `server/docs
 tick()
   -> updateSwitchbotIfDue()    (every 5 minutes)
      -> updateSwitchbotFromBackend()   [update.cpp]
-     -> GET /sensors/latest  (backend)
+     -> GET /sensors/meter/latest  (backend)
      -> parse JSON response
      -> State::switchbotSensors[]      [state.h]
   -> updateSalahIfDue()
@@ -74,7 +74,7 @@ struct FooSensorState {
 `updateSwitchbotFromBackend(config, now, state)` fires when `areSensorsDue()` is true
 (every 5 minutes). It:
 
-1. Issues `GET /sensors/latest` with the API key header.
+1. Issues `GET /sensors/meter/latest` with the API key header.
 2. Parses the JSON response into a MAC -> reading map.
 3. Iterates `state.switchbotSensors` by index (parallel to `config.switchbot.sensors`),
    copies fields from the map into each row. If the MAC is absent from the response, the
@@ -119,25 +119,28 @@ is what dirty tracking compares.
 
 ### Backend sensor endpoint
 
-`GET /sensors/latest` (requires `x-api-key` header) returns:
+`GET /sensors/meter/latest` (requires `x-api-key` header) returns:
 
 ```json
 {
   "sensors": [
     {
+      "id": "south",
       "mac": "AA:BB:CC:DD:EE:FF",
-      "latest_timestamp": "2024-01-01T12:00:00",
-      "reading": {
-        "temperature_c": 21.5,
-        "humidity_pct": 55
-      }
+      "name": "South",
+      "type": "meter",
+      "recorded_at": "2024-01-01T12:00:00+00:00",
+      "temperature_c": 21.5,
+      "humidity_pct": 55,
+      "stale": false
     }
-  ]
+  ],
+  "retry_after_secs": 900
 }
 ```
 
 The firmware matches entries by MAC against `config.switchbot.sensors`. Unmatched MACs are
-ignored. `latest_timestamp` is parsed as UTC ISO 8601 and stored as `lastSeenEpochS`.
+ignored. `recorded_at` is parsed as UTC ISO 8601 and stored as `lastSeenEpochS`.
 
 ---
 
