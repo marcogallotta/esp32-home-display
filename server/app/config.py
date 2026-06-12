@@ -67,6 +67,13 @@ def _default_rate_limits() -> RateLimitsConfig:
 
 
 @dataclass
+class PlantSensorConfig:
+    mac: str
+    slug: str
+    name: str
+
+
+@dataclass
 class LevoitAhControllerConfig:
     switchbot_mac: str | None = None
     target_absolute_humidity: float | None = None
@@ -106,6 +113,7 @@ class Config:
     vesync_device_cid: str | None = None
     plant_monitor_url: str | None = None
     plant_monitor_api_token: str | None = None
+    plant_monitor_sensors: list[PlantSensorConfig] = field(default_factory=list)
 
 
 def _check_str(errors: list[str], name: str, value: object) -> bool:
@@ -277,6 +285,20 @@ def _parse_levoit_ah_controller(raw: object) -> LevoitAhControllerConfig:
     return LevoitAhControllerConfig(**kwargs)
 
 
+def _parse_plant_sensors(raw: list) -> list[PlantSensorConfig]:
+    sensors = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        mac = item.get("mac")
+        slug = item.get("slug")
+        name = item.get("name", "")
+        if not isinstance(mac, str) or not isinstance(slug, str):
+            continue
+        sensors.append(PlantSensorConfig(mac=mac.upper(), slug=slug, name=name))
+    return sensors
+
+
 _KNOWN_ENVS = {"dev", "test", "prod"}
 
 
@@ -301,8 +323,10 @@ def load_config(config_dir: Path | None = None) -> Config:
     raw_db = data.pop("database", {})
     raw_rl = data.pop("rate_limits", None)
     raw_levoit = data.pop("levoit_ah_controller", None)
+    raw_plant_sensors = data.pop("plant_monitor_sensors", [])
     rate_limits = _parse_rate_limits(raw_rl) if raw_rl is not None else _default_rate_limits()
     levoit_ah_controller = _parse_levoit_ah_controller(raw_levoit)
+    plant_monitor_sensors = _parse_plant_sensors(raw_plant_sensors)
     levoit_server_base_url = os.environ.get("SERVER_BASE_URL")
     if levoit_server_base_url is not None:
         levoit_ah_controller.server_base_url = levoit_server_base_url
@@ -330,6 +354,7 @@ def load_config(config_dir: Path | None = None) -> Config:
         database=db,
         rate_limits=rate_limits,
         levoit_ah_controller=levoit_ah_controller,
+        plant_monitor_sensors=plant_monitor_sensors,
         vesync_username=os.environ.get("VESYNC_USERNAME"),
         vesync_password=os.environ.get("VESYNC_PASSWORD"),
         vesync_device_cid=os.environ.get("VESYNC_DEVICE_CID"),

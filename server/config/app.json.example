@@ -20,5 +20,8 @@
   "levoit_ah_controller": {
     "switchbot_mac": "XX:XX:XX:XX:XX:XX",
     "target_absolute_humidity": 8.0
-  }
+  },
+  "plant_monitor_sensors": [
+    {"mac": "XX:XX:XX:XX:XX:XX", "slug": "my-sensor", "name": "My Sensor"}
+  ]
 }
