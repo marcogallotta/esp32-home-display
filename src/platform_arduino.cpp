@@ -82,13 +82,6 @@ void printLine(const std::string& s) {
     Serial.println(s.c_str());
 }
 
-HeapStats heapStats() {
-    return {
-        heap_caps_get_free_size(MALLOC_CAP_8BIT),
-        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-    };
-}
-
 } // namespace platform
 
 #endif

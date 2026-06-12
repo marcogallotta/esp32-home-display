@@ -12,8 +12,6 @@
 #include "api/outbox_client.h"
 #include "api/state.h"
 #include "api_sync.h"
-#include "ble/event_queue.h"
-#include "ble/scanner.h"
 #include "config.h"
 #include "forecast/openmeteo.h"
 #include "log.h"
@@ -24,10 +22,6 @@
 #include "platform.h"
 #include "salah/types.h"
 #include "state.h"
-#include "switchbot/ble.h"
-#ifdef ARDUINO
-#include "switchbot/history_service.h"
-#endif
 #include "timing.h"
 #include "ui/display.h"
 #include "ui/state.h"
@@ -57,10 +51,6 @@ struct AppContext {
     TimingState timing;
     bool hasValidTime = false;
 
-#ifdef ARDUINO
-    switchbot::history::HistoryServiceState historyServiceState;
-#endif
-
     State currentState;
     State previousState;
 
@@ -71,15 +61,9 @@ struct AppContext {
     UiState currentUiState;
     bool hasPreviousState = false;
 
-    switchbot::Scanner switchbotScanner;
-    ble::EventQueue bleEventQueue;
-    ble::Scanner bleScanner;
-
     explicit AppContext(const Config& cfg)
         : config(cfg),
-          apiOutboxClient(config),
-          switchbotScanner(config.switchbot),
-          bleScanner(bleEventQueue) {
+          apiOutboxClient(config) {
     }
 };
 
@@ -106,7 +90,6 @@ void initStateStorage(AppContext& app) {
 
 void initPlatform(AppContext& app) {
     app.hasValidTime = platform::initTime(app.config);
-    app.bleScanner.start();
 
 #ifdef ARDUINO
     initDisplay();
@@ -423,23 +406,6 @@ void sleepUntilNextDue(AppContext& app) {
 #endif
 }
 
-void logHeapStats(const char* label, const platform::HeapStats& stats) {
-#ifdef ARDUINO
-    const int fragPct = stats.freeBytes > 0
-        ? static_cast<int>(100 - (stats.largestFreeBlock * 100 / stats.freeBytes))
-        : 0;
-    logLine(LogLevel::Debug,
-        std::string("heap ") + label +
-        ": free=" + std::to_string(stats.freeBytes) +
-        " largest=" + std::to_string(stats.largestFreeBlock) +
-        " frag=" + std::to_string(fragPct) + "%"
-    );
-#else
-    (void)label;
-    (void)stats;
-#endif
-}
-
 void tick(AppContext& app) {
     pollDoctorTrigger();
 #ifdef ARDUINO
@@ -450,40 +416,7 @@ void tick(AppContext& app) {
     std::swap(app.previousState, app.currentState);
     prepareCurrentState(app.currentState, app.previousState);
 
-    const platform::HeapStats heapPreBle = platform::heapStats();
-    app.bleScanner.poll();
-
-    int bleEventsProcessed = 0;
-    ble::AdvertisementEvent event;
-    while (app.bleEventQueue.pop(event)) {
-        app.switchbotScanner.handleAdvertisement(event);
-        ++bleEventsProcessed;
-    }
-
-    const platform::HeapStats heapPostBle = platform::heapStats();
-    logHeapStats("pre-BLE", heapPreBle);
-    logHeapStats("post-BLE", heapPostBle);
-#ifdef ARDUINO
-    if (bleEventsProcessed > 0) {
-        logLine(LogLevel::Debug,
-            "BLE drained " + std::to_string(bleEventsProcessed) +
-            " events, largest-block delta=" +
-            std::to_string(static_cast<int>(heapPostBle.largestFreeBlock) -
-                           static_cast<int>(heapPreBle.largestFreeBlock))
-        );
-    }
-#endif
-
     updateDomainState(app, now);
-    pollDoctorTrigger();
-#ifdef ARDUINO
-    switchbot::history::maybeRunStartupHistorySync(
-        app.config,
-        app.bleScanner,
-        app.hasValidTime,
-        app.historyServiceState
-    );
-#endif
     pollDoctorTrigger();
     syncOutputs(app, now);
     pollDoctorTrigger();

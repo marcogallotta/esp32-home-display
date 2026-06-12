@@ -8,13 +8,6 @@
 
 namespace platform {
 
-struct HeapStats {
-    std::size_t freeBytes = 0;
-    std::size_t largestFreeBlock = 0;
-};
-
-HeapStats heapStats();
-
 // Initialize time subsystem (e.g. sync with NTP server on embedded platforms)
 bool initTime(const Config& config, unsigned long timeoutMs = 15000);
 

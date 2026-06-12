@@ -51,7 +51,6 @@ COMMON_SRC := \
 	src/api/payloads.cpp \
 	src/api/state.cpp \
 	src/api_sync.cpp \
-	src/ble/desktop.cpp \
 	src/config.cpp \
 	src/config_desktop.cpp \
 	src/forecast/openmeteo.cpp \
@@ -62,12 +61,6 @@ COMMON_SRC := \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
-	src/switchbot/history_backend.cpp \
-	src/switchbot/history_protocol.cpp \
-	src/switchbot/history_service.cpp \
-	src/switchbot/history_sync.cpp \
-	src/switchbot/protocol.cpp \
-	src/switchbot/ble.cpp \
 	src/timing.cpp \
 	src/update.cpp \
 	src/ui/display.cpp \
@@ -98,11 +91,6 @@ TEST_SRC := \
 	tests/salah_state.cpp \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
-	tests/switchbot_ble.cpp \
-	tests/switchbot_history_backend.cpp \
-	tests/switchbot_history_protocol.cpp \
-	tests/switchbot_history_service.cpp \
-	tests/switchbot_protocol.cpp \
 	tests/network_connect_budget.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
@@ -177,25 +165,13 @@ $(COV_TEST_TARGET): $(COV_TEST_OBJ)
 
 # --- OBJECT BUILD ---
 
-$(OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS_20) -c $< -o $@
-
 $(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(MAIN_TEST_API_OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS_20) -c $< -o $@
-
 $(MAIN_TEST_API_OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(TEST_OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS_20) -c $< -o $@
 
 $(TEST_OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
@@ -204,10 +180,6 @@ $(TEST_OBJ_DIR)/%.o: %.cpp
 $(PQUEUE_PROFILING_OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(COV_OBJ_DIR)/src/ble/desktop.o: src/ble/desktop.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS_20) $(COV_FLAGS) -c $< -o $@
 
 $(COV_OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
