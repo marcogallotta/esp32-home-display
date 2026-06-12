@@ -1,9 +1,9 @@
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -17,8 +17,19 @@ _HOURLY_VARS = "temperature_2m,relative_humidity_2m,dew_point_2m,rain,showers,sn
 _DEFAULT_LAT = 45.737
 _DEFAULT_LON = 7.321
 _CACHE_TTL = 30 * 60  # 30 minutes
+_MAX_QUERY_WINDOW = timedelta(days=370)
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _parse_query_datetime(name: str, value: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{name} must be ISO 8601") from exc
+    if dt.tzinfo is None:
+        raise HTTPException(status_code=400, detail=f"{name} must include timezone")
+    return dt.astimezone(timezone.utc)
 
 
 def _fetch_meteo(url: str, params: dict, source: str) -> list[dict]:
@@ -106,11 +117,18 @@ def _get_openmeteo_weather(start_ts: str, end_ts: str, lat: float, lon: float) -
 
 @router.get("/openmeteo/weather")
 def get_openmeteo_weather(request: Request, start_ts: str, end_ts: str):
+    start_dt = _parse_query_datetime("start_ts", start_ts)
+    end_dt = _parse_query_datetime("end_ts", end_ts)
+    if start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="start_ts must be <= end_ts")
+    if end_dt - start_dt > _MAX_QUERY_WINDOW:
+        raise HTTPException(status_code=400, detail="date range is too large")
+
     ow = request.app.state.config.openmeteo
     lat = ow.get("latitude", _DEFAULT_LAT)
     lon = ow.get("longitude", _DEFAULT_LON)
     try:
-        return _get_openmeteo_weather(start_ts, end_ts, lat, lon)
+        return _get_openmeteo_weather(start_dt.isoformat(), end_dt.isoformat(), lat, lon)
     except Exception:
         logger.exception("Open-Meteo endpoint failed")
         return JSONResponse(status_code=502, content={"detail": "Open-Meteo unavailable"})

@@ -183,3 +183,76 @@ def test_forecast_endpoints_invalid_api_key_does_not_fall_back_to_session(authed
     response = authed_client.get(path, headers={"x-api-key": "wrong-key"})
 
     assert response.status_code == 401
+
+
+def test_openmeteo_rejects_invalid_start_ts(authed_client, monkeypatch):
+    monkeypatch.setattr("app.openmeteo._get_openmeteo_weather", lambda *a, **k: pytest.fail("should not fetch"))
+
+    response = authed_client.get(
+        "/openmeteo/weather",
+        params={"start_ts": "not-a-date", "end_ts": "2026-06-12T00:00:00Z"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "start_ts must be ISO 8601"}
+
+
+def test_openmeteo_rejects_naive_timestamp(authed_client, monkeypatch):
+    monkeypatch.setattr("app.openmeteo._get_openmeteo_weather", lambda *a, **k: pytest.fail("should not fetch"))
+
+    response = authed_client.get(
+        "/openmeteo/weather",
+        params={"start_ts": "2026-06-12T00:00:00", "end_ts": "2026-06-12T01:00:00Z"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "start_ts must include timezone"}
+
+
+def test_openmeteo_rejects_reversed_range(authed_client, monkeypatch):
+    monkeypatch.setattr("app.openmeteo._get_openmeteo_weather", lambda *a, **k: pytest.fail("should not fetch"))
+
+    response = authed_client.get(
+        "/openmeteo/weather",
+        params={"start_ts": "2026-06-13T00:00:00Z", "end_ts": "2026-06-12T00:00:00Z"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "start_ts must be <= end_ts"}
+
+
+def test_openmeteo_rejects_too_large_range(authed_client, monkeypatch):
+    monkeypatch.setattr("app.openmeteo._get_openmeteo_weather", lambda *a, **k: pytest.fail("should not fetch"))
+
+    response = authed_client.get(
+        "/openmeteo/weather",
+        params={"start_ts": "2025-01-01T00:00:00Z", "end_ts": "2026-06-12T00:00:00Z"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "date range is too large"}
+
+
+def test_openmeteo_normalizes_valid_offset_timestamps(authed_client, monkeypatch):
+    captured = {}
+
+    def fake_get(start_ts, end_ts, lat, lon):
+        captured["start_ts"] = start_ts
+        captured["end_ts"] = end_ts
+        return []
+
+    monkeypatch.setattr("app.openmeteo._get_openmeteo_weather", fake_get)
+
+    response = authed_client.get(
+        "/openmeteo/weather",
+        params={
+            "start_ts": "2026-06-12T02:00:00+02:00",
+            "end_ts": "2026-06-12T04:00:00+02:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "start_ts": "2026-06-12T00:00:00+00:00",
+        "end_ts": "2026-06-12T02:00:00+00:00",
+    }
