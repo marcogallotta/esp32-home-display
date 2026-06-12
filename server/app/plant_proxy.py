@@ -32,6 +32,7 @@ from .service import get_sensor_by_mac
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 10
+_DEFAULT_METER_RETRY_AFTER_SECS = 5 * 60
 
 
 class PlantReadingOut(BaseModel):
@@ -194,6 +195,65 @@ def fetch_meter_readings(
     readings.sort(key=lambda r: r.timestamp, reverse=True)
     return readings
 
+
+
+def _meter_latest_v2_from_v1_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    sensors: list[dict[str, Any]] = []
+    for row in rows:
+        sensors.append(
+            {
+                "mac": row["mac"],
+                "name": row.get("name") or row["mac"],
+                "recorded_at": row["recorded_at"],
+                "temperature_c": row.get("temperature_c"),
+                "humidity_pct": row.get("humidity_pct"),
+                "stale": bool(row.get("stale", False)),
+            }
+        )
+    return {
+        "sensors": sensors,
+        "retry_after_secs": _DEFAULT_METER_RETRY_AFTER_SECS,
+    }
+
+
+def meter_latest_v2(config: Config) -> dict[str, Any]:
+    """Latest SwitchBot meter readings in the Pi v2 shape.
+
+    This is the ESP-facing proxy path. Prefer the Pi's v2 endpoint so the ESP
+    can use retry_after_secs. Fall back to the Pi's v1 latest endpoint with a
+    conservative retry interval during staggered deploys.
+    """
+    try:
+        body = _get(config, "/v2/sensors/meter/latest")
+        if isinstance(body, dict) and isinstance(body.get("sensors"), list):
+            retry_after = body.get("retry_after_secs", _DEFAULT_METER_RETRY_AFTER_SECS)
+            try:
+                retry_after = int(retry_after)
+            except (TypeError, ValueError):
+                retry_after = _DEFAULT_METER_RETRY_AFTER_SECS
+            if retry_after <= 0:
+                retry_after = _DEFAULT_METER_RETRY_AFTER_SECS
+            return {
+                "sensors": body["sensors"],
+                "retry_after_secs": retry_after,
+            }
+        logger.warning("plant monitor meter latest v2 malformed response")
+        return {"sensors": [], "retry_after_secs": _DEFAULT_METER_RETRY_AFTER_SECS}
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            logger.warning("plant monitor meter latest v2 fetch failed: %s", exc)
+            return {"sensors": [], "retry_after_secs": _DEFAULT_METER_RETRY_AFTER_SECS}
+        logger.warning("plant monitor meter latest v2 unavailable; falling back to v1")
+    except httpx.HTTPError as exc:
+        logger.warning("plant monitor meter latest v2 fetch failed: %s", exc)
+        return {"sensors": [], "retry_after_secs": _DEFAULT_METER_RETRY_AFTER_SECS}
+
+    try:
+        rows = _get(config, "/sensors/meter/latest")
+    except httpx.HTTPError as exc:
+        logger.warning("plant monitor meter latest v1 fallback fetch failed: %s", exc)
+        return {"sensors": [], "retry_after_secs": _DEFAULT_METER_RETRY_AFTER_SECS}
+    return _meter_latest_v2_from_v1_rows(rows)
 
 def meter_latest_entries(
     db: Session,

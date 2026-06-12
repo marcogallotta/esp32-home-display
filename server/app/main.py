@@ -64,6 +64,20 @@ class LatestSensorsOut(BaseModel):
     sensors: list[LatestReadingOut]
 
 
+class MeterLatestV2SensorOut(BaseModel):
+    mac: str
+    name: str | None = None
+    recorded_at: datetime
+    temperature_c: float | None = None
+    humidity_pct: float | None = None
+    stale: bool = False
+
+
+class MeterLatestV2Out(BaseModel):
+    sensors: list[MeterLatestV2SensorOut]
+    retry_after_secs: int
+
+
 # SwitchBot is the only DB-backed device. The Xiaomi (Flower Care) sensor is
 # served from the external plant monitor via plant_proxy, so it has no SensorSpec
 # (no local storage), but it keeps a SENSOR_TYPE_NAMES entry so the dashboard
@@ -263,6 +277,34 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         else:
             readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         return LatestSensorsOut(sensors=readings)
+
+    @sensor_router.get("/v2/sensors/meter/latest", response_model=MeterLatestV2Out)
+    def get_meter_latest_v2(
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        config = request.app.state.config
+        if config.plant_monitor_url:
+            return plant_proxy.meter_latest_v2(config)
+
+        # Non-proxy fallback for local DB-backed SwitchBot data. It cannot know
+        # upstream ingest timing, so use the same conservative retry default as
+        # the proxy fallback.
+        name_by_id = {sensor.id: sensor.name for sensor in list_sensors(db)}
+        sensors = []
+        for row in fetch_latest_readings(db, SENSOR_SPECS):
+            reading = row["reading"]
+            sensors.append(
+                {
+                    "mac": row["mac"],
+                    "name": name_by_id.get(row["sensor_id"], row["mac"]),
+                    "recorded_at": row["latest_timestamp"],
+                    "temperature_c": reading.get("temperature_c"),
+                    "humidity_pct": reading.get("humidity_pct"),
+                    "stale": False,
+                }
+            )
+        return {"sensors": sensors, "retry_after_secs": 5 * 60}
 
     @sensor_router.get("/sensors/{sensor_id}/readings")
     def get_sensor_readings(
