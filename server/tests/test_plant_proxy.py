@@ -285,6 +285,82 @@ def test_meter_latest_v2_endpoint_empty_when_proxy_unconfigured(app):
     assert response.json() == {"sensors": [], "retry_after_secs": 300}
 
 
+def test_latest_v2_entries_aggregates_meter_and_flower_care(db_session, monkeypatch):
+    calls = []
+
+    def fake_get(config, path, params=None):
+        calls.append(path)
+        if path == "/v2/sensors/meter/latest":
+            return {"sensors": [_meter_latest_row()], "retry_after_secs": 177}
+        if path == "/v2/sensors/flower-care/latest":
+            return {"sensors": [_latest_row(stale=True)], "retry_after_secs": 3400}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(plant_proxy, "_get", fake_get)
+
+    out = plant_proxy.latest_v2_entries(db_session, _cfg(), None)
+
+    assert calls == ["/v2/sensors/meter/latest", "/v2/sensors/flower-care/latest"]
+    assert out["retry_after_secs"] == 177
+    by_type = {row["type"]: row for row in out["sensors"]}
+    assert by_type["switchbot"]["recorded_at"] == "2026-06-12T06:30:00+00:00"
+    assert by_type["switchbot"]["reading"] == {"temperature_c": 22.2, "humidity_pct": 32.0}
+    assert by_type["switchbot"]["stale"] is False
+    assert by_type["xiaomi"]["recorded_at"] == "2026-06-11T14:15:00+00:00"
+    assert by_type["xiaomi"]["reading"] == {
+        "temperature_c": 27.6,
+        "moisture_pct": 28,
+        "light_lux": 40663,
+        "conductivity_us_cm": 205,
+    }
+    assert by_type["xiaomi"]["stale"] is True
+
+
+def test_latest_v2_entries_respects_sensor_id_filter(db_session, monkeypatch):
+    monkeypatch.setattr(
+        plant_proxy,
+        "_get",
+        lambda config, path, params=None: (
+            {"sensors": [_meter_latest_row()], "retry_after_secs": 177}
+            if "meter" in path
+            else {"sensors": [_latest_row()], "retry_after_secs": 3400}
+        ),
+    )
+
+    first = plant_proxy.latest_v2_entries(db_session, _cfg(), None)
+    xiaomi_id = next(row["sensor_id"] for row in first["sensors"] if row["type"] == "xiaomi")
+
+    out = plant_proxy.latest_v2_entries(db_session, _cfg(), [xiaomi_id])
+
+    assert [row["type"] for row in out["sensors"]] == ["xiaomi"]
+    assert out["retry_after_secs"] == 177
+
+
+def test_sensors_latest_v2_endpoint_uses_retry_hint(app, monkeypatch):
+    app.state.config.plant_monitor_url = "http://pi:8001/"
+    app.state.config.plant_monitor_api_token = "t"
+
+    monkeypatch.setattr(
+        plant_proxy,
+        "_get",
+        lambda config, path, params=None: (
+            {"sensors": [_meter_latest_row()], "retry_after_secs": 177}
+            if "meter" in path
+            else {"sensors": [_latest_row()], "retry_after_secs": 3400}
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.get("/v2/sensors/latest", headers={"x-api-key": app.state.config.api_key})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["retry_after_secs"] == 177
+    assert {row["type"] for row in body["sensors"]} == {"switchbot", "xiaomi"}
+    meter = next(row for row in body["sensors"] if row["type"] == "switchbot")
+    assert meter["recorded_at"] == "2026-06-12T06:30:00Z"
+
+
 # --- endpoint integration ---
 
 def test_sensors_latest_includes_plant_when_configured(app, monkeypatch):

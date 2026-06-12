@@ -193,17 +193,31 @@ function App() {
     if (sensors.length === 0) return;
 
     let cancelled = false;
+    let timeoutId = null;
+
+    function nextLatestDelayMs(data) {
+      const fallback = window.CONFIG.latestPollMs;
+      const retryAfterSecs = Number(data?.retry_after_secs);
+      if (!Number.isFinite(retryAfterSecs) || retryAfterSecs <= 0) return fallback;
+      return Math.max(30 * 1000, Math.min(retryAfterSecs * 1000, 60 * 60 * 1000));
+    }
+
+    function scheduleNext(delayMs) {
+      if (!cancelled) timeoutId = setTimeout(pollLatest, delayMs);
+    }
 
     async function pollLatest() {
+      let nextDelayMs = window.CONFIG.latestPollMs;
       try {
         const data = await window.api.fetchLatestReadings();
+        nextDelayMs = nextLatestDelayMs(data);
 
         if (cancelled) return;
 
         setHistoryBySensorId((prev) => {
           const next = { ...prev };
           for (const item of data.sensors) {
-            const row = { timestamp: item.latest_timestamp, ...item.reading };
+            const row = { timestamp: item.recorded_at, ...item.reading };
             next[item.sensor_id] = window.sensorModel.mergeLatestIntoRows(
               next[item.sensor_id] || [],
               row
@@ -216,13 +230,15 @@ function App() {
         setLastLatestPollAt(new Date());
       } catch (err) {
         if (!cancelled) setLatestPollError(String(err));
+      } finally {
+        scheduleNext(nextDelayMs);
       }
     }
 
-    const intervalId = setInterval(pollLatest, window.CONFIG.latestPollMs);
+    pollLatest();
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     };
   }, [sensors]);
 
@@ -490,7 +506,7 @@ const tempPredictionDatasets = React.useMemo(() =>
           <h1>Sensor Overview</h1>
           <p className="sub">Cheap insight first. Decisions later.</p>
           <div className="status-line">
-            Latest polling: every {Math.round(window.CONFIG.latestPollMs / 1000)}s
+            Latest polling: server-scheduled
             {lastLatestPollAt ? ` · last update ${window.metrics.formatAgo(lastLatestPollAt.toISOString())}` : ""}
             {latestPollError ? ` · latest poll failed` : ""}
           </div>

@@ -39,10 +39,10 @@ window.api = {
     return this.fetchJson("/predict/temperature");
   },
 
-  async fetchLatestReadings(macs) {
-    const params = macs && macs.length
-      ? "?" + macs.map((m) => `mac=${encodeURIComponent(m)}`).join("&")
+  async fetchLatestReadings(sensorIds) {
+    const params = sensorIds && sensorIds.length
+      ? "?" + sensorIds.map((id) => `sensor_id=${encodeURIComponent(id)}`).join("&")
       : "";
-    return this.fetchJson(`/sensors/latest${params}`);
+    return this.fetchJson(`/v2/sensors/latest${params}`);
   },
 };

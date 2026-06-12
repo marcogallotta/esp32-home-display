@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 10
 _DEFAULT_METER_RETRY_AFTER_SECS = 5 * 60
+_DEFAULT_FLOWER_CARE_RETRY_AFTER_SECS = 60 * 60
 
 
 class PlantReadingOut(BaseModel):
@@ -258,6 +259,108 @@ def meter_latest_v2(config: Config) -> dict[str, Any]:
         })
 
     return {"sensors": out, "retry_after_secs": retry_after_secs}
+
+def _retry_after(body: dict[str, Any], default: int) -> int:
+    try:
+        retry_after_secs = int(body.get("retry_after_secs", default))
+    except (TypeError, ValueError):
+        return default
+    return retry_after_secs if retry_after_secs > 0 else default
+
+
+def latest_v2_entries(
+    db: Session,
+    config: Config,
+    sensor_ids: list[Any] | None,
+) -> dict[str, Any]:
+    """Latest meter and Flower Care readings for dashboard live cards.
+
+    The upstream plant monitor owns the v2 sensor data, while this server owns
+    the dashboard's stable sensor UUIDs. This adapter preserves those UUIDs and
+    returns one retry hint for the next dashboard poll.
+    """
+    retry_after_values: list[int] = []
+    out: list[dict[str, Any]] = []
+
+    try:
+        meter_body = _get(config, "/v2/sensors/meter/latest")
+    except httpx.HTTPError as exc:
+        logger.warning("plant monitor meter latest v2 fetch failed: %s", exc)
+        retry_after_values.append(_DEFAULT_METER_RETRY_AFTER_SECS)
+    else:
+        if isinstance(meter_body, dict) and isinstance(meter_body.get("sensors"), list):
+            retry_after_values.append(_retry_after(meter_body, _DEFAULT_METER_RETRY_AFTER_SECS))
+            for row in meter_body["sensors"]:
+                if not isinstance(row, dict):
+                    continue
+                mac = row.get("mac")
+                recorded_at = row.get("recorded_at")
+                if not isinstance(mac, str) or not recorded_at:
+                    continue
+                sensor_row = _ensure_meter_sensor(db, mac, row.get("name") or mac)
+                if sensor_row is None:
+                    continue
+                if sensor_ids is not None and sensor_row.id not in sensor_ids:
+                    continue
+                out.append({
+                    "sensor_id": sensor_row.id,
+                    "mac": sensor_row.mac,
+                    "name": sensor_row.name,
+                    "type": "switchbot",
+                    "recorded_at": recorded_at,
+                    "reading": {
+                        "temperature_c": row.get("temperature_c"),
+                        "humidity_pct": row.get("humidity_pct"),
+                    },
+                    "stale": bool(row.get("stale", False)),
+                })
+        else:
+            logger.warning("plant monitor meter latest v2 malformed response")
+            retry_after_values.append(_DEFAULT_METER_RETRY_AFTER_SECS)
+
+    try:
+        plant_body = _get(config, "/v2/sensors/flower-care/latest")
+    except httpx.HTTPError as exc:
+        logger.warning("plant monitor flower-care latest v2 fetch failed: %s", exc)
+        retry_after_values.append(_DEFAULT_FLOWER_CARE_RETRY_AFTER_SECS)
+    else:
+        if isinstance(plant_body, dict) and isinstance(plant_body.get("sensors"), list):
+            retry_after_values.append(_retry_after(plant_body, _DEFAULT_FLOWER_CARE_RETRY_AFTER_SECS))
+            for row in plant_body["sensors"]:
+                if not isinstance(row, dict):
+                    continue
+                mac = row.get("mac")
+                recorded_at = row.get("recorded_at")
+                if not isinstance(mac, str) or not recorded_at:
+                    continue
+                sensor_row = _ensure_plant_sensor(db, mac, row.get("name") or mac)
+                if sensor_row is None:
+                    continue
+                if sensor_ids is not None and sensor_row.id not in sensor_ids:
+                    continue
+                out.append({
+                    "sensor_id": sensor_row.id,
+                    "mac": sensor_row.mac,
+                    "name": sensor_row.name,
+                    "type": "xiaomi",
+                    "recorded_at": recorded_at,
+                    "reading": {
+                        "temperature_c": row.get("temperature_c"),
+                        "moisture_pct": row.get("moisture_pct"),
+                        "light_lux": row.get("lux"),
+                        "conductivity_us_cm": row.get("conductivity_us_cm"),
+                    },
+                    "stale": bool(row.get("stale", False)),
+                })
+        else:
+            logger.warning("plant monitor flower-care latest v2 malformed response")
+            retry_after_values.append(_DEFAULT_FLOWER_CARE_RETRY_AFTER_SECS)
+
+    return {
+        "sensors": out,
+        "retry_after_secs": min(retry_after_values) if retry_after_values else _DEFAULT_METER_RETRY_AFTER_SECS,
+    }
+
 
 def meter_latest_entries(
     db: Session,

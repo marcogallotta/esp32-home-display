@@ -78,6 +78,21 @@ class MeterLatestV2Out(BaseModel):
     retry_after_secs: int
 
 
+class LatestSensorV2Out(BaseModel):
+    sensor_id: UUID
+    mac: str
+    name: str
+    type: str
+    recorded_at: datetime
+    reading: dict[str, Any]
+    stale: bool = False
+
+
+class LatestSensorsV2Out(BaseModel):
+    sensors: list[LatestSensorV2Out]
+    retry_after_secs: int
+
+
 # SwitchBot is the only DB-backed device. The Xiaomi (Flower Care) sensor is
 # served from the external plant monitor via plant_proxy, so it has no SensorSpec
 # (no local storage), but it keeps a SENSOR_TYPE_NAMES entry so the dashboard
@@ -283,6 +298,18 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         config = request.app.state.config
         if config.plant_monitor_url:
             return plant_proxy.meter_latest_v2(config)
+        return {"sensors": [], "retry_after_secs": 5 * 60}
+
+    @sensor_router.get("/v2/sensors/latest", response_model=LatestSensorsV2Out)
+    def get_sensors_latest_v2(
+        request: Request,
+        sensor_id: Annotated[list[UUID] | None, Query()] = None,
+        db: Session = Depends(get_db),
+    ):
+        config = request.app.state.config
+        sensor_ids = sensor_id if sensor_id is not None else None
+        if config.plant_monitor_url:
+            return plant_proxy.latest_v2_entries(db, config, sensor_ids)
         return {"sensors": [], "retry_after_secs": 5 * 60}
 
     @sensor_router.get("/sensors/{sensor_id}/readings")
