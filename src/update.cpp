@@ -219,7 +219,7 @@ SwitchbotBackendUpdateResult updateSwitchbotFromBackend(
 
     std::string url = config.api.baseUrl;
     if (!url.empty() && url.back() == '/') url.pop_back();
-    url += "/v2/sensors/meter/latest";
+    url += "/sensors/meter/latest";
 
     network::Request req;
     req.method = network::Method::Get;
