@@ -38,7 +38,6 @@ def _config(**kwargs) -> Config:
 
 def _reading(**kwargs) -> SwitchbotLatestReading:
     defaults = dict(
-        sensor_id="11111111-1111-1111-1111-111111111111",
         mac="AA:BB:CC:DD:EE:FF",
         timestamp="2026-04-21T11:55:00Z",
         temperature_c=20.0,

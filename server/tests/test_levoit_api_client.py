@@ -18,14 +18,14 @@ _SAMPLE_RESPONSE = {
     "sensors": [
         {
             "mac": "AA:BB:CC:DD:EE:FF",
-            "sensor_id": "11111111-1111-1111-1111-111111111111",
-            "latest_timestamp": "2026-04-21T10:00:00Z",
-            "reading": {
-                "temperature_c": 22.5,
-                "humidity_pct": 55.0,
-            },
+            "name": "South",
+            "recorded_at": "2026-04-21T10:00:00Z",
+            "temperature_c": 22.5,
+            "humidity_pct": 55.0,
+            "stale": False,
         }
-    ]
+    ],
+    "retry_after_secs": 177,
 }
 
 
@@ -59,7 +59,6 @@ def test_successful_match_returns_reading():
     result = _client(http=_mock_http(json_body=_SAMPLE_RESPONSE)).fetch_switchbot_latest()
     assert isinstance(result, SwitchbotLatestReading)
     assert result.mac == "AA:BB:CC:DD:EE:FF"
-    assert result.sensor_id == "11111111-1111-1111-1111-111111111111"
     assert result.timestamp == "2026-04-21T10:00:00Z"
     assert result.temperature_c == 22.5
     assert result.humidity_pct == 55.0
@@ -72,9 +71,9 @@ def test_no_matching_mac_raises_not_found():
         "sensors": [
             {
                 "mac": "00:00:00:00:00:00",
-                "sensor_id": "22222222-2222-2222-2222-222222222222",
-                "latest_timestamp": "2026-04-21T10:00:00Z",
-                "reading": {"temperature_c": 20.0, "humidity_pct": 50.0},
+                "recorded_at": "2026-04-21T10:00:00Z",
+                "temperature_c": 20.0,
+                "humidity_pct": 50.0,
             }
         ]
     }
@@ -97,11 +96,11 @@ def test_empty_sensors_list_raises_not_found():
 
 # --- request shape ---
 
-def test_request_url_is_sensors_latest_with_no_query_params():
+def test_request_url_is_meter_latest_v2_with_no_query_params():
     http = _mock_http(json_body=_SAMPLE_RESPONSE)
     _client(http=http).fetch_switchbot_latest()
     call = http.get.call_args
-    assert call.args[0] == f"{_BASE_URL}/sensors/latest"
+    assert call.args[0] == f"{_BASE_URL}/v2/sensors/meter/latest"
     assert not call.kwargs.get("params")
 
 
@@ -118,9 +117,9 @@ def test_missing_temperature_preserved_as_none():
     body = {
         "sensors": [{
             "mac": _MAC,
-            "sensor_id": "11111111-1111-1111-1111-111111111111",
-            "latest_timestamp": "2026-04-21T10:00:00Z",
-            "reading": {"temperature_c": None, "humidity_pct": 55.0},
+            "recorded_at": "2026-04-21T10:00:00Z",
+            "temperature_c": None,
+            "humidity_pct": 55.0,
         }]
     }
     result = _client(http=_mock_http(json_body=body)).fetch_switchbot_latest()
@@ -132,9 +131,9 @@ def test_missing_humidity_preserved_as_none():
     body = {
         "sensors": [{
             "mac": _MAC,
-            "sensor_id": "11111111-1111-1111-1111-111111111111",
-            "latest_timestamp": "2026-04-21T10:00:00Z",
-            "reading": {"temperature_c": 22.5, "humidity_pct": None},
+            "recorded_at": "2026-04-21T10:00:00Z",
+            "temperature_c": 22.5,
+            "humidity_pct": None,
         }]
     }
     result = _client(http=_mock_http(json_body=body)).fetch_switchbot_latest()
@@ -146,7 +145,7 @@ def test_malformed_matching_entry_raises_levoit_api_error():
     body = {
         "sensors": [{
             "mac": _MAC,
-            # sensor_id, latest_timestamp missing
+            # recorded_at missing
         }]
     }
     with pytest.raises(LevoitApiError, match="malformed matching sensor"):

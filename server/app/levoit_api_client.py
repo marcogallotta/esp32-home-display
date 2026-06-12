@@ -10,12 +10,11 @@ class LevoitApiError(Exception):
 
 
 class SwitchbotSensorNotFound(Exception):
-    """Configured switchbot_mac was not present in /sensors/latest response."""
+    """Configured switchbot_mac was not present in /v2/sensors/meter/latest response."""
 
 
 @dataclass
 class SwitchbotLatestReading:
-    sensor_id: str
     mac: str
     timestamp: str
     temperature_c: float | None
@@ -38,21 +37,21 @@ class LevoitApiClient:
     def fetch_switchbot_latest(self) -> SwitchbotLatestReading:
         try:
             response = self._http.get(
-                f"{self._base_url}/sensors/latest",
+                f"{self._base_url}/v2/sensors/meter/latest",
                 headers={"x-api-key": self._api_key},
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise LevoitApiError(
-                f"GET /sensors/latest failed: HTTP {exc.response.status_code}"
+                f"GET /v2/sensors/meter/latest failed: HTTP {exc.response.status_code}"
             ) from exc
         except httpx.RequestError as exc:
-            raise LevoitApiError(f"GET /sensors/latest request error: {exc}") from exc
+            raise LevoitApiError(f"GET /v2/sensors/meter/latest request error: {exc}") from exc
 
         try:
             sensors = response.json()["sensors"]
         except (ValueError, KeyError, TypeError) as exc:
-            raise LevoitApiError(f"GET /sensors/latest malformed response: {exc}") from exc
+            raise LevoitApiError(f"GET /v2/sensors/meter/latest malformed response: {exc}") from exc
 
         for entry in sensors:
             try:
@@ -61,19 +60,17 @@ class LevoitApiClient:
                 continue
             if mac.upper() == self._switchbot_mac:
                 try:
-                    reading = entry.get("reading") or {}
                     return SwitchbotLatestReading(
-                        sensor_id=str(entry["sensor_id"]),
                         mac=mac,
-                        timestamp=entry["latest_timestamp"],
-                        temperature_c=reading.get("temperature_c"),
-                        humidity_pct=reading.get("humidity_pct"),
+                        timestamp=entry["recorded_at"],
+                        temperature_c=entry.get("temperature_c"),
+                        humidity_pct=entry.get("humidity_pct"),
                     )
                 except (KeyError, TypeError) as exc:
                     raise LevoitApiError(
-                        f"GET /sensors/latest malformed matching sensor entry: {exc}"
+                        f"GET /v2/sensors/meter/latest malformed matching sensor entry: {exc}"
                     ) from exc
 
         raise SwitchbotSensorNotFound(
-            f"MAC {self._switchbot_mac} not found in /sensors/latest response"
+            f"MAC {self._switchbot_mac} not found in /v2/sensors/meter/latest response"
         )
