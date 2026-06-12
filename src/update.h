@@ -5,7 +5,6 @@
 #include "config.h"
 #include "salah/types.h"
 #include "state.h"
-#include "switchbot/ble.h"
 
 void updateSalahState(
     const Config& config,
@@ -16,10 +15,9 @@ void updateSalahState(
     State& state
 );
 
-void updateSwitchbotState(
+bool updateSwitchbotFromBackend(
     const Config& config,
     std::time_t now,
-    switchbot::Scanner& scanner,
     State& state
 );
 

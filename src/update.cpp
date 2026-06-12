@@ -3,8 +3,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <iomanip>
+#include <map>
 #include <optional>
 #include <string>
+
+#include <ArduinoJson.h>
 
 #include "forecast/openmeteo.h"
 #include "log.h"
@@ -29,11 +32,24 @@ std::string formatDate(const std::tm& time) {
     return out.str();
 }
 
-std::optional<std::int64_t> validEpochOrNull(std::int64_t epochS) {
-    if (epochS <= 0) {
+std::optional<std::int64_t> parseIso8601Utc(const char* s) {
+    if (s == nullptr) return std::nullopt;
+    // Parse "YYYY-MM-DDTHH:MM:SS" -- timezone suffix is ignored (server always UTC).
+    int y, mo, d, h, mi, sec;
+    if (std::sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) != 6) {
         return std::nullopt;
     }
-    return epochS;
+    std::tm t{};
+    t.tm_year  = y - 1900;
+    t.tm_mon   = mo - 1;
+    t.tm_mday  = d;
+    t.tm_hour  = h;
+    t.tm_min   = mi;
+    t.tm_sec   = sec;
+    t.tm_isdst = 0;
+    const std::time_t epoch = timegm(&t);
+    if (epoch == static_cast<std::time_t>(-1)) return std::nullopt;
+    return static_cast<std::int64_t>(epoch);
 }
 
 std::string switchbotLabel(const SwitchbotSensorState& row) {
@@ -102,13 +118,71 @@ void updateSalahState(
     state.hasSalah = true;
 }
 
-void updateSwitchbotState(
+bool updateSwitchbotFromBackend(
     const Config& config,
-    const std::time_t now,
-    switchbot::Scanner& scanner,
+    std::time_t now,
     State& state
 ) {
-    const auto sensors = scanner.snapshot();
+    auto& net = network::platform(config.wifi);
+
+    std::string url = config.api.baseUrl;
+    if (!url.empty() && url.back() == '/') url.pop_back();
+    url += "/sensors/latest";
+
+    network::Request req;
+    req.method = network::Method::Get;
+    req.url = url;
+    req.pem = config.api.pem;
+    req.headers["x-api-key"] = config.api.apiKey;
+
+    const auto r = net.request(req);
+
+    if (r.transport != network::TransportResult::Ok) {
+        logLine(LogLevel::Warn,
+            "Backend sensor fetch failed: " + transportResultName(r.transport) + ", " + r.error);
+        return false;
+    }
+    if (r.statusCode != 200) {
+        logLine(LogLevel::Warn,
+            "Backend sensor fetch HTTP " + std::to_string(r.statusCode));
+        return false;
+    }
+
+    StaticJsonDocument<4096> doc;
+    if (deserializeJson(doc, r.body) != DeserializationError::Ok) {
+        logLine(LogLevel::Warn, "Backend sensor fetch: JSON parse failed");
+        return false;
+    }
+
+    const JsonArray sensors = doc["sensors"];
+    if (sensors.isNull()) {
+        logLine(LogLevel::Warn, "Backend sensor fetch: missing sensors array");
+        return false;
+    }
+
+    // Build MAC -> reading map from the response.
+    std::map<std::string, SwitchbotReading> readings;
+    for (const JsonObject entry : sensors) {
+        const char* mac = entry["mac"];
+        if (mac == nullptr) continue;
+
+        const JsonObject reading = entry["reading"];
+        if (reading.isNull()) continue;
+
+        SwitchbotReading rb;
+        if (!reading["temperature_c"].isNull()) {
+            rb.temperatureC = reading["temperature_c"].as<float>();
+        }
+        if (!reading["humidity_pct"].isNull()) {
+            const float h = reading["humidity_pct"].as<float>();
+            if (h >= 0.0f && h <= 255.0f) {
+                rb.humidityPct = static_cast<std::uint8_t>(h);
+            }
+        }
+        rb.lastSeenEpochS = parseIso8601Utc(entry["latest_timestamp"]);
+
+        readings[mac] = rb;
+    }
 
     for (std::size_t i = 0; i < state.switchbotSensors.size(); ++i) {
         const auto& sensorConfig = config.switchbot.sensors[i];
@@ -118,19 +192,16 @@ void updateSwitchbotState(
         row.identity.name = sensorConfig.name;
         row.identity.shortName = sensorConfig.shortName;
 
-        const auto it = sensors.find(sensorConfig.mac);
-        if (it == sensors.end()) {
+        const auto it = readings.find(sensorConfig.mac);
+        if (it == readings.end()) {
             row.reading = SwitchbotReading{};
-            continue;
+        } else {
+            row.reading = it->second;
         }
-
-        const auto& reading = it->second;
-        row.reading.temperatureC = reading.temperature_c;
-        row.reading.humidityPct = reading.humidity;
-        row.reading.lastSeenEpochS = validEpochOrNull(reading.last_seen_epoch_s);
     }
 
     logSwitchbotSummary(state, now);
+    return true;
 }
 
 bool updateForecastState(const Config& config, State& state) {

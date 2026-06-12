@@ -39,11 +39,11 @@ TEST_CASE("salah updates align to the next minute boundary") {
     }
 }
 
-TEST_CASE("sensor scan updates are scheduled one minute later") {
+TEST_CASE("sensor poll is scheduled 5 minutes later") {
     TimingState timing;
     markSensorsUpdated(1000, timing);
 
-    CHECK_EQ(timing.nextSensorsDueEpochS, static_cast<std::time_t>(1060));
+    CHECK_EQ(timing.nextSensorsDueEpochS, static_cast<std::time_t>(1000 + 5 * 60));
 }
 
 TEST_CASE("forecast success uses the configured interval") {

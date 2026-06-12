@@ -168,12 +168,14 @@ void updateSalahIfDue(AppContext& app, std::time_t now) {
     markSalahUpdated(now2, app.timing);
 }
 
-void updateSwitchbotIfDue(AppContext& app, std::time_t now, bool newData) {
-    if (!newData && !areSensorsDue(now, app.timing)) {
+void updateSwitchbotIfDue(AppContext& app, std::time_t now) {
+    if (!areSensorsDue(now, app.timing)) {
         return;
     }
 
-    updateSwitchbotState(app.config, now, app.switchbotScanner, app.currentState);
+    // Advance timer regardless of success/failure to prevent hammering on error.
+    // A failed fetch leaves the previous reading in state (stale but visible).
+    updateSwitchbotFromBackend(app.config, now, app.currentState);
     markSensorsUpdated(now, app.timing);
 }
 
@@ -200,9 +202,9 @@ void updateForecastIfDue(AppContext& app, std::time_t now) {
     }
 }
 
-void updateDomainState(AppContext& app, std::time_t now, bool switchbotUpdated) {
+void updateDomainState(AppContext& app, std::time_t now) {
     updateSalahIfDue(app, now);
-    updateSwitchbotIfDue(app, now, switchbotUpdated);
+    updateSwitchbotIfDue(app, now);
     updateForecastIfDue(app, now);
 }
 
@@ -451,11 +453,10 @@ void tick(AppContext& app) {
     const platform::HeapStats heapPreBle = platform::heapStats();
     app.bleScanner.poll();
 
-    bool switchbotUpdated = false;
     int bleEventsProcessed = 0;
     ble::AdvertisementEvent event;
     while (app.bleEventQueue.pop(event)) {
-        if (app.switchbotScanner.handleAdvertisement(event)) switchbotUpdated = true;
+        app.switchbotScanner.handleAdvertisement(event);
         ++bleEventsProcessed;
     }
 
@@ -473,7 +474,7 @@ void tick(AppContext& app) {
     }
 #endif
 
-    updateDomainState(app, now, switchbotUpdated);
+    updateDomainState(app, now);
     pollDoctorTrigger();
 #ifdef ARDUINO
     switchbot::history::maybeRunStartupHistorySync(
