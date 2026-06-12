@@ -279,7 +279,6 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         ]
 
     @sensor_router.get("/sensors/meter/latest", response_model=MeterLatestV2Out)
-    @sensor_router.get("/v2/sensors/meter/latest", response_model=MeterLatestV2Out)
     def get_meter_latest_v2(request: Request):
         config = request.app.state.config
         if config.plant_monitor_url:
@@ -287,7 +286,6 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
         return {"sensors": [], "retry_after_secs": 5 * 60}
 
     @sensor_router.get("/sensors/latest", response_model=LatestSensorsV2Out)
-    @sensor_router.get("/v2/sensors/latest", response_model=LatestSensorsV2Out)
     def get_sensors_latest_v2(
         request: Request,
         sensor_id: Annotated[list[UUID] | None, Query()] = None,
