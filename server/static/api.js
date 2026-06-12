@@ -43,6 +43,6 @@ window.api = {
     const params = sensorIds && sensorIds.length
       ? "?" + sensorIds.map((id) => `sensor_id=${encodeURIComponent(id)}`).join("&")
       : "";
-    return this.fetchJson(`/v2/sensors/latest${params}`);
+    return this.fetchJson(`/sensors/latest${params}`);
   },
 };

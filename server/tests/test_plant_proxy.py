@@ -250,7 +250,7 @@ def test_meter_latest_v2_proxies_upstream_shape(monkeypatch):
 
     out = plant_proxy.meter_latest_v2(_cfg())
 
-    assert captured["path"] == "/v2/sensors/meter/latest"
+    assert captured["path"] == "/sensors/meter/latest"
     assert out == {
         "sensors": [_meter_latest_row()],
         "retry_after_secs": 177,
@@ -259,7 +259,7 @@ def test_meter_latest_v2_proxies_upstream_shape(monkeypatch):
 
 def test_meter_latest_v2_graceful_when_pi_rejects_auth(monkeypatch):
     def boom(*args, **kwargs):
-        request = httpx.Request("GET", "http://pi:8001/v2/sensors/meter/latest")
+        request = httpx.Request("GET", "http://pi:8001/sensors/meter/latest")
         response = httpx.Response(401, request=request)
         raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
 
@@ -290,9 +290,9 @@ def test_latest_v2_entries_aggregates_meter_and_flower_care(db_session, monkeypa
 
     def fake_get(config, path, params=None):
         calls.append(path)
-        if path == "/v2/sensors/meter/latest":
+        if path == "/sensors/meter/latest":
             return {"sensors": [_meter_latest_row()], "retry_after_secs": 177}
-        if path == "/v2/sensors/flower-care/latest":
+        if path == "/sensors/flower-care/latest":
             return {"sensors": [_latest_row(stale=True)], "retry_after_secs": 3400}
         raise AssertionError(path)
 
@@ -300,7 +300,7 @@ def test_latest_v2_entries_aggregates_meter_and_flower_care(db_session, monkeypa
 
     out = plant_proxy.latest_v2_entries(db_session, _cfg(), None)
 
-    assert calls == ["/v2/sensors/meter/latest", "/v2/sensors/flower-care/latest"]
+    assert calls == ["/sensors/meter/latest", "/sensors/flower-care/latest"]
     assert out["retry_after_secs"] == 177
     by_type = {row["type"]: row for row in out["sensors"]}
     assert by_type["switchbot"]["recorded_at"] == "2026-06-12T06:30:00+00:00"
@@ -369,7 +369,11 @@ def test_sensors_latest_includes_plant_when_configured(app, monkeypatch):
     monkeypatch.setattr(
         plant_proxy,
         "_get",
-        lambda config, path, params=None: [_latest_row()] if "flower-care" in path else [],
+        lambda config, path, params=None: (
+            {"sensors": [_latest_row()], "retry_after_secs": 3600}
+            if "flower-care" in path
+            else {"sensors": [], "retry_after_secs": 300}
+        ),
     )
 
     client = TestClient(app)
@@ -388,8 +392,8 @@ def test_sensors_latest_includes_meter_when_configured(app, monkeypatch):
 
     def fake_get(config, path, params=None):
         if "meter" in path:
-            return [_meter_latest_row()]
-        return []
+            return {"sensors": [_meter_latest_row()], "retry_after_secs": 177}
+        return {"sensors": [], "retry_after_secs": 3600}
 
     monkeypatch.setattr(plant_proxy, "_get", fake_get)
 
@@ -400,7 +404,7 @@ def test_sensors_latest_includes_meter_when_configured(app, monkeypatch):
     meters = [s for s in response.json()["sensors"] if s["mac"] == METER_MAC]
     assert len(meters) == 1
     assert meters[0]["reading"] == {"temperature_c": 22.2, "humidity_pct": 32.0}
-    assert meters[0]["latest_timestamp"] == "2026-06-12T06:30:00Z"
+    assert meters[0]["recorded_at"] == "2026-06-12T06:30:00Z"
 
 
 def test_sensor_readings_proxies_switchbot_to_meter_endpoint(app, monkeypatch):

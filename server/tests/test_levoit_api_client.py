@@ -100,7 +100,7 @@ def test_request_url_is_meter_latest_v2_with_no_query_params():
     http = _mock_http(json_body=_SAMPLE_RESPONSE)
     _client(http=http).fetch_switchbot_latest()
     call = http.get.call_args
-    assert call.args[0] == f"{_BASE_URL}/v2/sensors/meter/latest"
+    assert call.args[0] == f"{_BASE_URL}/sensors/meter/latest"
     assert not call.kwargs.get("params")
 
 

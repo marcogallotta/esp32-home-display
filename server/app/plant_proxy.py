@@ -99,7 +99,7 @@ def fetch_plant_readings(
     if max_points is not None:
         params["max_points"] = max_points
 
-    rows = _get(config, f"/v2/sensors/{slug}/readings", params)
+    rows = _get(config, f"/sensors/{slug}/readings", params)
     readings = [_map_reading(r) for r in rows]
     readings.sort(key=lambda r: r.timestamp, reverse=True)
     return readings
@@ -136,7 +136,7 @@ def plant_latest_entries(
     Pi's identity if missing) for its stable UUID. Degrades gracefully: if the
     Pi is unreachable the dashboard still renders the other sensors."""
     try:
-        body = _get(config, "/v2/sensors/flower-care/latest")
+        body = _get(config, "/sensors/flower-care/latest")
         rows = body.get("sensors", []) if isinstance(body, dict) else []
     except httpx.HTTPError as exc:
         logger.warning("plant monitor latest fetch failed: %s", exc)
@@ -202,7 +202,7 @@ def fetch_meter_readings(
         logger.warning("fetch_meter_readings: no slug configured for mac %s; skipping", mac)
         return []
 
-    rows = _get(config, f"/v2/sensors/{slug}/readings", params)
+    rows = _get(config, f"/sensors/{slug}/readings", params)
     readings = [
         sb.ReadingOut(
             timestamp=r["recorded_at"],
@@ -238,7 +238,7 @@ def meter_latest_v2(config: Config) -> dict[str, Any]:
     the dashboard /sensors/latest shape.
     """
     try:
-        body = _get(config, "/v2/sensors/meter/latest")
+        body = _get(config, "/sensors/meter/latest")
     except httpx.HTTPError as exc:
         logger.warning("plant monitor meter latest v2 fetch failed: %s", exc)
         return {"sensors": [], "retry_after_secs": _DEFAULT_METER_RETRY_AFTER_SECS}
@@ -301,7 +301,7 @@ def latest_v2_entries(
     out: list[dict[str, Any]] = []
 
     try:
-        meter_body = _get(config, "/v2/sensors/meter/latest")
+        meter_body = _get(config, "/sensors/meter/latest")
     except httpx.HTTPError as exc:
         logger.warning("plant monitor meter latest v2 fetch failed: %s", exc)
         retry_after_values.append(_DEFAULT_METER_RETRY_AFTER_SECS)
@@ -337,7 +337,7 @@ def latest_v2_entries(
             retry_after_values.append(_DEFAULT_METER_RETRY_AFTER_SECS)
 
     try:
-        plant_body = _get(config, "/v2/sensors/flower-care/latest")
+        plant_body = _get(config, "/sensors/flower-care/latest")
     except httpx.HTTPError as exc:
         logger.warning("plant monitor flower-care latest v2 fetch failed: %s", exc)
         retry_after_values.append(_DEFAULT_FLOWER_CARE_RETRY_AFTER_SECS)
@@ -390,7 +390,7 @@ def meter_latest_entries(
     Degrades gracefully: if the Pi is unreachable the dashboard still renders
     the other sensors."""
     try:
-        body = _get(config, "/v2/sensors/meter/latest")
+        body = _get(config, "/sensors/meter/latest")
     except httpx.HTTPError as exc:
         logger.warning("plant monitor meter latest fetch failed: %s", exc)
         return []
