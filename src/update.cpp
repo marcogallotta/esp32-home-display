@@ -64,12 +64,39 @@ std::string formatDate(const std::tm& time) {
 
 std::optional<std::int64_t> parseIso8601Utc(const char* s) {
     if (s == nullptr) return std::nullopt;
-    // Parse "YYYY-MM-DDTHH:MM:SS" -- timezone suffix is ignored (server always UTC).
+    // Parse "YYYY-MM-DDTHH:MM:SS", optionally followed by "Z" or "+/-HH:MM".
     int y, mo, d, h, mi, sec;
-    if (std::sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) != 6) {
+    int consumed = 0;
+    if (std::sscanf(s, "%d-%d-%dT%d:%d:%d%n", &y, &mo, &d, &h, &mi, &sec, &consumed) != 6) {
         return std::nullopt;
     }
-    const std::int64_t epoch = time_utils::utcBrokenDownToEpoch(y, mo, d, h, mi, sec);
+
+    int offsetSeconds = 0;
+    const char* tz = s + consumed;
+    if (*tz == '\0') {
+        offsetSeconds = 0;
+    } else if (tz[0] == 'Z' && tz[1] == '\0') {
+        offsetSeconds = 0;
+    } else if (tz[0] == '+' || tz[0] == '-') {
+        int tzh = 0;
+        int tzm = 0;
+        char tail = '\0';
+        if (std::sscanf(tz + 1, "%2d:%2d%c", &tzh, &tzm, &tail) != 2) {
+            return std::nullopt;
+        }
+        if (tzh < 0 || tzh > 23 || tzm < 0 || tzm > 59) {
+            return std::nullopt;
+        }
+        offsetSeconds = (tzh * 60 + tzm) * 60;
+        if (tz[0] == '-') offsetSeconds = -offsetSeconds;
+    } else {
+        return std::nullopt;
+    }
+
+    const std::int64_t localEpoch = time_utils::utcBrokenDownToEpoch(y, mo, d, h, mi, sec);
+    if (localEpoch < 0) return std::nullopt;
+
+    const std::int64_t epoch = localEpoch - offsetSeconds;
     if (epoch < 0) return std::nullopt;
     return epoch;
 }

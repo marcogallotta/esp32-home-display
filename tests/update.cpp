@@ -85,3 +85,40 @@ TEST_CASE("switchbot backend v2 parser rejects malformed payload") {
     CHECK(state.switchbotSensors[0].reading.temperatureC.has_value());
     CHECK(state.switchbotSensors[1].reading.temperatureC.has_value());
 }
+
+TEST_CASE("switchbot backend v2 parser applies recorded_at timezone offsets") {
+    const Config config = makeConfig();
+    State state = makeStateWithPreviousReadings();
+
+    const std::string body = R"json({
+        "sensors": [
+            {
+                "mac": "D5:3A:42:86:2C:63",
+                "recorded_at": "2026-06-12T08:30:00+02:00",
+                "temperature_c": 22.2,
+                "humidity_pct": 32.0
+            },
+            {
+                "mac": "AA:BB:CC:DD:EE:FF",
+                "recorded_at": "2026-06-12T01:00:00-05:30",
+                "temperature_c": 19.1,
+                "humidity_pct": 41.0
+            }
+        ],
+        "retry_after_secs": 177
+    })json";
+
+    const auto result = applySwitchbotBackendResponse(config, body, 1000, state);
+
+    REQUIRE(result.ok);
+    REQUIRE(state.switchbotSensors[0].reading.lastSeenEpochS.has_value());
+    CHECK_EQ(
+        state.switchbotSensors[0].reading.lastSeenEpochS.value(),
+        time_utils::utcBrokenDownToEpoch(2026, 6, 12, 6, 30, 0)
+    );
+    REQUIRE(state.switchbotSensors[1].reading.lastSeenEpochS.has_value());
+    CHECK_EQ(
+        state.switchbotSensors[1].reading.lastSeenEpochS.value(),
+        time_utils::utcBrokenDownToEpoch(2026, 6, 12, 6, 30, 0)
+    );
+}
