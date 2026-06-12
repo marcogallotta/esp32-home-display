@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import plant_proxy
+from app.config import PlantSensorConfig
 from app.models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
 from tests.helpers import make_switchbot_payload, post_switchbot
 
@@ -29,7 +30,14 @@ def _meter_latest_row(**overrides):
 
 def _cfg():
     # _get is monkeypatched in every test, so the URL/token are never used.
-    return SimpleNamespace(plant_monitor_url="http://pi:8001/", plant_monitor_api_token="t")
+    return SimpleNamespace(
+        plant_monitor_url="http://pi:8001/",
+        plant_monitor_api_token="t",
+        plant_monitor_sensors=[
+            PlantSensorConfig(mac=MAC, slug="cilantro", name="Cilantro"),
+            PlantSensorConfig(mac=METER_MAC, slug="south", name="South"),
+        ],
+    )
 
 
 def _latest_row(**overrides):
@@ -75,7 +83,7 @@ def test_fetch_plant_readings_maps_fields_and_sorts_desc(monkeypatch):
     ]
     assert result[0].light_lux == 300
     assert result[0].temperature_c == 22.0
-    assert captured["path"] == f"/sensors/flower-care/{MAC}/readings"
+    assert captured["path"] == "/sensors/cilantro/readings"
     assert captured["params"]["max_points"] == 96
     assert "start_ts" in captured["params"] and "end_ts" in captured["params"]
 
@@ -108,7 +116,7 @@ def test_plant_latest_resolves_existing_sensor(db_session, monkeypatch):
     sensor = Sensor(mac=MAC, name="Cilantro", type=XIAOMI_TYPE)
     db_session.add(sensor)
     db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_latest_row()])
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
 
     out = plant_proxy.plant_latest_entries(db_session, _cfg(), None)
 
@@ -126,7 +134,7 @@ def test_plant_latest_resolves_existing_sensor(db_session, monkeypatch):
 
 
 def test_plant_latest_provisions_missing_sensor(db_session, monkeypatch):
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_latest_row()])
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
 
     out = plant_proxy.plant_latest_entries(db_session, _cfg(), None)
 
@@ -149,7 +157,7 @@ def test_plant_latest_respects_sensor_id_filter(db_session, monkeypatch):
     sensor = Sensor(mac=MAC, name="Cilantro", type=XIAOMI_TYPE)
     db_session.add(sensor)
     db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_latest_row()])
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
 
     assert plant_proxy.plant_latest_entries(db_session, _cfg(), [uuid.uuid4()]) == []
 
@@ -184,7 +192,7 @@ def test_fetch_meter_readings_maps_fields_and_sorts_desc(monkeypatch):
     ]
     assert result[0].temperature_c == 22.0
     assert result[0].humidity_pct == 32.0
-    assert captured["path"] == f"/sensors/meter/{METER_MAC}/readings"
+    assert captured["path"] == "/sensors/south/readings"
     assert captured["params"]["max_points"] == 48
     assert "start_ts" in captured["params"] and "end_ts" in captured["params"]
 
@@ -203,7 +211,7 @@ def test_meter_latest_resolves_existing_sensor(db_session, monkeypatch):
     sensor = Sensor(mac=METER_MAC, name="South", type=SWITCHBOT_TYPE)
     db_session.add(sensor)
     db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_meter_latest_row()])
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
 
     out = plant_proxy.meter_latest_entries(db_session, _cfg(), None)
 
@@ -215,7 +223,7 @@ def test_meter_latest_resolves_existing_sensor(db_session, monkeypatch):
 
 
 def test_meter_latest_provisions_missing_sensor(db_session, monkeypatch):
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_meter_latest_row()])
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
 
     out = plant_proxy.meter_latest_entries(db_session, _cfg(), None)
 
@@ -277,7 +285,7 @@ def test_meter_latest_v2_endpoint_empty_when_proxy_unconfigured(app):
 
     client = TestClient(app)
     response = client.get(
-        "/v2/sensors/meter/latest",
+        "/sensors/meter/latest",
         headers={"x-api-key": app.state.config.api_key},
     )
 
@@ -351,7 +359,7 @@ def test_sensors_latest_v2_endpoint_uses_retry_hint(app, monkeypatch):
     )
 
     client = TestClient(app)
-    response = client.get("/v2/sensors/latest", headers={"x-api-key": app.state.config.api_key})
+    response = client.get("/sensors/latest", headers={"x-api-key": app.state.config.api_key})
 
     assert response.status_code == 200
     body = response.json()
@@ -435,7 +443,7 @@ def test_sensor_readings_proxies_switchbot_to_meter_endpoint(app, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert captured["path"] == f"/sensors/meter/{METER_MAC}/readings"
+    assert captured["path"] == "/sensors/south/readings"
     rows = response.json()
     assert len(rows) == 1
     assert rows[0]["temperature_c"] == 22.0
