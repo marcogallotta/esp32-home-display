@@ -1,17 +1,18 @@
 """Proxy to the external plant-monitoring backend (Raspberry Pi, GATT-based).
 
-The Pi owns Flower Care (Xiaomi) data now: it reads over an active BLE GATT
-connection and persists history. This module adapts the Pi's API to the shapes
-the dashboard already expects, so the frontend stays single-origin against this
-server and unaware that Xiaomi data lives elsewhere.
+The Pi owns SwitchBot meter and Flower Care (Xiaomi) data: SwitchBot is read
+directly via BLE and persisted on the Pi; Flower Care is read over an active
+GATT connection. This module adapts the Pi's API to the shapes the dashboard
+already expects, so the frontend stays single-origin and unaware that sensor
+data lives elsewhere.
 
 Field/shape mapping (kept here so the Pi API stays minimal):
   Pi `recorded_at` -> dashboard `timestamp`
-  Pi `lux`         -> dashboard `light_lux`
+  Pi `lux`         -> dashboard `light_lux`  (Flower Care only)
   Pi returns ASC; the dashboard contract is DESC (frontend re-reverses to ASC).
   Pi latest is a top-level list; dashboard latest wraps each row with sensor_id.
 
-Auth: Bearer token (PLANT_MONITOR_API_KEY), honored only on the flower-care paths.
+Auth: Bearer token (PLANT_MONITOR_API_KEY).
 """
 
 import logging
@@ -23,8 +24,9 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import switchbot as sb
 from .config import Config
-from .models import XIAOMI_TYPE, Sensor
+from .models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
 from .service import get_sensor_by_mac
 
 logger = logging.getLogger(__name__)
@@ -142,6 +144,87 @@ def plant_latest_entries(
                     "moisture_pct": row.get("moisture_pct"),
                     "light_lux": row.get("lux"),
                     "conductivity_us_cm": row.get("conductivity_us_cm"),
+                },
+            }
+        )
+    return out
+
+
+def _ensure_meter_sensor(db: Session, mac: str, name: str) -> Sensor | None:
+    sensor_row = get_sensor_by_mac(db, mac)
+    if sensor_row is not None:
+        return sensor_row
+    sensor_row = Sensor(mac=mac, name=name, type=SWITCHBOT_TYPE)
+    db.add(sensor_row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        sensor_row = get_sensor_by_mac(db, mac)
+    return sensor_row
+
+
+def fetch_meter_readings(
+    config: Config,
+    mac: str,
+    start_ts: datetime | None,
+    end_ts: datetime | None,
+    max_points: int | None,
+) -> list[sb.ReadingOut]:
+    """Window-mode readings for one SwitchBot meter, mapped to DESC order."""
+    if start_ts is None or end_ts is None:
+        return []
+
+    params: dict[str, Any] = {
+        "start_ts": start_ts.isoformat(),
+        "end_ts": end_ts.isoformat(),
+    }
+    if max_points is not None:
+        params["max_points"] = max_points
+
+    rows = _get(config, f"/sensors/meter/{mac}/readings", params)
+    readings = [
+        sb.ReadingOut(
+            timestamp=r["recorded_at"],
+            temperature_c=r["temperature_c"],
+            humidity_pct=r["humidity_pct"],
+        )
+        for r in rows
+    ]
+    readings.sort(key=lambda r: r.timestamp, reverse=True)
+    return readings
+
+
+def meter_latest_entries(
+    db: Session,
+    config: Config,
+    sensor_ids: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Latest SwitchBot meter readings in the dashboard's LatestReadingOut shape.
+
+    Degrades gracefully: if the Pi is unreachable the dashboard still renders
+    the other sensors."""
+    try:
+        rows = _get(config, "/sensors/meter/latest")
+    except httpx.HTTPError as exc:
+        logger.warning("plant monitor meter latest fetch failed: %s", exc)
+        return []
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        sensor_row = _ensure_meter_sensor(db, row["mac"], row["name"])
+        if sensor_row is None:
+            continue
+        if sensor_ids is not None and sensor_row.id not in sensor_ids:
+            continue
+        out.append(
+            {
+                "mac": sensor_row.mac,
+                "sensor_id": sensor_row.id,
+                "latest_timestamp": row["recorded_at"],
+                "reading": {
+                    "temperature_c": row.get("temperature_c"),
+                    "humidity_pct": row.get("humidity_pct"),
                 },
             }
         )

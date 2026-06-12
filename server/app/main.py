@@ -257,9 +257,11 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
     ):
         config = request.app.state.config
         sensor_ids = [sensor_id] if sensor_id is not None else None
-        readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         if config.plant_monitor_url:
+            readings = plant_proxy.meter_latest_entries(db, config, sensor_ids)
             readings += plant_proxy.plant_latest_entries(db, config, sensor_ids)
+        else:
+            readings = fetch_latest_readings(db, SENSOR_SPECS, sensor_ids=sensor_ids)
         return LatestSensorsOut(sensors=readings)
 
     @sensor_router.get("/sensors/{sensor_id}/readings")
@@ -287,6 +289,15 @@ def create_app(config: Config, engine, session_factory) -> FastAPI:
             if not config.plant_monitor_url:
                 return []
             return plant_proxy.fetch_plant_readings(
+                config=config,
+                mac=sensor_row.mac,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                max_points=max_points,
+            )
+
+        if sensor_row.type == SWITCHBOT_TYPE and config.plant_monitor_url:
+            return plant_proxy.fetch_meter_readings(
                 config=config,
                 mac=sensor_row.mac,
                 start_ts=start_ts,

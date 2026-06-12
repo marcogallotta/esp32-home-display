@@ -7,9 +7,24 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import plant_proxy
-from app.models import XIAOMI_TYPE, Sensor
+from app.models import SWITCHBOT_TYPE, XIAOMI_TYPE, Sensor
+from tests.helpers import make_switchbot_payload, post_switchbot
 
 MAC = "5C:85:7E:14:43:45"
+METER_MAC = "D5:3A:42:86:2C:63"
+
+
+def _meter_latest_row(**overrides):
+    row = {
+        "mac": METER_MAC,
+        "name": "South",
+        "recorded_at": "2026-06-12T06:30:00+00:00",
+        "temperature_c": 22.2,
+        "humidity_pct": 32.0,
+        "stale": False,
+    }
+    row.update(overrides)
+    return row
 
 
 def _cfg():
@@ -143,6 +158,82 @@ def test_plant_latest_respects_sensor_id_filter(db_session, monkeypatch):
     assert out[0]["sensor_id"] == sensor.id
 
 
+# --- fetch_meter_readings ---
+
+def test_fetch_meter_readings_maps_fields_and_sorts_desc(monkeypatch):
+    rows = [
+        {"recorded_at": "2026-06-12T02:00:00+00:00", "temperature_c": 18.0, "humidity_pct": 30.0},
+        {"recorded_at": "2026-06-12T06:00:00+00:00", "temperature_c": 22.0, "humidity_pct": 32.0},
+    ]
+    captured = {}
+
+    def fake_get(config, path, params=None):
+        captured["path"] = path
+        captured["params"] = params
+        return rows
+
+    monkeypatch.setattr(plant_proxy, "_get", fake_get)
+
+    start = datetime(2026, 6, 12, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 12, 8, 0, tzinfo=timezone.utc)
+    result = plant_proxy.fetch_meter_readings(_cfg(), METER_MAC, start, end, 48)
+
+    assert [r.timestamp for r in result] == [
+        datetime(2026, 6, 12, 6, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 12, 2, 0, tzinfo=timezone.utc),
+    ]
+    assert result[0].temperature_c == 22.0
+    assert result[0].humidity_pct == 32.0
+    assert captured["path"] == f"/sensors/meter/{METER_MAC}/readings"
+    assert captured["params"]["max_points"] == 48
+    assert "start_ts" in captured["params"] and "end_ts" in captured["params"]
+
+
+def test_fetch_meter_readings_requires_window(monkeypatch):
+    def fail(*args, **kwargs):
+        pytest.fail("_get should not be called without a window")
+
+    monkeypatch.setattr(plant_proxy, "_get", fail)
+    assert plant_proxy.fetch_meter_readings(_cfg(), METER_MAC, None, None, None) == []
+
+
+# --- meter_latest_entries ---
+
+def test_meter_latest_resolves_existing_sensor(db_session, monkeypatch):
+    sensor = Sensor(mac=METER_MAC, name="South", type=SWITCHBOT_TYPE)
+    db_session.add(sensor)
+    db_session.commit()
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_meter_latest_row()])
+
+    out = plant_proxy.meter_latest_entries(db_session, _cfg(), None)
+
+    assert len(out) == 1
+    assert out[0]["mac"] == METER_MAC
+    assert out[0]["sensor_id"] == sensor.id
+    assert out[0]["latest_timestamp"] == "2026-06-12T06:30:00+00:00"
+    assert out[0]["reading"] == {"temperature_c": 22.2, "humidity_pct": 32.0}
+
+
+def test_meter_latest_provisions_missing_sensor(db_session, monkeypatch):
+    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: [_meter_latest_row()])
+
+    out = plant_proxy.meter_latest_entries(db_session, _cfg(), None)
+
+    assert len(out) == 1
+    row = db_session.query(Sensor).filter_by(mac=METER_MAC).one()
+    assert row.type == SWITCHBOT_TYPE
+    assert row.name == "South"
+    assert out[0]["sensor_id"] == row.id
+
+
+def test_meter_latest_graceful_when_pi_unreachable(db_session, monkeypatch):
+    def boom(*args, **kwargs):
+        raise httpx.ConnectError("pi down")
+
+    monkeypatch.setattr(plant_proxy, "_get", boom)
+    assert plant_proxy.meter_latest_entries(db_session, _cfg(), None) == []
+
+
 # --- endpoint integration ---
 
 def test_sensors_latest_includes_plant_when_configured(app, monkeypatch):
@@ -151,7 +242,7 @@ def test_sensors_latest_includes_plant_when_configured(app, monkeypatch):
     monkeypatch.setattr(
         plant_proxy,
         "_get",
-        lambda config, path, params=None: [_latest_row()] if path.endswith("/latest") else [],
+        lambda config, path, params=None: [_latest_row()] if "flower-care" in path else [],
     )
 
     client = TestClient(app)
@@ -162,3 +253,59 @@ def test_sensors_latest_includes_plant_when_configured(app, monkeypatch):
     assert len(plant) == 1
     assert plant[0]["reading"]["moisture_pct"] == 28
     assert plant[0]["reading"]["light_lux"] == 40663
+
+
+def test_sensors_latest_includes_meter_when_configured(app, monkeypatch):
+    app.state.config.plant_monitor_url = "http://pi:8001/"
+    app.state.config.plant_monitor_api_token = "t"
+
+    def fake_get(config, path, params=None):
+        if "meter" in path:
+            return [_meter_latest_row()]
+        return []
+
+    monkeypatch.setattr(plant_proxy, "_get", fake_get)
+
+    client = TestClient(app)
+    response = client.get("/sensors/latest", headers={"x-api-key": app.state.config.api_key})
+
+    assert response.status_code == 200
+    meters = [s for s in response.json()["sensors"] if s["mac"] == METER_MAC]
+    assert len(meters) == 1
+    assert meters[0]["reading"] == {"temperature_c": 22.2, "humidity_pct": 32.0}
+    assert meters[0]["latest_timestamp"] == "2026-06-12T06:30:00Z"
+
+
+def test_sensor_readings_proxies_switchbot_to_meter_endpoint(app, monkeypatch):
+    app.state.config.plant_monitor_url = "http://pi:8001/"
+    app.state.config.plant_monitor_api_token = "t"
+
+    api_key = app.state.config.api_key
+    client = TestClient(app)
+
+    # Provision a SwitchBot sensor via live ingest so the DB has a sensor row.
+    post_switchbot(client, api_key, make_switchbot_payload(mac=METER_MAC, name="South"))
+    sensors = client.get("/sensors", headers={"x-api-key": api_key}).json()
+    sensor_id = next(s["id"] for s in sensors if s["mac"] == METER_MAC)
+
+    captured = {}
+
+    def fake_get(config, path, params=None):
+        captured["path"] = path
+        captured["params"] = params
+        return [{"recorded_at": "2026-06-12T06:00:00+00:00", "temperature_c": 22.0, "humidity_pct": 31.0}]
+
+    monkeypatch.setattr(plant_proxy, "_get", fake_get)
+
+    response = client.get(
+        f"/sensors/{sensor_id}/readings",
+        headers={"x-api-key": api_key},
+        params={"start_ts": "2026-06-12T00:00:00Z", "end_ts": "2026-06-12T08:00:00Z"},
+    )
+
+    assert response.status_code == 200
+    assert captured["path"] == f"/sensors/meter/{METER_MAC}/readings"
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["temperature_c"] == 22.0
+    assert rows[0]["humidity_pct"] == 31.0
