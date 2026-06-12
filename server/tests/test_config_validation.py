@@ -3,7 +3,14 @@ import os
 
 import pytest
 
-from app.config import Config, DatabaseConfig, LevoitAhControllerConfig, load_config, validate_config
+from app.config import (
+    Config,
+    DatabaseConfig,
+    LevoitAhControllerConfig,
+    PlantSensorConfig,
+    load_config,
+    validate_config,
+)
 
 
 def _db():
@@ -454,3 +461,81 @@ def test_levoit_default_overrides_from_app_json(tmp_path, monkeypatch):
     assert cfg.levoit_ah_controller.poll_interval_seconds == 120
     assert cfg.levoit_ah_controller.humidity_change_threshold == 0.5
     assert cfg.levoit_ah_controller.minimum_humidity == 40  # default unchanged
+
+
+# --- Plant monitor sensor mappings ---
+
+def test_plant_monitor_sensor_mapping_valid_passes():
+    cfg = _config(
+        plant_monitor_sensors=[
+            PlantSensorConfig(mac="AA:BB:CC:DD:EE:FF", slug="bed", name="Bed"),
+        ]
+    )
+    validate_config(cfg, env="dev")
+
+
+def test_plant_monitor_sensor_mapping_invalid_mac_fails():
+    cfg = _config(
+        plant_monitor_sensors=[
+            PlantSensorConfig(mac="not-a-mac", slug="bed", name="Bed"),
+        ]
+    )
+    with pytest.raises(ValueError, match="plant_monitor_sensors.*mac"):
+        validate_config(cfg, env="dev")
+
+
+def test_plant_monitor_sensor_mapping_duplicate_slug_fails():
+    cfg = _config(
+        plant_monitor_sensors=[
+            PlantSensorConfig(mac="AA:BB:CC:DD:EE:FF", slug="bed", name="Bed"),
+            PlantSensorConfig(mac="11:22:33:44:55:66", slug="bed", name="Other"),
+        ]
+    )
+    with pytest.raises(ValueError, match="duplicate slug"):
+        validate_config(cfg, env="dev")
+
+
+def test_plant_monitor_sensor_mapping_duplicate_mac_fails():
+    cfg = _config(
+        plant_monitor_sensors=[
+            PlantSensorConfig(mac="AA:BB:CC:DD:EE:FF", slug="bed", name="Bed"),
+            PlantSensorConfig(mac="AA:BB:CC:DD:EE:FF", slug="other", name="Other"),
+        ]
+    )
+    with pytest.raises(ValueError, match="duplicate MAC"):
+        validate_config(cfg, env="dev")
+
+
+def test_load_config_plant_monitor_sensors_parse_and_normalize(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+        "plant_monitor_sensors": [
+            {"mac": "aa:bb:cc:dd:ee:ff", "slug": "bed", "name": "Bed"},
+        ],
+    }))
+    _set_base_env(monkeypatch)
+
+    cfg = load_config(config_dir=config_dir)
+
+    assert cfg.plant_monitor_sensors == [
+        PlantSensorConfig(mac="AA:BB:CC:DD:EE:FF", slug="bed", name="Bed"),
+    ]
+
+
+def test_load_config_plant_monitor_sensors_invalid_item_fails(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "app.json").write_text(json.dumps({
+        "session_secure": False,
+        "database": {"driver": "postgresql+psycopg"},
+        "plant_monitor_sensors": [
+            {"mac": "not-a-mac", "slug": "bed", "name": "Bed"},
+        ],
+    }))
+    _set_base_env(monkeypatch)
+
+    with pytest.raises(ValueError, match="plant_monitor_sensors.*mac"):
+        load_config(config_dir=config_dir)

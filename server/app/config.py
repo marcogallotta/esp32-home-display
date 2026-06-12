@@ -209,6 +209,7 @@ def validate_config(config: Config, env: str) -> None:
     _validate_rate_limit(errors, "rate_limits.login", rl.login)
 
     _validate_levoit_ah_controller(errors, config.levoit_ah_controller)
+    _validate_plant_monitor_sensors(errors, config.plant_monitor_sensors)
 
     if errors:
         raise ValueError("Invalid configuration:\n" + "\n".join(f"  {e}" for e in errors))
@@ -258,6 +259,38 @@ def _validate_levoit_ah_controller(errors: list[str], cfg: LevoitAhControllerCon
         errors.append(f"{p}.humidity_change_threshold: must be >= 0")
 
 
+def _validate_plant_monitor_sensors(errors: list[str], sensors: object) -> None:
+    p = "plant_monitor_sensors"
+    if not isinstance(sensors, list):
+        errors.append(f"{p}: must be a list")
+        return
+
+    seen_macs: set[str] = set()
+    seen_slugs: set[str] = set()
+    for index, sensor in enumerate(sensors):
+        prefix = f"{p}[{index}]"
+        if not isinstance(sensor, PlantSensorConfig):
+            errors.append(f"{prefix}: must be a PlantSensorConfig")
+            continue
+
+        if not isinstance(sensor.mac, str) or not MAC_ADDRESS_RE.fullmatch(sensor.mac):
+            errors.append(f"{prefix}.mac: invalid MAC address format")
+        elif sensor.mac in seen_macs:
+            errors.append(f"{prefix}.mac: duplicate MAC address")
+        else:
+            seen_macs.add(sensor.mac)
+
+        if not isinstance(sensor.slug, str) or not sensor.slug:
+            errors.append(f"{prefix}.slug: must be a non-empty string")
+        elif sensor.slug in seen_slugs:
+            errors.append(f"{prefix}.slug: duplicate slug")
+        else:
+            seen_slugs.add(sensor.slug)
+
+        if not isinstance(sensor.name, str) or not sensor.name:
+            errors.append(f"{prefix}.name: must be a non-empty string")
+
+
 def _parse_levoit_ah_controller(raw: object) -> LevoitAhControllerConfig:
     if raw is None:
         return LevoitAhControllerConfig()
@@ -285,17 +318,33 @@ def _parse_levoit_ah_controller(raw: object) -> LevoitAhControllerConfig:
     return LevoitAhControllerConfig(**kwargs)
 
 
-def _parse_plant_sensors(raw: list) -> list[PlantSensorConfig]:
+def _parse_plant_sensors(raw: object) -> list[PlantSensorConfig]:
+    if not isinstance(raw, list):
+        raise ValueError("plant_monitor_sensors: must be a list")
+
     sensors = []
-    for item in raw:
+    seen_macs: set[str] = set()
+    seen_slugs: set[str] = set()
+    for index, item in enumerate(raw):
         if not isinstance(item, dict):
-            continue
+            raise ValueError(f"plant_monitor_sensors[{index}]: must be an object")
         mac = item.get("mac")
         slug = item.get("slug")
-        name = item.get("name", "")
-        if not isinstance(mac, str) or not isinstance(slug, str):
-            continue
-        sensors.append(PlantSensorConfig(mac=mac.upper(), slug=slug, name=name))
+        name = item.get("name")
+        if not isinstance(mac, str) or not MAC_ADDRESS_RE.fullmatch(mac):
+            raise ValueError(f"plant_monitor_sensors[{index}].mac: invalid MAC address format")
+        if not isinstance(slug, str) or not slug:
+            raise ValueError(f"plant_monitor_sensors[{index}].slug: must be a non-empty string")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"plant_monitor_sensors[{index}].name: must be a non-empty string")
+        normalized_mac = mac.upper()
+        if normalized_mac in seen_macs:
+            raise ValueError(f"plant_monitor_sensors[{index}].mac: duplicate MAC address")
+        if slug in seen_slugs:
+            raise ValueError(f"plant_monitor_sensors[{index}].slug: duplicate slug")
+        seen_macs.add(normalized_mac)
+        seen_slugs.add(slug)
+        sensors.append(PlantSensorConfig(mac=normalized_mac, slug=slug, name=name))
     return sensors
 
 
