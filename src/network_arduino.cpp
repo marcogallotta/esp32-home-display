@@ -147,9 +147,10 @@ private:
 
         if (request.method == Method::Post) {
             http.addHeader("Content-Type", request.contentType.c_str());
-            for (const auto& [key, value] : request.headers) {
-                http.addHeader(key.c_str(), value.c_str());
-            }
+        }
+
+        for (const auto& [key, value] : request.headers) {
+            http.addHeader(key.c_str(), value.c_str());
         }
 
         int code = 0;
