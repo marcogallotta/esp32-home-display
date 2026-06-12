@@ -33,6 +33,7 @@ COMMON_SRC := \
 	src/salah/state.cpp \
 	src/salah/service.cpp \
 	src/sensor_readings.cpp \
+	src/time_utils.cpp \
 	src/timing.cpp \
 	src/update.cpp \
 	src/ui/display.cpp \
@@ -50,6 +51,7 @@ TEST_SRC := \
 	tests/salah_service.cpp \
 	tests/sensor_readings.cpp \
 	tests/network_connect_budget.cpp \
+	tests/time_utils.cpp \
 	tests/timing.cpp \
 	tests/ui_state.cpp \
 	$(COMMON_SRC)

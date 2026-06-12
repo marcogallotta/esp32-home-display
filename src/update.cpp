@@ -14,6 +14,7 @@
 #include "network.h"
 #include "salah/service.h"
 #include "salah/state.h"
+#include "time_utils.h"
 
 namespace {
 
@@ -39,17 +40,9 @@ std::optional<std::int64_t> parseIso8601Utc(const char* s) {
     if (std::sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) != 6) {
         return std::nullopt;
     }
-    std::tm t{};
-    t.tm_year  = y - 1900;
-    t.tm_mon   = mo - 1;
-    t.tm_mday  = d;
-    t.tm_hour  = h;
-    t.tm_min   = mi;
-    t.tm_sec   = sec;
-    t.tm_isdst = 0;
-    const std::time_t epoch = timegm(&t);
-    if (epoch == static_cast<std::time_t>(-1)) return std::nullopt;
-    return static_cast<std::int64_t>(epoch);
+    const std::int64_t epoch = time_utils::utcBrokenDownToEpoch(y, mo, d, h, mi, sec);
+    if (epoch < 0) return std::nullopt;
+    return epoch;
 }
 
 std::string switchbotLabel(const SwitchbotSensorState& row) {
