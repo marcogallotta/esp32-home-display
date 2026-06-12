@@ -234,6 +234,57 @@ def test_meter_latest_graceful_when_pi_unreachable(db_session, monkeypatch):
     assert plant_proxy.meter_latest_entries(db_session, _cfg(), None) == []
 
 
+# --- meter_latest_v2 ---
+
+def test_meter_latest_v2_proxies_upstream_shape(monkeypatch):
+    captured = {}
+
+    def fake_get(config, path, params=None):
+        captured["path"] = path
+        return {
+            "sensors": [_meter_latest_row()],
+            "retry_after_secs": 177,
+        }
+
+    monkeypatch.setattr(plant_proxy, "_get", fake_get)
+
+    out = plant_proxy.meter_latest_v2(_cfg())
+
+    assert captured["path"] == "/v2/sensors/meter/latest"
+    assert out == {
+        "sensors": [_meter_latest_row()],
+        "retry_after_secs": 177,
+    }
+
+
+def test_meter_latest_v2_graceful_when_pi_rejects_auth(monkeypatch):
+    def boom(*args, **kwargs):
+        request = httpx.Request("GET", "http://pi:8001/v2/sensors/meter/latest")
+        response = httpx.Response(401, request=request)
+        raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
+
+    monkeypatch.setattr(plant_proxy, "_get", boom)
+
+    assert plant_proxy.meter_latest_v2(_cfg()) == {
+        "sensors": [],
+        "retry_after_secs": 300,
+    }
+
+
+def test_meter_latest_v2_endpoint_empty_when_proxy_unconfigured(app):
+    app.state.config.plant_monitor_url = None
+    app.state.config.plant_monitor_api_token = None
+
+    client = TestClient(app)
+    response = client.get(
+        "/v2/sensors/meter/latest",
+        headers={"x-api-key": app.state.config.api_key},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"sensors": [], "retry_after_secs": 300}
+
+
 # --- endpoint integration ---
 
 def test_sensors_latest_includes_plant_when_configured(app, monkeypatch):
