@@ -26,8 +26,9 @@ void markSalahUpdated(std::time_t now, TimingState& timing) {
     timing.nextSalahDueEpochS = nextMinuteBoundary(now);
 }
 
-void markSensorsUpdated(std::time_t now, TimingState& timing) {
-    timing.nextSensorsDueEpochS = now + 5 * 60;
+void markSensorsUpdated(std::time_t now, TimingState& timing, int retryAfterSecs) {
+    retryAfterSecs = std::clamp(retryAfterSecs, 30, 60 * 60);
+    timing.nextSensorsDueEpochS = now + static_cast<std::time_t>(retryAfterSecs);
 }
 
 void markForecastUpdatedSuccess(std::time_t now, const Config& config, TimingState& timing) {

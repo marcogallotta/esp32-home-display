@@ -15,7 +15,7 @@ bool areSensorsDue(std::time_t now, const TimingState& timing);
 bool isForecastDue(std::time_t now, const TimingState& timing);
 
 void markSalahUpdated(std::time_t now, TimingState& timing);
-void markSensorsUpdated(std::time_t now, TimingState& timing);
+void markSensorsUpdated(std::time_t now, TimingState& timing, int retryAfterSecs = 5 * 60);
 void markForecastUpdatedSuccess(std::time_t now, const Config& config, TimingState& timing);
 void markForecastUpdatedFailure(std::time_t now, TimingState& timing);
 

@@ -137,8 +137,8 @@ void updateSwitchbotIfDue(AppContext& app, std::time_t now) {
 
     // Advance timer regardless of success/failure to prevent hammering on error.
     // A failed fetch leaves the previous reading in state (stale but visible).
-    updateSwitchbotFromBackend(app.config, now, app.currentState);
-    markSensorsUpdated(now, app.timing);
+    const auto result = updateSwitchbotFromBackend(app.config, now, app.currentState);
+    markSensorsUpdated(now, app.timing, result.retryAfterSecs);
 }
 
 void updateForecastIfDue(AppContext& app, std::time_t now) {

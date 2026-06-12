@@ -53,6 +53,7 @@ TEST_SRC := \
 	tests/network_connect_budget.cpp \
 	tests/time_utils.cpp \
 	tests/timing.cpp \
+	tests/update.cpp \
 	tests/ui_state.cpp \
 	$(COMMON_SRC)
 

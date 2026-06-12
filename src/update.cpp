@@ -1,6 +1,7 @@
 #include "update.h"
 
 #include <cstdint>
+#include <cctype>
 #include <cstdio>
 #include <iomanip>
 #include <map>
@@ -22,6 +23,34 @@ std::string formatFloat1(float value) {
     char buf[24];
     std::snprintf(buf, sizeof(buf), "%.1f", value);
     return std::string(buf);
+}
+
+
+std::string normalizeMacForLookup(const char* mac) {
+    if (mac == nullptr) return {};
+
+    std::string hex;
+    hex.reserve(12);
+    for (const char* p = mac; *p != '\0'; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        if (*p == ':' || *p == '-' || std::isspace(c)) {
+            continue;
+        }
+        if (!std::isxdigit(c)) {
+            return {};
+        }
+        hex.push_back(static_cast<char>(std::toupper(c)));
+    }
+
+    if (hex.size() != 12) return {};
+
+    std::string out;
+    out.reserve(17);
+    for (std::size_t i = 0; i < hex.size(); ++i) {
+        if (i != 0 && i % 2 == 0) out.push_back(':');
+        out.push_back(hex[i]);
+    }
+    return out;
 }
 
 std::string formatDate(const std::tm& time) {
@@ -111,68 +140,49 @@ void updateSalahState(
     state.hasSalah = true;
 }
 
-bool updateSwitchbotFromBackend(
+SwitchbotBackendUpdateResult applySwitchbotBackendResponse(
     const Config& config,
+    const std::string& body,
     std::time_t now,
     State& state
 ) {
-    auto& net = network::platform(config.wifi);
-
-    std::string url = config.api.baseUrl;
-    if (!url.empty() && url.back() == '/') url.pop_back();
-    url += "/sensors/latest";
-
-    network::Request req;
-    req.method = network::Method::Get;
-    req.url = url;
-    req.pem = config.api.pem;
-    req.headers["x-api-key"] = config.api.apiKey;
-
-    const auto r = net.request(req);
-
-    if (r.transport != network::TransportResult::Ok) {
-        logLine(LogLevel::Warn,
-            "Backend sensor fetch failed: " + transportResultName(r.transport) + ", " + r.error);
-        return false;
-    }
-    if (r.statusCode != 200) {
-        logLine(LogLevel::Warn,
-            "Backend sensor fetch HTTP " + std::to_string(r.statusCode));
-        return false;
-    }
+    SwitchbotBackendUpdateResult result;
 
     StaticJsonDocument<4096> doc;
-    if (deserializeJson(doc, r.body) != DeserializationError::Ok) {
+    if (deserializeJson(doc, body) != DeserializationError::Ok) {
         logLine(LogLevel::Warn, "Backend sensor fetch: JSON parse failed");
-        return false;
+        return result;
     }
 
-    const JsonArray sensors = doc["sensors"];
+    const JsonArray sensors = doc["sensors"].as<JsonArray>();
     if (sensors.isNull()) {
         logLine(LogLevel::Warn, "Backend sensor fetch: missing sensors array");
-        return false;
+        return result;
     }
 
-    // Build MAC -> reading map from the response.
-    std::map<std::string, SwitchbotReading> readings;
-    for (const JsonObject entry : sensors) {
-        const char* mac = entry["mac"];
-        if (mac == nullptr) continue;
+    const int retryAfterSecs = doc["retry_after_secs"].as<int>();
+    if (retryAfterSecs > 0) {
+        result.retryAfterSecs = retryAfterSecs;
+    }
 
-        const JsonObject reading = entry["reading"];
-        if (reading.isNull()) continue;
+    // Exact v2 contract from the local proxy:
+    // {sensors:[{mac,name,recorded_at,temperature_c,humidity_pct,stale}], retry_after_secs:int}
+    std::map<std::string, SwitchbotReading> readings;
+    for (JsonObject entry : sensors) {
+        const std::string mac = normalizeMacForLookup(entry["mac"].as<const char*>());
+        if (mac.empty()) continue;
 
         SwitchbotReading rb;
-        if (!reading["temperature_c"].isNull()) {
-            rb.temperatureC = reading["temperature_c"].as<float>();
+        if (!entry["temperature_c"].isNull()) {
+            rb.temperatureC = entry["temperature_c"].as<float>();
         }
-        if (!reading["humidity_pct"].isNull()) {
-            const float h = reading["humidity_pct"].as<float>();
+        if (!entry["humidity_pct"].isNull()) {
+            const float h = entry["humidity_pct"].as<float>();
             if (h >= 0.0f && h <= 255.0f) {
                 rb.humidityPct = static_cast<std::uint8_t>(h);
             }
         }
-        rb.lastSeenEpochS = parseIso8601Utc(entry["latest_timestamp"]);
+        rb.lastSeenEpochS = parseIso8601Utc(entry["recorded_at"].as<const char*>());
 
         readings[mac] = rb;
     }
@@ -185,7 +195,8 @@ bool updateSwitchbotFromBackend(
         row.identity.name = sensorConfig.name;
         row.identity.shortName = sensorConfig.shortName;
 
-        const auto it = readings.find(sensorConfig.mac);
+        const std::string sensorMac = normalizeMacForLookup(sensorConfig.mac.c_str());
+        const auto it = readings.find(sensorMac);
         if (it == readings.end()) {
             row.reading = SwitchbotReading{};
         } else {
@@ -194,7 +205,42 @@ bool updateSwitchbotFromBackend(
     }
 
     logSwitchbotSummary(state, now);
-    return true;
+    result.ok = true;
+    return result;
+}
+
+SwitchbotBackendUpdateResult updateSwitchbotFromBackend(
+    const Config& config,
+    std::time_t now,
+    State& state
+) {
+    SwitchbotBackendUpdateResult result;
+    auto& net = network::platform(config.wifi);
+
+    std::string url = config.api.baseUrl;
+    if (!url.empty() && url.back() == '/') url.pop_back();
+    url += "/v2/sensors/meter/latest";
+
+    network::Request req;
+    req.method = network::Method::Get;
+    req.url = url;
+    req.pem = config.api.pem;
+    req.headers["x-api-key"] = config.api.apiKey;
+
+    const auto r = net.request(req);
+
+    if (r.transport != network::TransportResult::Ok) {
+        logLine(LogLevel::Warn,
+            "Backend sensor fetch failed: " + transportResultName(r.transport) + ", " + r.error);
+        return result;
+    }
+    if (r.statusCode != 200) {
+        logLine(LogLevel::Warn,
+            "Backend sensor fetch HTTP " + std::to_string(r.statusCode));
+        return result;
+    }
+
+    return applySwitchbotBackendResponse(config, r.body, now, state);
 }
 
 bool updateForecastState(const Config& config, State& state) {
