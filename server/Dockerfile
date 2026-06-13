@@ -8,7 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic/ alembic/
 COPY alembic.ini .
 COPY app/ app/
-COPY config/logging.yaml config/app.json config/
+COPY config/logging.yaml config/app.json.example config/
+RUN cp config/app.json.example config/app.json
 COPY static/ static/
 COPY tests/ tests/
 COPY tools/ tools/

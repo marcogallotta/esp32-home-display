@@ -26,7 +26,8 @@ services:
     volumes:
       - ./certs:/app/certs:ro
       - ./app:/app/app:ro
-      - ./config:/app/config:ro
+      - ./config/logging.yaml:/app/config/logging.yaml:ro
+      - ./config/app.test.json:/app/config/app.json:ro
       - ./tests:/app/tests:ro
     depends_on:
       db-test:

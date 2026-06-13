@@ -1,12 +1,12 @@
 {
-  "session_secure": true,
+  "session_secure": false,
   "database": {
     "driver": "postgresql+psycopg"
   },
   "rate_limits": {
     "api_key": {
-      "read":       {"limit": 60,  "period": 60},
-      "live_write": {"limit": 10,  "period": 60},
+      "read": {"limit": 60, "period": 60},
+      "live_write": {"limit": 10, "period": 60},
       "bulk_write": {"limit": 120, "period": 60},
       "burst": true
     },
@@ -22,6 +22,7 @@
     "target_absolute_humidity": 8.0
   },
   "plant_monitor_sensors": [
-    {"mac": "11:22:33:44:55:66", "slug": "my-sensor", "name": "My Sensor"}
+    {"mac": "5C:85:7E:14:43:45", "slug": "cilantro", "name": "Cilantro"},
+    {"mac": "D5:3A:42:86:2C:63", "slug": "south", "name": "South"}
   ]
 }
