@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app import plant_proxy
 from app.config import PlantSensorConfig
@@ -154,6 +155,24 @@ def test_plant_latest_skips_existing_non_plant_sensor(db_session, monkeypatch):
     assert plant_proxy.plant_latest_entries(db_session, _cfg(), None) == []
 
 
+def test_ensure_plant_sensor_rechecks_type_after_integrity_error(db_session, monkeypatch):
+    calls = []
+    wrong_type = Sensor(mac=MAC, name="Wrong type", type=SWITCHBOT_TYPE)
+
+    def fake_get_sensor_by_mac(db, mac):
+        calls.append(mac)
+        return None if len(calls) == 1 else wrong_type
+
+    def fail_commit():
+        raise IntegrityError("insert", {}, Exception("duplicate"))
+
+    monkeypatch.setattr(plant_proxy, "get_sensor_by_mac", fake_get_sensor_by_mac)
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+
+    assert plant_proxy._ensure_plant_sensor(db_session, MAC, "Cilantro") is None
+    assert calls == [MAC, MAC]
+
+
 def test_plant_latest_graceful_when_pi_unreachable(db_session, monkeypatch):
     def boom(*args, **kwargs):
         raise httpx.ConnectError("pi down")
@@ -250,6 +269,24 @@ def test_meter_latest_skips_existing_non_meter_sensor(db_session, monkeypatch):
     monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
 
     assert plant_proxy.meter_latest_entries(db_session, _cfg(), None) == []
+
+
+def test_ensure_meter_sensor_rechecks_type_after_integrity_error(db_session, monkeypatch):
+    calls = []
+    wrong_type = Sensor(mac=METER_MAC, name="Wrong type", type=XIAOMI_TYPE)
+
+    def fake_get_sensor_by_mac(db, mac):
+        calls.append(mac)
+        return None if len(calls) == 1 else wrong_type
+
+    def fail_commit():
+        raise IntegrityError("insert", {}, Exception("duplicate"))
+
+    monkeypatch.setattr(plant_proxy, "get_sensor_by_mac", fake_get_sensor_by_mac)
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+
+    assert plant_proxy._ensure_meter_sensor(db_session, METER_MAC, "South") is None
+    assert calls == [METER_MAC, METER_MAC]
 
 
 def test_meter_latest_graceful_when_pi_unreachable(db_session, monkeypatch):

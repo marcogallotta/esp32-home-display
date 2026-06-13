@@ -74,6 +74,20 @@ def _slug_for_mac(config: Config, mac: str) -> str | None:
     return None
 
 
+def _sensor_if_type(sensor_row: Sensor | None, mac: str, expected_type: int, label: str) -> Sensor | None:
+    if sensor_row is None:
+        return None
+    if sensor_row.type != expected_type:
+        logger.warning(
+            "plant monitor returned %s MAC %s but local sensor type is %s",
+            label,
+            mac,
+            sensor_row.type,
+        )
+        return None
+    return sensor_row
+
+
 def fetch_plant_readings(
     config: Config,
     mac: str,
@@ -112,14 +126,7 @@ def _ensure_plant_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     reset) the sensors-table row -- the old Xiaomi ingest used to do this."""
     sensor_row = get_sensor_by_mac(db, mac)
     if sensor_row is not None:
-        if sensor_row.type != XIAOMI_TYPE:
-            logger.warning(
-                "plant monitor returned plant MAC %s but local sensor type is %s",
-                mac,
-                sensor_row.type,
-            )
-            return None
-        return sensor_row
+        return _sensor_if_type(sensor_row, mac, XIAOMI_TYPE, "plant")
 
     sensor_row = Sensor(mac=mac, name=name, type=XIAOMI_TYPE)
     db.add(sensor_row)
@@ -129,7 +136,7 @@ def _ensure_plant_sensor(db: Session, mac: str, name: str) -> Sensor | None:
         # Concurrent request created it first; re-fetch the winner.
         db.rollback()
         sensor_row = get_sensor_by_mac(db, mac)
-    return sensor_row
+    return _sensor_if_type(sensor_row, mac, XIAOMI_TYPE, "plant")
 
 
 def plant_latest_entries(
@@ -175,14 +182,7 @@ def plant_latest_entries(
 def _ensure_meter_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     sensor_row = get_sensor_by_mac(db, mac)
     if sensor_row is not None:
-        if sensor_row.type != SWITCHBOT_TYPE:
-            logger.warning(
-                "plant monitor returned meter MAC %s but local sensor type is %s",
-                mac,
-                sensor_row.type,
-            )
-            return None
-        return sensor_row
+        return _sensor_if_type(sensor_row, mac, SWITCHBOT_TYPE, "meter")
     sensor_row = Sensor(mac=mac, name=name, type=SWITCHBOT_TYPE)
     db.add(sensor_row)
     try:
@@ -190,7 +190,7 @@ def _ensure_meter_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     except IntegrityError:
         db.rollback()
         sensor_row = get_sensor_by_mac(db, mac)
-    return sensor_row
+    return _sensor_if_type(sensor_row, mac, SWITCHBOT_TYPE, "meter")
 
 
 def fetch_meter_readings(
