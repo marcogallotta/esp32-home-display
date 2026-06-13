@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -111,50 +110,6 @@ def test_fetch_plant_readings_requires_window(monkeypatch):
     assert plant_proxy.fetch_plant_readings(_cfg(), MAC, None, None, None) == []
 
 
-# --- plant_latest_entries ---
-
-def test_plant_latest_resolves_existing_sensor(db_session, monkeypatch):
-    sensor = Sensor(mac=MAC, name="Cilantro", type=XIAOMI_TYPE)
-    db_session.add(sensor)
-    db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
-
-    out = plant_proxy.plant_latest_entries(db_session, _cfg(), None)
-
-    assert len(out) == 1
-    entry = out[0]
-    assert entry["mac"] == MAC
-    assert entry["sensor_id"] == sensor.id
-    assert entry["latest_timestamp"] == "2026-06-11T14:15:00+00:00"
-    assert entry["reading"] == {
-        "temperature_c": 27.6,
-        "moisture_pct": 28,
-        "light_lux": 40663,
-        "conductivity_us_cm": 205,
-    }
-
-
-def test_plant_latest_provisions_missing_sensor(db_session, monkeypatch):
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
-
-    out = plant_proxy.plant_latest_entries(db_session, _cfg(), None)
-
-    assert len(out) == 1
-    row = db_session.query(Sensor).filter_by(mac=MAC).one()
-    assert row.type == XIAOMI_TYPE
-    assert row.name == "Cilantro"
-    assert out[0]["sensor_id"] == row.id
-
-
-def test_plant_latest_skips_existing_non_plant_sensor(db_session, monkeypatch):
-    sensor = Sensor(mac=MAC, name="Wrong type", type=SWITCHBOT_TYPE)
-    db_session.add(sensor)
-    db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
-
-    assert plant_proxy.plant_latest_entries(db_session, _cfg(), None) == []
-
-
 def test_ensure_plant_sensor_rechecks_type_after_integrity_error(db_session, monkeypatch):
     calls = []
     wrong_type = Sensor(mac=MAC, name="Wrong type", type=SWITCHBOT_TYPE)
@@ -171,28 +126,6 @@ def test_ensure_plant_sensor_rechecks_type_after_integrity_error(db_session, mon
 
     assert plant_proxy._ensure_plant_sensor(db_session, MAC, "Cilantro") is None
     assert calls == [MAC, MAC]
-
-
-def test_plant_latest_graceful_when_pi_unreachable(db_session, monkeypatch):
-    def boom(*args, **kwargs):
-        raise httpx.ConnectError("pi down")
-
-    monkeypatch.setattr(plant_proxy, "_get", boom)
-    assert plant_proxy.plant_latest_entries(db_session, _cfg(), None) == []
-
-
-def test_plant_latest_respects_sensor_id_filter(db_session, monkeypatch):
-    sensor = Sensor(mac=MAC, name="Cilantro", type=XIAOMI_TYPE)
-    db_session.add(sensor)
-    db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_latest_row()]})
-
-    assert plant_proxy.plant_latest_entries(db_session, _cfg(), [uuid.uuid4()]) == []
-
-    out = plant_proxy.plant_latest_entries(db_session, _cfg(), [sensor.id])
-    assert len(out) == 1
-    assert out[0]["sensor_id"] == sensor.id
-
 
 # --- fetch_meter_readings ---
 
@@ -233,44 +166,6 @@ def test_fetch_meter_readings_requires_window(monkeypatch):
     assert plant_proxy.fetch_meter_readings(_cfg(), METER_MAC, None, None, None) == []
 
 
-# --- meter_latest_entries ---
-
-def test_meter_latest_resolves_existing_sensor(db_session, monkeypatch):
-    sensor = Sensor(mac=METER_MAC, name="South", type=SWITCHBOT_TYPE)
-    db_session.add(sensor)
-    db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
-
-    out = plant_proxy.meter_latest_entries(db_session, _cfg(), None)
-
-    assert len(out) == 1
-    assert out[0]["mac"] == METER_MAC
-    assert out[0]["sensor_id"] == sensor.id
-    assert out[0]["latest_timestamp"] == "2026-06-12T06:30:00+00:00"
-    assert out[0]["reading"] == {"temperature_c": 22.2, "humidity_pct": 32.0}
-
-
-def test_meter_latest_provisions_missing_sensor(db_session, monkeypatch):
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
-
-    out = plant_proxy.meter_latest_entries(db_session, _cfg(), None)
-
-    assert len(out) == 1
-    row = db_session.query(Sensor).filter_by(mac=METER_MAC).one()
-    assert row.type == SWITCHBOT_TYPE
-    assert row.name == "South"
-    assert out[0]["sensor_id"] == row.id
-
-
-def test_meter_latest_skips_existing_non_meter_sensor(db_session, monkeypatch):
-    sensor = Sensor(mac=METER_MAC, name="Wrong type", type=XIAOMI_TYPE)
-    db_session.add(sensor)
-    db_session.commit()
-    monkeypatch.setattr(plant_proxy, "_get", lambda *a, **k: {"sensors": [_meter_latest_row()]})
-
-    assert plant_proxy.meter_latest_entries(db_session, _cfg(), None) == []
-
-
 def test_ensure_meter_sensor_rechecks_type_after_integrity_error(db_session, monkeypatch):
     calls = []
     wrong_type = Sensor(mac=METER_MAC, name="Wrong type", type=XIAOMI_TYPE)
@@ -287,15 +182,6 @@ def test_ensure_meter_sensor_rechecks_type_after_integrity_error(db_session, mon
 
     assert plant_proxy._ensure_meter_sensor(db_session, METER_MAC, "South") is None
     assert calls == [METER_MAC, METER_MAC]
-
-
-def test_meter_latest_graceful_when_pi_unreachable(db_session, monkeypatch):
-    def boom(*args, **kwargs):
-        raise httpx.ConnectError("pi down")
-
-    monkeypatch.setattr(plant_proxy, "_get", boom)
-    assert plant_proxy.meter_latest_entries(db_session, _cfg(), None) == []
-
 
 # --- meter_latest_v2 ---
 

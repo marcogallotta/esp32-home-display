@@ -139,46 +139,6 @@ def _ensure_plant_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     return _sensor_if_type(sensor_row, mac, XIAOMI_TYPE, "plant")
 
 
-def plant_latest_entries(
-    db: Session,
-    config: Config,
-    sensor_ids: list[Any] | None,
-) -> list[dict[str, Any]]:
-    """Latest Flower Care readings in the dashboard's LatestReadingOut shape.
-
-    Resolves each Pi MAC to this server's sensor row (provisioning it from the
-    Pi's identity if missing) for its stable UUID. Degrades gracefully: if the
-    Pi is unreachable the dashboard still renders the other sensors."""
-    try:
-        body = _get(config, "/sensors/flower-care/latest")
-        rows = body.get("sensors", []) if isinstance(body, dict) else []
-    except httpx.HTTPError as exc:
-        logger.warning("plant monitor latest fetch failed: %s", exc)
-        return []
-
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        sensor_row = _ensure_plant_sensor(db, row["mac"], row["name"])
-        if sensor_row is None:
-            continue
-        if sensor_ids is not None and sensor_row.id not in sensor_ids:
-            continue
-        out.append(
-            {
-                "mac": sensor_row.mac,
-                "sensor_id": sensor_row.id,
-                "latest_timestamp": row["recorded_at"],
-                "reading": {
-                    "temperature_c": row.get("temperature_c"),
-                    "moisture_pct": row.get("moisture_pct"),
-                    "light_lux": row.get("lux"),
-                    "conductivity_us_cm": row.get("conductivity_us_cm"),
-                },
-            }
-        )
-    return out
-
-
 def _ensure_meter_sensor(db: Session, mac: str, name: str) -> Sensor | None:
     sensor_row = get_sensor_by_mac(db, mac)
     if sensor_row is not None:
@@ -392,40 +352,3 @@ def latest_v2_entries(
         "sensors": out,
         "retry_after_secs": min(retry_after_values) if retry_after_values else _DEFAULT_METER_RETRY_AFTER_SECS,
     }
-
-
-def meter_latest_entries(
-    db: Session,
-    config: Config,
-    sensor_ids: list[Any] | None,
-) -> list[dict[str, Any]]:
-    """Latest SwitchBot meter readings in the dashboard's LatestReadingOut shape.
-
-    Degrades gracefully: if the Pi is unreachable the dashboard still renders
-    the other sensors."""
-    try:
-        body = _get(config, "/sensors/meter/latest")
-    except httpx.HTTPError as exc:
-        logger.warning("plant monitor meter latest fetch failed: %s", exc)
-        return []
-
-    rows = body.get("sensors", []) if isinstance(body, dict) else []
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        sensor_row = _ensure_meter_sensor(db, row["mac"], row["name"])
-        if sensor_row is None:
-            continue
-        if sensor_ids is not None and sensor_row.id not in sensor_ids:
-            continue
-        out.append(
-            {
-                "mac": sensor_row.mac,
-                "sensor_id": sensor_row.id,
-                "latest_timestamp": row["recorded_at"],
-                "reading": {
-                    "temperature_c": row.get("temperature_c"),
-                    "humidity_pct": row.get("humidity_pct"),
-                },
-            }
-        )
-    return out
