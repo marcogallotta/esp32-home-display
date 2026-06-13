@@ -399,6 +399,60 @@ def test_latest_v2_entries_respects_sensor_id_filter(db_session, monkeypatch):
     assert out["retry_after_secs"] == 177
 
 
+def test_latest_v2_entries_skips_existing_sensors_with_wrong_type(db_session, monkeypatch):
+    db_session.add(Sensor(mac=METER_MAC, name="Meter as plant", type=XIAOMI_TYPE))
+    db_session.add(Sensor(mac=MAC, name="Plant as meter", type=SWITCHBOT_TYPE))
+    db_session.commit()
+
+    monkeypatch.setattr(
+        plant_proxy,
+        "_get",
+        lambda config, path, params=None: (
+            {"sensors": [_meter_latest_row()], "retry_after_secs": 177}
+            if "meter" in path
+            else {"sensors": [_latest_row()], "retry_after_secs": 3400}
+        ),
+    )
+
+    out = plant_proxy.latest_v2_entries(db_session, _cfg(), None)
+
+    assert out == {"sensors": [], "retry_after_secs": 177}
+
+
+def test_latest_v2_entries_skips_malformed_upstream_rows(db_session, monkeypatch):
+    def fake_get(config, path, params=None):
+        if path == "/sensors/meter/latest":
+            return {
+                "sensors": [
+                    None,
+                    {"name": "Missing MAC", "recorded_at": "2026-06-12T06:30:00+00:00"},
+                    {"mac": 123, "recorded_at": "2026-06-12T06:30:00+00:00"},
+                    {"mac": METER_MAC, "name": "Missing timestamp"},
+                    _meter_latest_row(),
+                ],
+                "retry_after_secs": 177,
+            }
+        if path == "/sensors/flower-care/latest":
+            return {
+                "sensors": [
+                    "bad row",
+                    {"name": "Missing MAC", "recorded_at": "2026-06-11T14:15:00+00:00"},
+                    {"mac": MAC, "name": "Missing timestamp"},
+                    _latest_row(),
+                ],
+                "retry_after_secs": 3400,
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(plant_proxy, "_get", fake_get)
+
+    out = plant_proxy.latest_v2_entries(db_session, _cfg(), None)
+
+    assert out["retry_after_secs"] == 177
+    assert [row["type"] for row in out["sensors"]] == ["switchbot", "xiaomi"]
+    assert [row["mac"] for row in out["sensors"]] == [METER_MAC, MAC]
+
+
 def test_sensors_latest_v2_endpoint_uses_retry_hint(app, monkeypatch):
     app.state.config.plant_monitor_url = "http://pi:8001/"
     app.state.config.plant_monitor_api_token = "t"
