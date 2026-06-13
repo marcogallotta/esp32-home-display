@@ -209,7 +209,6 @@ def validate_config(config: Config, env: str) -> None:
     _validate_rate_limit(errors, "rate_limits.login", rl.login)
 
     _validate_levoit_ah_controller(errors, config.levoit_ah_controller)
-    _validate_plant_monitor_sensors(errors, config.plant_monitor_sensors)
 
     if errors:
         raise ValueError("Invalid configuration:\n" + "\n".join(f"  {e}" for e in errors))
@@ -257,38 +256,6 @@ def _validate_levoit_ah_controller(errors: list[str], cfg: LevoitAhControllerCon
         errors.append(f"{p}.humidity_change_threshold: must be a number")
     elif cfg.humidity_change_threshold < 0:
         errors.append(f"{p}.humidity_change_threshold: must be >= 0")
-
-
-def _validate_plant_monitor_sensors(errors: list[str], sensors: object) -> None:
-    p = "plant_monitor_sensors"
-    if not isinstance(sensors, list):
-        errors.append(f"{p}: must be a list")
-        return
-
-    seen_macs: set[str] = set()
-    seen_slugs: set[str] = set()
-    for index, sensor in enumerate(sensors):
-        prefix = f"{p}[{index}]"
-        if not isinstance(sensor, PlantSensorConfig):
-            errors.append(f"{prefix}: must be a PlantSensorConfig")
-            continue
-
-        if not isinstance(sensor.mac, str) or not MAC_ADDRESS_RE.fullmatch(sensor.mac):
-            errors.append(f"{prefix}.mac: invalid MAC address format")
-        elif sensor.mac in seen_macs:
-            errors.append(f"{prefix}.mac: duplicate MAC address")
-        else:
-            seen_macs.add(sensor.mac)
-
-        if not isinstance(sensor.slug, str) or not sensor.slug:
-            errors.append(f"{prefix}.slug: must be a non-empty string")
-        elif sensor.slug in seen_slugs:
-            errors.append(f"{prefix}.slug: duplicate slug")
-        else:
-            seen_slugs.add(sensor.slug)
-
-        if not isinstance(sensor.name, str) or not sensor.name:
-            errors.append(f"{prefix}.name: must be a non-empty string")
 
 
 def _parse_levoit_ah_controller(raw: object) -> LevoitAhControllerConfig:
