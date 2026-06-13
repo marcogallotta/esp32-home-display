@@ -6,3 +6,4 @@ data/config.json
 tools/switchbot.sh
 tools/switchbot_history_decoded.csv
 tools/xiaomi.sh
+AGENTS.md
